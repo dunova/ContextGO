@@ -1,52 +1,44 @@
-# Architecture
+# Context Mesh Foundry 1.0 架构说明
 
-SCF 的核心仍是三系统集成（OneContext + OpenViking + GSD）。在此基础上可选增加第 4 层 **AO (Agent Orchestrator)** 作为经理层，用于并行执行编排。
-
-## Components
+## 核心组件
 
 1. `viking_daemon.py`
-- Watches local terminal/session history sources
-- Sanitizes content
-- Exports markdown into shared storage
-- Retries pending sync payloads
+- 采集终端会话。
+- 执行脱敏与低价值过滤。
+- 导出结构化记忆并支持失败重试。
 
 2. `start_openviking.sh`
-- Starts OpenViking in a venv
-- Handles port reuse races
-- Supports optional config generation
-- Reduces startup noise (`LITELLM_LOCAL_MODEL_COST_MAP=True`)
+- 启动 OpenViking 服务。
+- 管理虚拟环境与端口占用。
+- 支持配置生成与启动前检查。
 
 3. `openviking_mcp.py`
-- MCP bridge to:
-  - OneContext search
-  - OpenViking semantic search
-  - conversation memory save
-  - system health snapshot
+- 提供 MCP 工具层。
+- 集成 OneContext 精确检索与 OpenViking 语义检索。
+- 提供记忆写入与系统健康快照。
 
 4. `context_healthcheck.sh`
-- Operational health report (processes, launchd, API, logs, DB, pending queue, perms)
+- 巡检进程、端口、API、数据库、日志与权限。
+- 输出可读的健康状态报告。
 
 5. `unified_context_deploy.sh`
-- Syncs scripts to terminal-specific skill locations
-- Optionally patches/reloads launchd agents
-- Applies GSD integration snippets when configured
+- 将核心脚本同步到多终端技能目录。
+- 可选自动修补并重载 launchd 模板。
 
-6. `install_agent_orchestrator.sh` (optional AO layer)
-- Installs `ao` + `pnpm`
-- Verifies dashboard command and common prerequisites (`tmux`, `codex`, `gh`)
+6. `scf_context_prewarm.sh`
+- 在执行任务前进行上下文预热。
+- 优先拉取历史精确命中，再补充语义召回。
 
-7. `scf_context_prewarm.sh` (optional helper)
-- Shell-level context prewarm helper for GSD/AO workflows
-- Runs OneContext exact search and emits MCP semantic follow-up guidance
+## 数据流
 
-8. `scf_ao_spawn_from_plan.sh` (optional AO layer)
-- Converts a GSD-approved task list into AO worker sessions
-- Injects SCF + GSD execution discipline into each spawned worker prompt
+1. 终端会话进入 `viking_daemon.py`。
+2. 会话被脱敏、过滤并导出。
+3. OpenViking 对导出内容建立索引。
+4. MCP 请求进入 `openviking_mcp.py`。
+5. 检索时并行走 OneContext 与 OpenViking。
+6. 返回融合结果给 AI 终端。
 
-## Data Flow (Base)
+## 当前边界
 
-Terminal history -> daemon sanitize/export -> OpenViking ingest/search -> MCP query -> any AI terminal
-
-## Data Flow (With AO Manager Layer)
-
-Human request -> GSD discuss/plan -> context prewarm (OneContext + OpenViking) -> AO spawn workers -> workers implement/fix CI/review -> human verify/approve -> save key decisions back to OpenViking/OneContext
+1. 本仓库不再包含 AO（Agent Orchestrator）执行层。
+2. 本仓库只负责上下文采集、检索、沉淀与健康运维。

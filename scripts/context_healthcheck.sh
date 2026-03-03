@@ -7,6 +7,13 @@
 LOG_DIR="$HOME/.context_system/logs"
 HEALTHCHECK_LOG="$LOG_DIR/healthcheck.log"
 UNIFIED_CONTEXT_STORAGE_ROOT="${UNIFIED_CONTEXT_STORAGE_ROOT:-${OPENVIKING_STORAGE_ROOT:-$HOME/.unified_context_data}}"
+MAX_LOG_MB_VIKING_DAEMON="${MAX_LOG_MB_VIKING_DAEMON:-50}"
+MAX_LOG_MB_OPENVIKING_SERVER="${MAX_LOG_MB_OPENVIKING_SERVER:-50}"
+MAX_LOG_MB_ALINE_WATCHER="${MAX_LOG_MB_ALINE_WATCHER:-100}"
+MAX_LOG_MB_ALINE_WORKER="${MAX_LOG_MB_ALINE_WORKER:-100}"
+MAX_LOG_MB_ALINE_WATCHER_STDERR="${MAX_LOG_MB_ALINE_WATCHER_STDERR:-200}"
+MAX_LOG_MB_ALINE_LLM="${MAX_LOG_MB_ALINE_LLM:-200}"
+RECENT_SESSIONS_WINDOW_HOURS="${RECENT_SESSIONS_WINDOW_HOURS:-2}"
 mkdir -p "$LOG_DIR"
 chmod 700 "$LOG_DIR" 2>/dev/null || true
 PRINT_STDOUT=1
@@ -86,13 +93,13 @@ check_onecontext() {
     if command -v onecontext >/dev/null 2>&1; then
         cli_name="onecontext"
         set +e
-        cli_output="$(onecontext search "healthcheck" -t all -l 1 2>&1)"
+        cli_output="$(onecontext search "healthcheck" -t all -l 1 --no-regex 2>&1)"
         rc=$?
         set -e
     elif command -v aline >/dev/null 2>&1; then
         cli_name="aline"
         set +e
-        cli_output="$(aline search "healthcheck" -t all -l 1 2>&1)"
+        cli_output="$(aline search "healthcheck" -t all -l 1 --no-regex 2>&1)"
         rc=$?
         set -e
     fi
@@ -217,22 +224,32 @@ check_perm_max "openviking-config" "$HOME/.openviking_data/ov.conf" 600
 check_perm_max "antigravity-secrets" "$HOME/.antigravity_secrets" 600
 
 REPORT+="\nLog Sizes:\n"
-check_log_size "viking_daemon" "$LOG_DIR/viking_daemon.log" 50
-check_log_size "openviking_server" "$LOG_DIR/openviking_server_launchd.log" 50
-check_log_size "aline_watcher" "$HOME/.aline/.logs/watcher_core.log" 100
-check_log_size "aline_worker" "$HOME/.aline/.logs/worker_core.log" 100
-check_log_size "aline_watcher_stderr" "$HOME/.aline/.logs/watcher_stderr.log" 200
-check_log_size "aline_llm" "$HOME/.aline/.logs/llm.log" 200
+check_log_size "viking_daemon" "$LOG_DIR/viking_daemon.log" "$MAX_LOG_MB_VIKING_DAEMON"
+check_log_size "openviking_server" "$LOG_DIR/openviking_server_launchd.log" "$MAX_LOG_MB_OPENVIKING_SERVER"
+check_log_size "aline_watcher" "$HOME/.aline/.logs/watcher_core.log" "$MAX_LOG_MB_ALINE_WATCHER"
+check_log_size "aline_worker" "$HOME/.aline/.logs/worker_core.log" "$MAX_LOG_MB_ALINE_WORKER"
+check_log_size "aline_watcher_stderr" "$HOME/.aline/.logs/watcher_stderr.log" "$MAX_LOG_MB_ALINE_WATCHER_STDERR"
+check_log_size "aline_llm" "$HOME/.aline/.logs/llm.log" "$MAX_LOG_MB_ALINE_LLM"
 
 REPORT+="\nAline DB:\n"
 if ! command -v sqlite3 >/dev/null 2>&1; then
     REPORT+="  ℹ️  sqlite3 not found, skipping DB checks\n"
 elif [ -f "$HOME/.aline/db/aline.db" ]; then
-    RECENT=$(sqlite3 "$HOME/.aline/db/aline.db" "SELECT count(*) FROM sessions WHERE created_at > datetime('now', '-2 hours');" 2>/dev/null || echo "ERR")
+    RECENT=$(sqlite3 "$HOME/.aline/db/aline.db" "
+        SELECT count(*) FROM sessions
+        WHERE
+          CASE
+            WHEN trim(CAST(created_at AS TEXT)) GLOB '[0-9]*' AND length(trim(CAST(created_at AS TEXT))) >= 13
+              THEN datetime(CAST(created_at AS INTEGER) / 1000, 'unixepoch')
+            WHEN trim(CAST(created_at AS TEXT)) GLOB '[0-9]*' AND length(trim(CAST(created_at AS TEXT))) >= 10
+              THEN datetime(CAST(created_at AS INTEGER), 'unixepoch')
+            ELSE datetime(created_at)
+          END > datetime('now', '-${RECENT_SESSIONS_WINDOW_HOURS} hours');
+    " 2>/dev/null || echo "ERR")
     if [ "$RECENT" = "0" ] || [ "$RECENT" = "ERR" ]; then
-        REPORT+="  ⚠️  No new sessions in the last 2 hours ($RECENT)\n"
+        REPORT+="  ⚠️  No new sessions in the last ${RECENT_SESSIONS_WINDOW_HOURS} hours ($RECENT)\n"
     else
-        REPORT+="  ✅ $RECENT sessions in the last 2 hours\n"
+        REPORT+="  ✅ $RECENT sessions in the last ${RECENT_SESSIONS_WINDOW_HOURS} hours\n"
     fi
     DB_SIZE=$(( $(file_size_bytes "$HOME/.aline/db/aline.db") / 1048576 ))
     REPORT+="  📦 DB size: ${DB_SIZE}MB\n"
