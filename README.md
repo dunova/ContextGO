@@ -1,75 +1,71 @@
 # Context Mesh Foundry 1.0
 
-一个面向多终端 AI 协作的本地上下文系统。
+多终端 AI 上下文系统（AGPL-3.0）。
 
-## 项目定位
+## 核心目标
 
-Context Mesh Foundry 1.0 由三套开源能力粘合而成：
+1. 统一记忆采集：跨 Codex、Claude、Gemini Antigravity、Shell。
+2. 双路径检索：OneContext 精确检索 + OpenViking 语义检索。
+3. 低噪声记忆沉淀：脱敏、去重、私密块过滤、失败重试。
+4. 可审计运维：健康检查、索引统计、可视化查看。
 
-1. OneContext：历史会话检索（规则检索）。
-2. OpenViking：语义记忆检索与写入（向量检索）。
-3. GSD：任务执行流程约束（讨论、计划、执行、验证）。
+## 融合能力（含本次吸收）
 
-说明：AO（Agent Orchestrator）层已从本仓库移除，不再作为核心依赖。
+1. P0：三层检索工作流。  
+• `search`：只拿轻量索引（ID 列表）。  
+• `timeline`：围绕锚点看时序上下文。  
+• `get_observations`：按 ID 拉完整详情。  
 
-## 1.0 最终功能
+2. P0：私密标签隔离。  
+• 支持 `<private>...</private>`，写入前剔除。  
+• 避免低价值或敏感内容沉淀到长期记忆。  
 
-1. 双通道检索。
-- OneContext 提供精确历史命中。
-- OpenViking 提供语义近似召回。
+3. P1：导入导出与去重。  
+• `export_memories.py` 导出记忆 JSON。  
+• `import_memories.py` 按 `fingerprint` 去重导入。  
 
-2. 记忆沉淀与去噪。
-- 守护进程持续采集终端会话。
-- 写入前执行敏感信息脱敏与低价值过滤。
+4. P2：实时查看面板。  
+• `memory_viewer.py` 提供 API + SSE。  
+• 可直接在浏览器查看索引、时间线与详情。  
 
-3. 跨终端统一上下文。
-- 支持 Codex、Claude、Gemini Antigravity 等终端共享记忆底座。
+## 目录结构
 
-4. 健康检查与自恢复。
-- 巡检服务、日志、数据库、权限、端口、积压队列。
-- 支持 launchd 与 systemd 用户级模板。
-
-## 架构流程
-
-终端会话输入 -> 守护进程清洗与导出 -> OpenViking 写入索引 -> MCP 查询桥接 -> AI 终端读取与追问
-
-检索采用双路径：
-- 路径 A：OneContext 精确检索。
-- 路径 B：OpenViking 语义检索。
-
-## 仓库结构（1.0）
-
-- `scripts/viking_daemon.py`：会话采集、脱敏、导出与重试。
-- `scripts/start_openviking.sh`：OpenViking 启动与环境准备。
-- `scripts/openviking_mcp.py`：MCP 工具桥接（检索、写入、健康）。
-- `scripts/context_healthcheck.sh`：系统健康检查。
-- `scripts/unified_context_deploy.sh`：统一部署与脚本同步。
-- `scripts/scf_context_prewarm.sh`：执行前上下文预热。
-- `templates/launchd/*`：macOS 常驻模板。
-- `templates/systemd-user/*`：Linux 用户级常驻模板。
+- `scripts/viking_daemon.py`：多源采集、脱敏、导出、重试。
+- `scripts/memory_index.py`：统一本地记忆索引。
+- `scripts/openviking_mcp.py`：MCP 工具层。
+- `scripts/memory_viewer.py`：查看面板与 API/SSE。
+- `scripts/export_memories.py`：记忆导出。
+- `scripts/import_memories.py`：记忆导入（去重）。
+- `scripts/context_healthcheck.sh`：系统巡检。
+- `scripts/start_openviking.sh`：OpenViking 启动脚本。
+- `scripts/start_memory_viewer.sh`：Viewer 启动脚本。
 
 ## 快速开始
 
-1. 准备环境变量。
-- 在仓库根目录执行 `cp .env.example .env`。
-- 至少设置 `GEMINI_API_KEY`。
+1. 复制环境文件：在仓库根目录执行 `cp .env.example .env`。  
+2. 启动 OpenViking：在仓库根目录执行 `bash scripts/start_openviking.sh`。  
+3. 启动守护进程：在仓库根目录执行 `python3 scripts/viking_daemon.py`。  
+4. 启动 Viewer：在仓库根目录执行 `bash scripts/start_memory_viewer.sh`。  
+5. 健康检查：在仓库根目录执行 `bash scripts/context_healthcheck.sh --deep`。  
 
-2. 启动 OpenViking。
-- 在仓库根目录执行 `bash scripts/start_openviking.sh`。
+## MCP 工具
 
-3. 启动守护进程。
-- 在仓库根目录执行 `python3 scripts/viking_daemon.py`。
+1. 三层检索：`workflow_important`、`search`、`timeline`、`get_observations`。  
+2. 记忆写入：`save_conversation_memory`。  
+3. 双检索通道：`search_onecontext_history`、`query_viking_memory`。  
+4. 系统状态：`context_system_health`。  
 
-4. 运行健康检查。
-- 在仓库根目录执行 `bash scripts/context_healthcheck.sh --deep`。
+## 导入导出示例
 
-## 安全与隐私
+1. 导出：在仓库根目录执行 `python3 scripts/export_memories.py "认证故障" ./exports/auth.json --limit 500`。  
+2. 导入：在仓库根目录执行 `python3 scripts/import_memories.py ./exports/auth.json`。  
 
-1. 默认本地优先，不上传原始终端日志。
-2. 写入前自动脱敏（密钥、令牌、密码等）。
-3. 建议 `.env` 与本地密钥文件仅当前用户可读写。
+## 安全说明
 
-## 版本说明
+1. 默认本地存储，文件权限收敛到当前用户。  
+2. 守护进程内置密钥/令牌/密码/私钥块脱敏。  
+3. `<private>` 标签内容不进入长期记忆索引。  
 
-- 当前版本：1.0.0
-- 目标：稳定、轻量、可维护。
+## 许可证
+
+本仓库采用 `GNU Affero General Public License v3.0`。详见 `LICENSE`。

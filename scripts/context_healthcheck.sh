@@ -14,6 +14,8 @@ MAX_LOG_MB_ALINE_WORKER="${MAX_LOG_MB_ALINE_WORKER:-100}"
 MAX_LOG_MB_ALINE_WATCHER_STDERR="${MAX_LOG_MB_ALINE_WATCHER_STDERR:-200}"
 MAX_LOG_MB_ALINE_LLM="${MAX_LOG_MB_ALINE_LLM:-200}"
 RECENT_SESSIONS_WINDOW_HOURS="${RECENT_SESSIONS_WINDOW_HOURS:-2}"
+CONTEXT_VIEWER_HOST="${CONTEXT_VIEWER_HOST:-127.0.0.1}"
+CONTEXT_VIEWER_PORT="${CONTEXT_VIEWER_PORT:-37677}"
 mkdir -p "$LOG_DIR"
 chmod 700 "$LOG_DIR" 2>/dev/null || true
 PRINT_STDOUT=1
@@ -48,6 +50,16 @@ check_process() {
     else
         REPORT+="  ❌ $name: NOT RUNNING\n"
         STATUS=1
+    fi
+}
+
+check_optional_process() {
+    local name="$1"
+    local pattern="$2"
+    if pgrep -f "$pattern" > /dev/null 2>&1; then
+        REPORT+="  ✅ $name: running (PID $(pgrep -f "$pattern" | head -1))\n"
+    else
+        REPORT+="  ℹ️  $name: not running (optional)\n"
     fi
 }
 
@@ -113,6 +125,23 @@ check_onecontext() {
     else
         REPORT+="  ❌ onecontext-search: error ($cli_name, exit=$rc)\n"
         STATUS=1
+    fi
+}
+
+check_memory_viewer_api() {
+    local url="http://${CONTEXT_VIEWER_HOST}:${CONTEXT_VIEWER_PORT}/api/health"
+    local code
+    set +e
+    code=$(curl -s -o /dev/null -w "%{http_code}" "$url" --max-time 3 2>/dev/null)
+    local rc=$?
+    set -e
+    if [ "$rc" -ne 0 ] || [ -z "$code" ]; then
+        code="000"
+    fi
+    if [ "$code" = "200" ]; then
+        REPORT+="  ✅ memory-viewer-api: HTTP 200 (${CONTEXT_VIEWER_HOST}:${CONTEXT_VIEWER_PORT})\n"
+    else
+        REPORT+="  ℹ️  memory-viewer-api: HTTP $code (${CONTEXT_VIEWER_HOST}:${CONTEXT_VIEWER_PORT})\n"
     fi
 }
 
@@ -204,7 +233,9 @@ check_process "viking_daemon" "viking_daemon.py"
 check_process "openviking-server" "openviking-server|openviking.server.bootstrap"
 check_process "aline-watcher" "realign.watcher_daemon"
 check_process "aline-worker" "realign.worker_daemon"
+check_optional_process "memory-viewer" "memory_viewer.py"
 check_openviking_api
+check_memory_viewer_api
 check_onecontext
 
 REPORT+="\nLaunchd:\n"
@@ -268,6 +299,24 @@ if [ -d "$PENDING_DIR" ]; then
     fi
 else
     REPORT+="  ✅ No pending directory\n"
+fi
+
+REPORT+="\nMemory Index:\n"
+INDEX_DB="${MEMORY_INDEX_DB_PATH:-$UNIFIED_CONTEXT_STORAGE_ROOT/index/memory_index.db}"
+if [ -f "$INDEX_DB" ]; then
+    if command -v sqlite3 >/dev/null 2>&1; then
+        OBS_COUNT=$(sqlite3 "$INDEX_DB" "SELECT count(*) FROM observations;" 2>/dev/null || echo "ERR")
+        if [ "$OBS_COUNT" = "ERR" ]; then
+            REPORT+="  ⚠️  memory index unreadable: $INDEX_DB\n"
+            STATUS=1
+        else
+            REPORT+="  ✅ memory index observations: $OBS_COUNT\n"
+        fi
+    else
+        REPORT+="  ✅ memory index present: $INDEX_DB\n"
+    fi
+else
+    REPORT+="  ℹ️  memory index missing: $INDEX_DB\n"
 fi
 
 REPORT+="\n"

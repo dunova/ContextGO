@@ -25,6 +25,10 @@ import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+try:
+    from memory_index import strip_private_blocks, sync_index_from_storage
+except Exception:  # pragma: no cover - module import path compatibility
+    from .memory_index import strip_private_blocks, sync_index_from_storage  # type: ignore[import-not-found]
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -584,7 +588,7 @@ class SessionTracker:
     def _sanitize_text(self, text: str) -> str:
         if not text:
             return ""
-        out = text.strip()
+        out = strip_private_blocks(text).strip()
         for pattern, repl in SECRET_REPLACEMENTS:
             out = pattern.sub(repl, out)
         if len(out) > 4000:
@@ -689,6 +693,10 @@ class SessionTracker:
         try:
             file_path.write_text(formatted, encoding="utf-8")
             os.chmod(file_path, 0o600)
+            try:
+                sync_index_from_storage()
+            except Exception:
+                pass
         except OSError as exc:
             logger.error("Failed to write local file %s: %s", file_path, exc)
             return False

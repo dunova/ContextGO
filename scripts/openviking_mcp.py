@@ -9,7 +9,30 @@ import subprocess
 from typing import Any
 
 import httpx
-from mcp.server.fastmcp import FastMCP
+try:
+    from mcp.server.fastmcp import FastMCP
+except Exception:  # pragma: no cover - optional runtime dependency
+    FastMCP = None  # type: ignore[assignment]
+try:
+    from memory_index import (
+        get_observations_by_ids,
+        index_stats,
+        search_index,
+        strip_private_blocks,
+        sync_index_from_storage,
+        timeline_index,
+    )
+except Exception:  # pragma: no cover - module import path compatibility
+    from .memory_index import (  # type: ignore[import-not-found]
+        get_observations_by_ids,
+        index_stats,
+        search_index,
+        strip_private_blocks,
+        sync_index_from_storage,
+        timeline_index,
+    )
+
+ALLOW_NOOP_MCP = os.environ.get("ALLOW_NOOP_MCP", "0") == "1"
 
 
 class _NoopMCP:
@@ -30,14 +53,24 @@ class _NoopMCP:
 def _create_mcp_server():
     """Create MCP server; degrade to no-op when FastMCP is mocked/unavailable."""
     try:
+        if FastMCP is None:
+            if ALLOW_NOOP_MCP:
+                return _NoopMCP()
+            raise RuntimeError("FastMCP is unavailable")
         if getattr(FastMCP, "__module__", "").startswith("unittest.mock"):
-            return _NoopMCP()
+            if ALLOW_NOOP_MCP:
+                return _NoopMCP()
+            raise RuntimeError("FastMCP is mocked")
         server = FastMCP("OpenViking Global Memory Server")
         if getattr(type(server), "__module__", "").startswith("unittest.mock"):
-            return _NoopMCP()
+            if ALLOW_NOOP_MCP:
+                return _NoopMCP()
+            raise RuntimeError("FastMCP server is mocked")
         return server
     except Exception:
-        return _NoopMCP()
+        if ALLOW_NOOP_MCP:
+            return _NoopMCP()
+        raise
 
 
 mcp = _create_mcp_server()
@@ -202,6 +235,24 @@ def _safe_filename(value: str) -> str:
     s = re.sub(r"[^a-zA-Z0-9._-]+", "_", (value or "").strip().lower())
     s = s.strip("._-")
     return (s or "memory")[:120]
+
+
+def _to_day_start_epoch(day: str) -> int | None:
+    raw = (day or "").strip()
+    if not raw:
+        return None
+    try:
+        dt = datetime.strptime(raw, "%Y-%m-%d")
+        return int(dt.timestamp())
+    except Exception:
+        return None
+
+
+def _to_day_end_epoch(day: str) -> int | None:
+    start = _to_day_start_epoch(day)
+    if start is None:
+        return None
+    return start + 86399
 
 
 def _secure_write_text(path: str, text: str) -> None:
@@ -504,12 +555,123 @@ def _sqlite_search(query: str, search_type: str, limit: int, no_regex: bool) -> 
 
 
 @mcp.tool()
+def workflow_important() -> str:
+    """
+    3-layer retrieval workflow guide for token-efficient memory search.
+    """
+    return (
+        "3-layer workflow (always follow):\n"
+        "1) search(query) -> get compact index IDs\n"
+        "2) timeline(anchor=<id>) -> get chronological context\n"
+        "3) get_observations(ids=[...]) -> fetch full details only for filtered IDs\n"
+        "Never fetch all details before filtering."
+    )
+
+
+@mcp.tool()
+def search(
+    query: str = "",
+    limit: int = 20,
+    offset: int = 0,
+    source_type: str = "all",
+    date_start: str = "",
+    date_end: str = "",
+) -> str:
+    """
+    Layer-1 search: returns compact observation index with IDs.
+    """
+    sync_info = sync_index_from_storage()
+    safe_limit = max(1, min(int(limit), 200))
+    safe_offset = max(0, int(offset))
+    start_epoch = _to_day_start_epoch(date_start)
+    end_epoch = _to_day_end_epoch(date_end)
+    results = search_index(
+        query=strip_private_blocks(query),
+        limit=safe_limit,
+        offset=safe_offset,
+        source_type=source_type or "all",
+        date_start_epoch=start_epoch,
+        date_end_epoch=end_epoch,
+    )
+
+    payload = {
+        "workflow": "search -> timeline -> get_observations",
+        "sync": sync_info,
+        "count": len(results),
+        "results": [
+            {
+                "id": r["id"],
+                "time": r["created_at"],
+                "title": r["title"],
+                "source_type": r["source_type"],
+                "session_id": r["session_id"],
+                "tags": r["tags"],
+            }
+            for r in results
+        ],
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def timeline(anchor: int = 0, query: str = "", depth_before: int = 3, depth_after: int = 3) -> str:
+    """
+    Layer-2 timeline: returns chronological context around anchor observation.
+    """
+    sync_info = sync_index_from_storage()
+    anchor_id = int(anchor or 0)
+    if anchor_id <= 0 and query.strip():
+        found = search_index(strip_private_blocks(query), limit=1, offset=0, source_type="all")
+        if found:
+            anchor_id = int(found[0]["id"])
+    if anchor_id <= 0:
+        return json.dumps({"error": "anchor not found. provide anchor id or query.", "sync": sync_info}, ensure_ascii=False)
+
+    rows = timeline_index(
+        anchor_id=anchor_id,
+        depth_before=max(0, min(int(depth_before), 20)),
+        depth_after=max(0, min(int(depth_after), 20)),
+    )
+    payload = {
+        "anchor": anchor_id,
+        "sync": sync_info,
+        "count": len(rows),
+        "timeline": [
+            {
+                "id": r["id"],
+                "time": r["created_at"],
+                "title": r["title"],
+                "source_type": r["source_type"],
+                "session_id": r["session_id"],
+            }
+            for r in rows
+        ],
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def get_observations(ids: list[int], limit: int = 100) -> str:
+    """
+    Layer-3 detail fetch: returns full observation details by IDs.
+    """
+    sync_info = sync_index_from_storage()
+    rows = get_observations_by_ids(ids=[int(x) for x in ids], limit=max(1, min(int(limit), 300)))
+    payload = {
+        "sync": sync_info,
+        "count": len(rows),
+        "observations": rows,
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
 def save_conversation_memory(title: str, content: str, tags: list[str] | str | None = None) -> str:
     """
     Save a generalized conversation summary or key conclusions to OpenViking.
     """
-    title = (title or "").strip()
-    content = (content or "").strip()
+    title = strip_private_blocks((title or "").strip())
+    content = strip_private_blocks((content or "").strip())
     if not title:
         return "Failed to save memory: title cannot be empty."
     if not content:
@@ -529,6 +691,10 @@ def save_conversation_memory(title: str, content: str, tags: list[str] | str | N
 
     formatted_content = f"# {title}\n\nTags: {', '.join(tags)}\nDate: {datetime.now().isoformat()}\n\n{content}\n"
     _secure_write_text(file_path, formatted_content)
+    try:
+        sync_index_from_storage()
+    except Exception:
+        pass
 
     target = uri.rsplit("/", 1)[0]
     payload = {
@@ -675,9 +841,24 @@ def context_system_health() -> str:
     except Exception as exc:
         report["daemon"] = {"ok": False, "error": str(exc)}
 
-    report["all_ok"] = bool(report["openviking"]["ok"] and report["onecontext"]["ok"] and report["daemon"]["ok"])
+    try:
+        report["memory_index"] = {"ok": True, **index_stats()}
+    except Exception as exc:
+        report["memory_index"] = {"ok": False, "error": str(exc)}
+
+    report["all_ok"] = bool(
+        report["openviking"]["ok"]
+        and report["onecontext"]["ok"]
+        and report["daemon"]["ok"]
+        and report["memory_index"]["ok"]
+    )
     return json.dumps(report, ensure_ascii=False, indent=2)
 
 
 if __name__ == "__main__":
+    if isinstance(mcp, _NoopMCP) and not ALLOW_NOOP_MCP:
+        raise SystemExit(
+            "FastMCP is unavailable; refusing to run in no-op mode. "
+            "Install mcp.server.fastmcp or set ALLOW_NOOP_MCP=1 for test-only execution."
+        )
     mcp.run(transport="stdio")

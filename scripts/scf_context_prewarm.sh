@@ -9,7 +9,7 @@ if [ -z "$QUERY" ] || [ "$QUERY" = "-h" ] || [ "$QUERY" = "--help" ]; then
   cat <<USAGE
 Usage: $(basename "$0") <query> [mode] [limit]
 
-Run SCF context prewarm for GSD/AO workflows:
+Run SCF context prewarm for GSD workflows:
   1) OneContext exact search (required)
   2) OpenViking health hint / semantic follow-up guidance
 
