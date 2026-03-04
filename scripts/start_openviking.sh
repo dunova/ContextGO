@@ -184,10 +184,14 @@ if [ "$OPENVIKING_SKIP_PIP" = "1" ] && [ "$OPENVIKING_FORCE_UPGRADE" != "1" ] &&
     echo "openviking already installed, skip pip update (OPENVIKING_SKIP_PIP=1)."
 else
     echo "Installing/Updating openviking..."
+    INSTALL_ARGS=("install" "openviking")
     if [ "$OPENVIKING_FORCE_UPGRADE" = "1" ]; then
-        python -m pip install --upgrade openviking
-    else
-        python -m pip install openviking
+        INSTALL_ARGS=("install" "--upgrade" "openviking")
+    fi
+    if ! python -m pip "${INSTALL_ARGS[@]}"; then
+        echo -e "${YELLOW}Warning: openviking install failed. Upgrading pip and retrying once...${NC}"
+        python -m pip install --upgrade pip
+        python -m pip "${INSTALL_ARGS[@]}"
     fi
 fi
 

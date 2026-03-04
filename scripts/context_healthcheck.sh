@@ -61,6 +61,30 @@ etime_to_seconds() {
     echo 0
 }
 
+resolve_onecontext_db() {
+    local candidates=(
+        "${ONECONTEXT_DB_PATH:-}"
+        "$HOME/.aline/db/aline.db"
+        "$HOME/.onecontext/history.db"
+    )
+    local c
+    for c in "${candidates[@]}"; do
+        [ -z "$c" ] && continue
+        c="${c/#\~/$HOME}"
+        if [ -f "$c" ]; then
+            echo "$c"
+            return
+        fi
+    done
+    for c in "${candidates[@]}"; do
+        [ -z "$c" ] && continue
+        c="${c/#\~/$HOME}"
+        echo "$c"
+        return
+    done
+    echo "$HOME/.aline/db/aline.db"
+}
+
 check_process() {
     local name="$1"
     local pattern="$2"
@@ -257,7 +281,8 @@ check_onecontext_coverage() {
         REPORT+="  ℹ️  onecontext coverage: sqlite3 not found\n"
         return 0
     fi
-    local db="$HOME/.aline/db/aline.db"
+    local db
+    db="$(resolve_onecontext_db)"
     if [ ! -f "$db" ]; then
         REPORT+="  ⚠️  onecontext coverage: DB not found ($db)\n"
         STATUS=1

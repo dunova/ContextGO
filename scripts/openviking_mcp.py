@@ -101,7 +101,28 @@ if _ov_host not in ("127.0.0.1", "localhost", "::1") and not OPENVIKING_URL.star
 LOCAL_STORAGE_ROOT = os.path.expanduser(
     os.environ.get("UNIFIED_CONTEXT_STORAGE_ROOT", os.environ.get("OPENVIKING_STORAGE_ROOT", "~/.unified_context_data"))
 )
-ALINE_DB_PATH = os.path.expanduser("~/.aline/db/aline.db")
+
+
+def _resolve_onecontext_db_path() -> str:
+    candidates = [
+        os.environ.get("ONECONTEXT_DB_PATH", "").strip(),
+        "~/.aline/db/aline.db",
+        "~/.onecontext/history.db",
+    ]
+    for c in candidates:
+        if not c:
+            continue
+        p = os.path.expanduser(c)
+        if os.path.isfile(p):
+            return p
+    # keep first valid-looking candidate for diagnostics even if not found
+    for c in candidates:
+        if c:
+            return os.path.expanduser(c)
+    return os.path.expanduser("~/.aline/db/aline.db")
+
+
+ALINE_DB_PATH = _resolve_onecontext_db_path()
 VALID_SEARCH_TYPES = {"all", "event", "session", "turn", "content"}
 HTTP_TIMEOUT_SEC = max(int(os.environ.get("OPENVIKING_HTTP_TIMEOUT_SEC", "20")), 3)
 HTTP_CLIENT = httpx.Client(timeout=HTTP_TIMEOUT_SEC, trust_env=False, follow_redirects=False)

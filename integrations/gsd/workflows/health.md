@@ -25,7 +25,8 @@ fi
 **Run health validation:**
 
 ```bash
-GSD_HOME="${GSD_HOME:-$HOME/.claude/get-shit-done}"
+CLAUDE_CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+GSD_HOME="${GSD_HOME:-$CLAUDE_CONFIG_DIR/get-shit-done}"
 if [ ! -f "$GSD_HOME/bin/gsd-tools.cjs" ] && [ -f "$HOME/.codex/skills/gsd-v1/bin/gsd-tools.cjs" ]; then
   GSD_HOME="$HOME/.codex/skills/gsd-v1"
 fi
@@ -130,7 +131,8 @@ If yes, re-run with --repair flag and display results.
 Re-run health check without --repair to confirm issues are resolved:
 
 ```bash
-GSD_HOME="${GSD_HOME:-$HOME/.claude/get-shit-done}"
+CLAUDE_CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+GSD_HOME="${GSD_HOME:-$CLAUDE_CONFIG_DIR/get-shit-done}"
 if [ ! -f "$GSD_HOME/bin/gsd-tools.cjs" ] && [ -f "$HOME/.codex/skills/gsd-v1/bin/gsd-tools.cjs" ]; then
   GSD_HOME="$HOME/.codex/skills/gsd-v1"
 fi

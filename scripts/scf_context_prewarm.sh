@@ -23,7 +23,9 @@ fi
 log() { echo "[scf-prewarm] $*"; }
 
 OC_BIN=""
-if command -v onecontext >/dev/null 2>&1; then
+if [ -n "${ONECONTEXT_BIN:-}" ] && command -v "$ONECONTEXT_BIN" >/dev/null 2>&1; then
+  OC_BIN="$ONECONTEXT_BIN"
+elif command -v onecontext >/dev/null 2>&1; then
   OC_BIN="onecontext"
 elif command -v aline >/dev/null 2>&1; then
   OC_BIN="aline"

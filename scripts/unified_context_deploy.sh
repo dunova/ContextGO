@@ -141,7 +141,22 @@ patches = [
         launch / 'com.openviking.daemon.plist',
         _daemon_program_args,
         str(script_dir),
-        {},
+        {
+            'VIKING_ENABLE_SHELL_MONITOR': '0',
+            'VIKING_ENABLE_OPENCODE_MONITOR': '0',
+            'VIKING_ENABLE_KILO_MONITOR': '0',
+            'VIKING_POLL_INTERVAL_SEC': '180',
+            'VIKING_FAST_POLL_INTERVAL_SEC': '20',
+            'VIKING_IDLE_SLEEP_CAP_SEC': '600',
+            'VIKING_CODEX_SESSION_SCAN_INTERVAL_SEC': '300',
+            'VIKING_CLAUDE_TRANSCRIPT_SCAN_INTERVAL_SEC': '300',
+            'VIKING_ANTIGRAVITY_SCAN_INTERVAL_SEC': '300',
+            'VIKING_SUSPEND_ANTIGRAVITY_WHEN_BUSY': '1',
+            'VIKING_ANTIGRAVITY_BUSY_LS_THRESHOLD': '2',
+            'VIKING_ANTIGRAVITY_INGEST_MODE': 'final_only',
+            'VIKING_ANTIGRAVITY_QUIET_SEC': '240',
+            'VIKING_ANTIGRAVITY_MIN_DOC_BYTES': '500',
+        },
     ),
     (
         launch / 'com.openviking.server.plist',
@@ -161,7 +176,12 @@ patches = [
         launch / 'com.context.healthcheck.plist',
         ['/bin/bash', str(script_dir / 'context_healthcheck.sh'), '--quiet'],
         None,
-        {'UNIFIED_CONTEXT_STORAGE_ROOT': os.environ.get('UNIFIED_CONTEXT_STORAGE_ROOT', str(home / '.unified_context_data'))},
+        {
+            'UNIFIED_CONTEXT_STORAGE_ROOT': os.environ.get('UNIFIED_CONTEXT_STORAGE_ROOT', str(home / '.unified_context_data')),
+            'OPENVIKING_MCP_FORCE_TRIM': '1',
+            'OPENVIKING_MCP_MAX_PROCS': '1',
+            'OPENVIKING_MCP_STALE_SEC': '1800',
+        },
     ),
 ]
 

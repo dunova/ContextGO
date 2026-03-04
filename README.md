@@ -128,7 +128,7 @@ Use SCF + AO as a layered system instead of a single monolith:
 | Project | What it does | Repository |
 |---------|-------------|------------|
 | **OpenViking** | Local vector database + semantic search engine. Stores files, vectorizes them, and provides a search API. | [volcengine/OpenViking](https://github.com/volcengine/OpenViking) |
-| **OneContext** | Timeline-structured database of AI interactions. Records events, sessions, and conversation turns. | [TheAgentContextLab/OneContext](https://github.com/TheAgentContextLab/OneContext) |
+| **OneContext** | Timeline-structured database of AI interactions. Records events, sessions, and conversation turns. | [dunova/OneContext (active mirror)](https://github.com/dunova/OneContext) |
 | **GSD** | "Get Shit Done" -- an execution discipline framework. Forces AI agents to follow discuss → plan → execute → verify instead of ad-hoc problem solving. Requires context warmup (check OneContext + OpenViking first), evidence-based verification, and clear role separation in multi-agent collaboration. | [gsd-build/get-shit-done](https://github.com/gsd-build/get-shit-done) |
 | **Agent Orchestrator (optional)** | Orchestrates parallel coding agents and automates session/PR/CI/review workflows. | [ComposioHQ/agent-orchestrator](https://github.com/ComposioHQ/agent-orchestrator) |
 
@@ -253,6 +253,8 @@ See [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) for known failures and 
 2. `realign` import failures in launchd/systemd watcher/worker daemons.
 3. MCP script path drift across clients (`~/.claude/settings.json`, `~/.claude.json`, `~/.codex/config.toml`, `~/.config/opencode/opencode.json`, `~/.openclaw/workspace/config/mcporter.json`).
 
+Latest upstream sync notes: [`docs/UPSTREAM_SYNC_2026-03-05.md`](docs/UPSTREAM_SYNC_2026-03-05.md).
+
 ## Repository Layout
 
 ```
@@ -329,6 +331,7 @@ Key variables:
 | `VIKING_ENABLE_OPENCODE_MONITOR` | `0` | OpenCode prompt-history monitoring |
 | `VIKING_ANTIGRAVITY_INGEST_MODE` | `final_only` | Antigravity capture mode (`final_only` or `live`) |
 | `OPENVIKING_ENABLE_SEMANTIC_QUERY` | `0` | MCP semantic query switch (OneContext-first by default) |
+| `ONECONTEXT_DB_PATH` | auto-detect | OneContext sqlite path override (fallbacks supported) |
 
 ## Known Caveats
 
@@ -340,7 +343,7 @@ Key variables:
 
 | Project | Upstream | Fork |
 |---------|----------|------|
-| OneContext | [TheAgentContextLab/OneContext](https://github.com/TheAgentContextLab/OneContext) | [dunova/OneContext](https://github.com/dunova/OneContext) |
+| OneContext | (original upstream unavailable as of 2026-03-05) | [dunova/OneContext](https://github.com/dunova/OneContext) |
 | OpenViking | [volcengine/OpenViking](https://github.com/volcengine/OpenViking) | [dunova/OpenViking](https://github.com/dunova/OpenViking) |
 | GSD | [gsd-build/get-shit-done](https://github.com/gsd-build/get-shit-done) | [dunova/get-shit-done](https://github.com/dunova/get-shit-done) |
 
@@ -474,7 +477,7 @@ SCF 解决的是共享记忆、上下文检索和流程纪律（GSD），但它�
 | 项目 | 功能 | 仓库 |
 |------|------|------|
 | **OpenViking** | 本地向量数据库 + 语义搜索引擎。存储文件、向量化、提供搜索 API。 | [volcengine/OpenViking](https://github.com/volcengine/OpenViking) |
-| **OneContext** | AI 交互的时间线结构化数据库。记录事件、会话和对话轮次。 | [TheAgentContextLab/OneContext](https://github.com/TheAgentContextLab/OneContext) |
+| **OneContext** | AI 交互的时间线结构化数据库。记录事件、会话和对话轮次。 | [dunova/OneContext（当前可用镜像）](https://github.com/dunova/OneContext) |
 | **GSD** | "Get Shit Done" -- 执行纪律框架。强制 AI 按 discuss → plan → execute → verify 流程执行，杜绝跳步和返工。要求执行前先做上下文预热（查 OneContext + OpenViking），验收时提供证据和产物，多终端协作时明确角色分工。 | [gsd-build/get-shit-done](https://github.com/gsd-build/get-shit-done) |
 
 本仓库**不包含**上游源码。它提供的是让三者协同工作的**集成层**：监听和清洗的守护进程、MCP 桥接、部署脚本、健康检查。
