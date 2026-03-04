@@ -6,34 +6,54 @@ import re
 import shutil
 import sqlite3
 import subprocess
+import sys
+import time
 from typing import Any
 
 import httpx
+
+
+def _stderr(msg: str) -> None:
+    try:
+        print(msg, file=sys.stderr, flush=True)
+    except Exception:
+        pass
+
+
+def _try_reexec_with_openviking_python() -> bool:
+    """If current interpreter misses MCP deps, re-exec with known working venv python."""
+    if os.environ.get("OPENVIKING_MCP_REEXECED") == "1":
+        return False
+
+    target_py = os.path.expanduser(os.environ.get("OPENVIKING_PYTHON", "~/.openviking_env/bin/python"))
+    if not os.path.exists(target_py):
+        return False
+
+    try:
+        if os.path.realpath(sys.executable) == os.path.realpath(target_py):
+            return False
+    except Exception:
+        pass
+
+    env = os.environ.copy()
+    env["OPENVIKING_MCP_REEXECED"] = "1"
+    try:
+        os.execve(target_py, [target_py, *sys.argv], env)
+    except Exception as exc:
+        _stderr(f"[openviking-mcp] re-exec failed: {exc}")
+        return False
+    return True
+
+
 try:
     from mcp.server.fastmcp import FastMCP
-except Exception:  # pragma: no cover - optional runtime dependency
-    FastMCP = None  # type: ignore[assignment]
-try:
-    from memory_index import (
-        get_observations_by_ids,
-        index_stats,
-        search_index,
-        strip_private_blocks,
-        sync_index_from_storage,
-        timeline_index,
-    )
-except Exception:  # pragma: no cover - module import path compatibility
-    from .memory_index import (  # type: ignore[import-not-found]
-        get_observations_by_ids,
-        index_stats,
-        search_index,
-        strip_private_blocks,
-        sync_index_from_storage,
-        timeline_index,
-    )
-
-ALLOW_NOOP_MCP = os.environ.get("ALLOW_NOOP_MCP", "0") == "1"
-_MCP_INIT_ERROR: str = ""
+except Exception as _import_exc:
+    _stderr(f"[openviking-mcp] import mcp failed with {sys.executable}: {_import_exc}")
+    _try_reexec_with_openviking_python()
+    try:
+        from mcp.server.fastmcp import FastMCP
+    except Exception:
+        FastMCP = None
 
 
 class _NoopMCP:
@@ -53,18 +73,16 @@ class _NoopMCP:
 
 def _create_mcp_server():
     """Create MCP server; degrade to no-op when FastMCP is mocked/unavailable."""
-    global _MCP_INIT_ERROR
     try:
         if FastMCP is None:
-            raise RuntimeError("FastMCP is unavailable")
+            return _NoopMCP()
         if getattr(FastMCP, "__module__", "").startswith("unittest.mock"):
-            raise RuntimeError("FastMCP is mocked")
+            return _NoopMCP()
         server = FastMCP("OpenViking Global Memory Server")
         if getattr(type(server), "__module__", "").startswith("unittest.mock"):
-            raise RuntimeError("FastMCP server is mocked")
+            return _NoopMCP()
         return server
-    except Exception as exc:
-        _MCP_INIT_ERROR = str(exc)
+    except Exception:
         return _NoopMCP()
 
 
@@ -75,7 +93,10 @@ OPENVIKING_URL = os.environ.get("OPENVIKING_URL", "http://127.0.0.1:8090/api/v1"
 # Security: require HTTPS for non-localhost URLs to prevent MITM
 _ov_host = OPENVIKING_URL.split("://", 1)[-1].split("/", 1)[0].split(":")[0]
 if _ov_host not in ("127.0.0.1", "localhost", "::1") and not OPENVIKING_URL.startswith("https://"):
-    raise SystemExit(f"Remote OPENVIKING_URL must use https://. Got: {OPENVIKING_URL}")
+    enforce_https = str(os.environ.get("OPENVIKING_ENFORCE_HTTPS", "0")).strip().lower() in {"1", "true", "yes"}
+    if enforce_https:
+        raise SystemExit(f"Remote OPENVIKING_URL must use https://. Got: {OPENVIKING_URL}")
+    _stderr(f"[openviking-mcp] warning: insecure remote OPENVIKING_URL over http: {OPENVIKING_URL}")
 
 LOCAL_STORAGE_ROOT = os.path.expanduser(
     os.environ.get("UNIFIED_CONTEXT_STORAGE_ROOT", os.environ.get("OPENVIKING_STORAGE_ROOT", "~/.unified_context_data"))
@@ -86,8 +107,12 @@ HTTP_TIMEOUT_SEC = max(int(os.environ.get("OPENVIKING_HTTP_TIMEOUT_SEC", "20")),
 HTTP_CLIENT = httpx.Client(timeout=HTTP_TIMEOUT_SEC, trust_env=False, follow_redirects=False)
 atexit.register(HTTP_CLIENT.close)
 OPENVIKING_ROOT_URL = OPENVIKING_URL.split("/api/", 1)[0].rstrip("/")
-ONECONTEXT_CLI_TIMEOUT_SEC = max(int(os.environ.get("ONECONTEXT_CLI_TIMEOUT_SEC", "12")), 3)
-_ONECONTEXT_CLI_CANDIDATES: list[str] | None = None
+ONECONTEXT_CLI_TIMEOUT_SEC = max(2, int(os.environ.get("OPENVIKING_ONECONTEXT_CLI_TIMEOUT_SEC", "8")))
+ONECONTEXT_SEARCH_BUDGET_SEC = max(4, int(os.environ.get("OPENVIKING_ONECONTEXT_SEARCH_BUDGET_SEC", "18")))
+SQLITE_CONNECT_TIMEOUT_SEC = max(0.5, float(os.environ.get("OPENVIKING_SQLITE_CONNECT_TIMEOUT_SEC", "1.5")))
+OPENVIKING_ENABLE_SEMANTIC_QUERY = str(
+    os.environ.get("OPENVIKING_ENABLE_SEMANTIC_QUERY", "0")
+).strip().lower() in {"1", "true", "yes", "on"}
 
 # ─── Intent Pre-filter (memU-inspired, zero network dependency) ───────────────
 # Exact no-retrieve token set – kept deliberately tight so we never drop a
@@ -179,15 +204,20 @@ def _onecontext_no_match(result_text: str) -> bool:
     markers = [
         "Found 0 matches",
         "No matches found",
+        "Search Results for:",
+        "Regex Search:",
+        "Error searching:",
+        "no such column:",
     ]
-    if any(marker in result_text for marker in markers):
-        return True
-    # 兼容仅返回标题/检索语句的空命中输出，避免误判为“有结果”。
-    compact_lines = [ln.strip() for ln in result_text.splitlines() if ln.strip()]
-    if len(compact_lines) <= 3 and any(
-        ln.startswith("Regex Search:") or ln.startswith("Search Results for:") for ln in compact_lines
-    ):
-        return True
+    text = result_text.strip()
+    if any(marker in text for marker in markers):
+        # "Search Results for: ..." or "Regex Search: ..." alone should be treated as no-match.
+        # Otherwise the caller may stop early and skip useful fallback routes.
+        if "Found 0 matches" in text or "No matches found" in text:
+            return True
+        compact_lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+        if len(compact_lines) <= 3:
+            return True
     return False
 
 
@@ -205,6 +235,30 @@ def _looks_like_identifier_query(query: str) -> bool:
     alnum = sum(ch.isalnum() for ch in q)
     punct = sum(ch in "-_:" for ch in q)
     return len(q) >= 12 and punct >= 2 and alnum >= 6
+
+
+def _build_query_variants(query: str) -> list[str]:
+    q = (query or "").strip()
+    if not q:
+        return []
+    variants: list[str] = [q]
+    # Date-like normalization: 2026-03-02 / 2026/03/02 -> 20260302
+    m = re.fullmatch(r"\s*(\d{4})[-/](\d{1,2})[-/](\d{1,2})\s*", q)
+    if m:
+        y, mm, dd = m.groups()
+        variants.append(f"{y}{int(mm):02d}{int(dd):02d}")
+    # Strip extra whitespace for robust literal search.
+    compact = re.sub(r"\s+", " ", q).strip()
+    if compact and compact not in variants:
+        variants.append(compact)
+    # De-dup while keeping order.
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in variants:
+        if item and item not in seen:
+            out.append(item)
+            seen.add(item)
+    return out
 
 
 def _normalize_tags(tags: list[str] | str | None) -> list[str]:
@@ -230,24 +284,6 @@ def _safe_filename(value: str) -> str:
     s = re.sub(r"[^a-zA-Z0-9._-]+", "_", (value or "").strip().lower())
     s = s.strip("._-")
     return (s or "memory")[:120]
-
-
-def _to_day_start_epoch(day: str) -> int | None:
-    raw = (day or "").strip()
-    if not raw:
-        return None
-    try:
-        dt = datetime.strptime(raw, "%Y-%m-%d")
-        return int(dt.timestamp())
-    except Exception:
-        return None
-
-
-def _to_day_end_epoch(day: str) -> int | None:
-    start = _to_day_start_epoch(day)
-    if start is None:
-        return None
-    return start + 86399
 
 
 def _secure_write_text(path: str, text: str) -> None:
@@ -341,12 +377,8 @@ def _build_snippet(text: str, query: str, use_regex: bool, radius: int = 80) -> 
     return compact[start:end]
 
 
-def _discover_onecontext_cli_candidates() -> list[str]:
-    global _ONECONTEXT_CLI_CANDIDATES
-    if _ONECONTEXT_CLI_CANDIDATES is not None:
-        return _ONECONTEXT_CLI_CANDIDATES
-
-    raw_candidates = [
+def _try_cli_search(query: str, search_type: str, limit: int, no_regex: bool) -> str:
+    candidates = [
         os.environ.get("ONECONTEXT_BIN", ""),
         "onecontext",
         "aline",
@@ -354,9 +386,7 @@ def _discover_onecontext_cli_candidates() -> list[str]:
         os.path.expanduser("~/.npm-global/bin/onecontext"),
     ]
 
-    resolved: list[str] = []
-    seen: set[str] = set()
-    for candidate in raw_candidates:
+    for candidate in candidates:
         if not candidate:
             continue
         if "/" in candidate:
@@ -365,34 +395,23 @@ def _discover_onecontext_cli_candidates() -> list[str]:
             cmd_path = shutil.which(candidate)
         if not cmd_path:
             continue
-        real = os.path.realpath(cmd_path)
-        if real in seen:
-            continue
-        seen.add(real)
-        resolved.append(real)
 
-    _ONECONTEXT_CLI_CANDIDATES = resolved
-    return resolved
-
-
-def _try_cli_search(query: str, search_type: str, limit: int, no_regex: bool) -> str:
-    for cmd_path in _discover_onecontext_cli_candidates():
         cmd = [cmd_path, "search", query, "-t", search_type, "-l", str(limit)]
         if no_regex:
             cmd.append("--no-regex")
 
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=ONECONTEXT_CLI_TIMEOUT_SEC)
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=ONECONTEXT_CLI_TIMEOUT_SEC,
+            )
         except Exception:
             continue
 
         stdout = (result.stdout or "").strip()
         stderr = (result.stderr or "").strip()
-        mixed = f"{stdout}\n{stderr}".strip()
-
-        # 排除帮助页/命令说明误判，避免把“无效调用”当成检索结果。
-        if "Track and version AI agent chat sessions" in mixed and "Usage:" in mixed and "Commands:" in mixed:
-            continue
 
         # newer aline help may hide subcommands but search still works; non-zero with no useful output -> try fallback
         if result.returncode == 0 and stdout:
@@ -403,7 +422,7 @@ def _try_cli_search(query: str, search_type: str, limit: int, no_regex: bool) ->
             "Unknown command",
             "Usage:",
         ]
-        if any(m in mixed for m in unknown_cmd_markers):
+        if any(m in stderr for m in unknown_cmd_markers):
             continue
 
         if stdout:
@@ -440,9 +459,11 @@ def _sqlite_search(query: str, search_type: str, limit: int, no_regex: bool) -> 
 
     conn = None
     try:
-        conn = sqlite3.connect(ALINE_DB_PATH)
+        conn = sqlite3.connect(ALINE_DB_PATH, timeout=SQLITE_CONNECT_TIMEOUT_SEC)
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
+        # Read-only query path: reduce lock contention with active writer processes.
+        cur.execute("PRAGMA query_only=1")
 
         if search_type in ("all", "event"):
             rows = cur.execute(
@@ -550,123 +571,12 @@ def _sqlite_search(query: str, search_type: str, limit: int, no_regex: bool) -> 
 
 
 @mcp.tool()
-def workflow_important() -> str:
-    """
-    3-layer retrieval workflow guide for token-efficient memory search.
-    """
-    return (
-        "3-layer workflow (always follow):\n"
-        "1) search(query) -> get compact index IDs\n"
-        "2) timeline(anchor=<id>) -> get chronological context\n"
-        "3) get_observations(ids=[...]) -> fetch full details only for filtered IDs\n"
-        "Never fetch all details before filtering."
-    )
-
-
-@mcp.tool()
-def search(
-    query: str = "",
-    limit: int = 20,
-    offset: int = 0,
-    source_type: str = "all",
-    date_start: str = "",
-    date_end: str = "",
-) -> str:
-    """
-    Layer-1 search: returns compact observation index with IDs.
-    """
-    sync_info = sync_index_from_storage()
-    safe_limit = max(1, min(int(limit), 200))
-    safe_offset = max(0, int(offset))
-    start_epoch = _to_day_start_epoch(date_start)
-    end_epoch = _to_day_end_epoch(date_end)
-    results = search_index(
-        query=strip_private_blocks(query),
-        limit=safe_limit,
-        offset=safe_offset,
-        source_type=source_type or "all",
-        date_start_epoch=start_epoch,
-        date_end_epoch=end_epoch,
-    )
-
-    payload = {
-        "workflow": "search -> timeline -> get_observations",
-        "sync": sync_info,
-        "count": len(results),
-        "results": [
-            {
-                "id": r["id"],
-                "time": r["created_at"],
-                "title": r["title"],
-                "source_type": r["source_type"],
-                "session_id": r["session_id"],
-                "tags": r["tags"],
-            }
-            for r in results
-        ],
-    }
-    return json.dumps(payload, ensure_ascii=False, indent=2)
-
-
-@mcp.tool()
-def timeline(anchor: int = 0, query: str = "", depth_before: int = 3, depth_after: int = 3) -> str:
-    """
-    Layer-2 timeline: returns chronological context around anchor observation.
-    """
-    sync_info = sync_index_from_storage()
-    anchor_id = int(anchor or 0)
-    if anchor_id <= 0 and query.strip():
-        found = search_index(strip_private_blocks(query), limit=1, offset=0, source_type="all")
-        if found:
-            anchor_id = int(found[0]["id"])
-    if anchor_id <= 0:
-        return json.dumps({"error": "anchor not found. provide anchor id or query.", "sync": sync_info}, ensure_ascii=False)
-
-    rows = timeline_index(
-        anchor_id=anchor_id,
-        depth_before=max(0, min(int(depth_before), 20)),
-        depth_after=max(0, min(int(depth_after), 20)),
-    )
-    payload = {
-        "anchor": anchor_id,
-        "sync": sync_info,
-        "count": len(rows),
-        "timeline": [
-            {
-                "id": r["id"],
-                "time": r["created_at"],
-                "title": r["title"],
-                "source_type": r["source_type"],
-                "session_id": r["session_id"],
-            }
-            for r in rows
-        ],
-    }
-    return json.dumps(payload, ensure_ascii=False, indent=2)
-
-
-@mcp.tool()
-def get_observations(ids: list[int], limit: int = 100) -> str:
-    """
-    Layer-3 detail fetch: returns full observation details by IDs.
-    """
-    sync_info = sync_index_from_storage()
-    rows = get_observations_by_ids(ids=[int(x) for x in ids], limit=max(1, min(int(limit), 300)))
-    payload = {
-        "sync": sync_info,
-        "count": len(rows),
-        "observations": rows,
-    }
-    return json.dumps(payload, ensure_ascii=False, indent=2)
-
-
-@mcp.tool()
 def save_conversation_memory(title: str, content: str, tags: list[str] | str | None = None) -> str:
     """
     Save a generalized conversation summary or key conclusions to OpenViking.
     """
-    title = strip_private_blocks((title or "").strip())
-    content = strip_private_blocks((content or "").strip())
+    title = (title or "").strip()
+    content = (content or "").strip()
     if not title:
         return "Failed to save memory: title cannot be empty."
     if not content:
@@ -686,10 +596,6 @@ def save_conversation_memory(title: str, content: str, tags: list[str] | str | N
 
     formatted_content = f"# {title}\n\nTags: {', '.join(tags)}\nDate: {datetime.now().isoformat()}\n\n{content}\n"
     _secure_write_text(file_path, formatted_content)
-    try:
-        sync_index_from_storage()
-    except Exception:
-        pass
 
     target = uri.rsplit("/", 1)[0]
     payload = {
@@ -712,15 +618,17 @@ def query_viking_memory(query: str, limit: int = 3) -> str:
     """
     Search OpenViking global memory for relevant context.
     """
-    safe_query = strip_private_blocks((query or "").strip())
-    if not safe_query:
-        return "Failed to query OpenViking: query is empty after private-block sanitization."
-    if not _decide_retrieval_intent(safe_query):
+    if not _decide_retrieval_intent(query):
         return "Intent Check: Query categorized as common affirmation/chat. Skipped memory retrieval to save context."
+    if not OPENVIKING_ENABLE_SEMANTIC_QUERY:
+        return (
+            "Semantic query disabled by OPENVIKING_ENABLE_SEMANTIC_QUERY=0. "
+            "Use search_onecontext_history(...) for primary retrieval."
+        )
 
     safe_limit = max(1, min(int(limit), 50))
     payload = {
-        "query": safe_query,
+        "query": query,
         "target_uri": "viking://resources",
         "limit": safe_limit,
     }
@@ -729,8 +637,8 @@ def query_viking_memory(query: str, limit: int = 3) -> str:
         output = []
 
         # Hybrid retrieval: exact local scan for opaque IDs/tags, then semantic API.
-        if _looks_like_identifier_query(safe_query):
-            exact_matches = _local_exact_resource_matches(safe_query, limit=max(1, safe_limit))
+        if _looks_like_identifier_query(query):
+            exact_matches = _local_exact_resource_matches(query, limit=max(1, safe_limit))
             if exact_matches:
                 output.append("--- EXACT LOCAL RESOURCE MATCHES (ID/TAG fallback) ---")
                 for item in exact_matches:
@@ -763,40 +671,116 @@ def search_onecontext_history(query: str, search_type: str = "all", limit: int =
     """
     Search OneContext history. CLI-first, sqlite fallback for compatibility.
     """
-    safe_query = strip_private_blocks((query or "").strip())
-    if not safe_query:
-        return "Intent Check: Empty query after private-block sanitization. Skipped retrieval."
-    if not _decide_retrieval_intent(safe_query):
+    if not _decide_retrieval_intent(query):
         return "Intent Check: Query categorized as common affirmation/chat. Skipped sqlite DB retrieval to save context."
 
     normalized_type = _resolve_search_type(search_type)
     safe_limit = max(1, min(int(limit), 100))
+    query_variants = _build_query_variants(query)
+    if not query_variants:
+        return "Empty query."
+    started_at = time.monotonic()
 
-    cli_result = _try_cli_search(safe_query, normalized_type, safe_limit, no_regex)
-    if cli_result and not (_onecontext_no_match(cli_result) and normalized_type == "all" and _looks_like_identifier_query(safe_query)):
+    # For date-like inputs, literal search tends to be significantly more stable.
+    date_like = any(re.fullmatch(r"\d{8}", v) for v in query_variants)
+    prefer_literal_first = date_like and not no_regex
+
+    def _try_cli_many(qs: list[str], stype: str, literal: bool) -> str:
+        for q in qs:
+            if time.monotonic() - started_at >= ONECONTEXT_SEARCH_BUDGET_SEC:
+                break
+            r = _try_cli_search(q, stype, safe_limit, literal)
+            if r and not _onecontext_no_match(r):
+                return r
+        return ""
+
+    def _try_sqlite_many(qs: list[str], stype: str, literal: bool) -> str:
+        for q in qs:
+            if time.monotonic() - started_at >= ONECONTEXT_SEARCH_BUDGET_SEC:
+                break
+            r = _sqlite_search(q, stype, safe_limit, literal)
+            if not _onecontext_no_match(r):
+                return r
+        return ""
+
+    # Stage 1: CLI with caller-specified regex mode
+    cli_result = _try_cli_many(query_variants, normalized_type, True if prefer_literal_first else no_regex)
+    if cli_result:
+        if prefer_literal_first:
+            return "Note: auto-switched to literal search for date-like query.\n" + cli_result
         return cli_result
 
-    if normalized_type == "all" and _looks_like_identifier_query(safe_query):
-        cli_content_result = _try_cli_search(safe_query, "content", safe_limit, no_regex)
-        if cli_content_result and not _onecontext_no_match(cli_content_result):
+    # Stage 2: CLI no-regex fallback when caller did not force it
+    if not no_regex and not prefer_literal_first:
+        cli_literal = _try_cli_many(query_variants, normalized_type, True)
+        if cli_literal:
             return (
-                "Note: auto-fallback to OneContext content search for ID/tag query after `all` returned no matches.\n"
-                + cli_content_result
+                "Note: auto-fallback to OneContext literal search (--no-regex).\n"
+                + cli_literal
             )
 
-    sqlite_result = _sqlite_search(safe_query, normalized_type, safe_limit, no_regex)
-    if not (_onecontext_no_match(sqlite_result) and normalized_type == "all" and _looks_like_identifier_query(safe_query)):
+    # Stage 3: CLI deep content fallback for broad/noisy queries
+    if normalized_type == "all":
+        cli_content = _try_cli_many(query_variants, "content", True if prefer_literal_first else no_regex)
+        if cli_content:
+            if prefer_literal_first:
+                return (
+                    "Note: auto-switched to content literal search for date-like query.\n"
+                    + cli_content
+                )
+            return (
+                "Note: auto-fallback to OneContext content search after `all` returned no matches.\n"
+                + cli_content
+            )
+        if not no_regex and not prefer_literal_first:
+            cli_content_literal = _try_cli_many(query_variants, "content", True)
+            if cli_content_literal:
+                return (
+                    "Note: auto-fallback to OneContext content literal search (--no-regex).\n"
+                    + cli_content_literal
+                )
+
+    # Stage 4: sqlite fallback with caller-specified regex mode
+    sqlite_result = _try_sqlite_many(query_variants, normalized_type, True if prefer_literal_first else no_regex)
+    if sqlite_result:
+        if prefer_literal_first:
+            return "Note: auto-switched to sqlite literal search for date-like query.\n" + sqlite_result
         return sqlite_result
 
-    if normalized_type == "all" and _looks_like_identifier_query(safe_query):
-        sqlite_content = _sqlite_search(safe_query, "content", safe_limit, no_regex)
-        if not _onecontext_no_match(sqlite_content):
+    # Stage 5: sqlite no-regex fallback
+    if not no_regex and not prefer_literal_first:
+        sqlite_literal = _try_sqlite_many(query_variants, normalized_type, True)
+        if sqlite_literal:
             return (
-                "Note: auto-fallback to OneContext content search for ID/tag query after `all` returned no matches.\n"
-                + sqlite_content
+                "Note: auto-fallback to sqlite literal search (--no-regex).\n"
+                + sqlite_literal
             )
 
-    return sqlite_result
+    # Stage 6: sqlite content fallback
+    if normalized_type == "all":
+        sqlite_content = _try_sqlite_many(query_variants, "content", True if prefer_literal_first else no_regex)
+        if sqlite_content:
+            if prefer_literal_first:
+                return (
+                    "Note: auto-switched to sqlite content literal search for date-like query.\n"
+                    + sqlite_content
+                )
+            return (
+                "Note: auto-fallback to sqlite content search after `all` returned no matches.\n"
+                + sqlite_content
+            )
+        if not no_regex and not prefer_literal_first:
+            sqlite_content_literal = _try_sqlite_many(query_variants, "content", True)
+            if sqlite_content_literal:
+                return (
+                    "Note: auto-fallback to sqlite content literal search (--no-regex).\n"
+                    + sqlite_content_literal
+                )
+
+    return (
+        f"No matches found after fallback chain (budget={ONECONTEXT_SEARCH_BUDGET_SEC}s). "
+        "Try a shorter keyword, or search by `-t content --no-regex`."
+    )
 
 
 @mcp.tool()
@@ -842,25 +826,9 @@ def context_system_health() -> str:
     except Exception as exc:
         report["daemon"] = {"ok": False, "error": str(exc)}
 
-    try:
-        report["memory_index"] = {"ok": True, **index_stats()}
-    except Exception as exc:
-        report["memory_index"] = {"ok": False, "error": str(exc)}
-
-    report["all_ok"] = bool(
-        report["openviking"]["ok"]
-        and report["onecontext"]["ok"]
-        and report["daemon"]["ok"]
-        and report["memory_index"]["ok"]
-    )
+    report["all_ok"] = bool(report["openviking"]["ok"] and report["onecontext"]["ok"] and report["daemon"]["ok"])
     return json.dumps(report, ensure_ascii=False, indent=2)
 
 
 if __name__ == "__main__":
-    if isinstance(mcp, _NoopMCP) and not ALLOW_NOOP_MCP:
-        raise SystemExit(
-            "FastMCP is unavailable; refusing to run in no-op mode. "
-            f"reason={_MCP_INIT_ERROR or 'unknown'}. "
-            "Install mcp.server.fastmcp or set ALLOW_NOOP_MCP=1 for test-only execution."
-        )
     mcp.run(transport="stdio")

@@ -7,15 +7,6 @@
 LOG_DIR="$HOME/.context_system/logs"
 HEALTHCHECK_LOG="$LOG_DIR/healthcheck.log"
 UNIFIED_CONTEXT_STORAGE_ROOT="${UNIFIED_CONTEXT_STORAGE_ROOT:-${OPENVIKING_STORAGE_ROOT:-$HOME/.unified_context_data}}"
-MAX_LOG_MB_VIKING_DAEMON="${MAX_LOG_MB_VIKING_DAEMON:-50}"
-MAX_LOG_MB_OPENVIKING_SERVER="${MAX_LOG_MB_OPENVIKING_SERVER:-50}"
-MAX_LOG_MB_ALINE_WATCHER="${MAX_LOG_MB_ALINE_WATCHER:-100}"
-MAX_LOG_MB_ALINE_WORKER="${MAX_LOG_MB_ALINE_WORKER:-100}"
-MAX_LOG_MB_ALINE_WATCHER_STDERR="${MAX_LOG_MB_ALINE_WATCHER_STDERR:-200}"
-MAX_LOG_MB_ALINE_LLM="${MAX_LOG_MB_ALINE_LLM:-200}"
-RECENT_SESSIONS_WINDOW_HOURS="${RECENT_SESSIONS_WINDOW_HOURS:-2}"
-CONTEXT_VIEWER_HOST="${CONTEXT_VIEWER_HOST:-127.0.0.1}"
-CONTEXT_VIEWER_PORT="${CONTEXT_VIEWER_PORT:-37677}"
 mkdir -p "$LOG_DIR"
 chmod 700 "$LOG_DIR" 2>/dev/null || true
 PRINT_STDOUT=1
@@ -42,6 +33,34 @@ file_perm_mode() {
     stat -f%Lp "$p" 2>/dev/null || stat -c%a "$p" 2>/dev/null || echo 000
 }
 
+etime_to_seconds() {
+    local raw="$1"
+    local d h m s
+    raw="${raw// /}"
+    if [[ "$raw" =~ ^([0-9]+)-([0-9]{1,2}):([0-9]{2}):([0-9]{2})$ ]]; then
+        d="${BASH_REMATCH[1]}"
+        h="${BASH_REMATCH[2]}"
+        m="${BASH_REMATCH[3]}"
+        s="${BASH_REMATCH[4]}"
+        echo $((10#$d * 86400 + 10#$h * 3600 + 10#$m * 60 + 10#$s))
+        return
+    fi
+    if [[ "$raw" =~ ^([0-9]{1,2}):([0-9]{2}):([0-9]{2})$ ]]; then
+        h="${BASH_REMATCH[1]}"
+        m="${BASH_REMATCH[2]}"
+        s="${BASH_REMATCH[3]}"
+        echo $((10#$h * 3600 + 10#$m * 60 + 10#$s))
+        return
+    fi
+    if [[ "$raw" =~ ^([0-9]{1,2}):([0-9]{2})$ ]]; then
+        m="${BASH_REMATCH[1]}"
+        s="${BASH_REMATCH[2]}"
+        echo $((10#$m * 60 + 10#$s))
+        return
+    fi
+    echo 0
+}
+
 check_process() {
     local name="$1"
     local pattern="$2"
@@ -53,13 +72,114 @@ check_process() {
     fi
 }
 
-check_optional_process() {
-    local name="$1"
+get_launchd_pid() {
+    local label="$1"
+    local uid_num
+    uid_num="$(id -u)"
+    launchctl print "gui/${uid_num}/${label}" 2>/dev/null | awk -F'= ' '/^[[:space:]]*pid = / {print $2; exit}'
+}
+
+dedupe_process_keep_launchd() {
+    local display_name="$1"
     local pattern="$2"
-    if pgrep -f "$pattern" > /dev/null 2>&1; then
-        REPORT+="  ✅ $name: running (PID $(pgrep -f "$pattern" | head -1))\n"
-    else
-        REPORT+="  ℹ️  $name: not running (optional)\n"
+    local launchd_label="$3"
+    local keep_pid pids pid_count removed
+
+    keep_pid="$(get_launchd_pid "$launchd_label" | tr -d '[:space:]')"
+    pids="$(pgrep -f "$pattern" 2>/dev/null || true)"
+    pid_count="$(echo "$pids" | awk 'NF' | wc -l | tr -d ' ')"
+    [ -z "$pid_count" ] && pid_count=0
+
+    if [ "$pid_count" -le 1 ]; then
+        return 0
+    fi
+
+    if [ -z "$keep_pid" ]; then
+        keep_pid="$(echo "$pids" | awk 'NF{print; exit}')"
+    fi
+
+    removed=0
+    while IFS= read -r pid; do
+        [ -z "$pid" ] && continue
+        if [ "$pid" = "$keep_pid" ]; then
+            continue
+        fi
+        kill "$pid" >/dev/null 2>&1 || true
+        sleep 0.2
+        if kill -0 "$pid" >/dev/null 2>&1; then
+            kill -9 "$pid" >/dev/null 2>&1 || true
+        fi
+        removed=$((removed + 1))
+    done <<< "$pids"
+
+    if [ "$removed" -gt 0 ]; then
+        REPORT+="  ⚠️  dedupe $display_name: found=$pid_count kept=$keep_pid removed=$removed\n"
+    fi
+}
+
+prune_stale_openviking_mcp() {
+    local max_instances stale_sec pids pid_count removed force_trim
+    max_instances="${OPENVIKING_MCP_MAX_PROCS:-1}"
+    stale_sec="${OPENVIKING_MCP_STALE_SEC:-7200}"
+    force_trim="${OPENVIKING_MCP_FORCE_TRIM:-0}"
+    pids="$(pgrep -f "openviking_mcp.py" 2>/dev/null || true)"
+    pid_count="$(echo "$pids" | awk 'NF' | wc -l | tr -d ' ')"
+    [ -z "$pid_count" ] && pid_count=0
+
+    if [ "$pid_count" -eq 0 ]; then
+        REPORT+="  ✅ openviking-mcp: no running process\n"
+        return 0
+    fi
+
+    REPORT+="  ✅ openviking-mcp: instances=$pid_count\n"
+    if [ "$pid_count" -le "$max_instances" ]; then
+        return 0
+    fi
+    if [ "$pid_count" -gt $((max_instances * 2)) ]; then
+        force_trim=1
+    fi
+
+    removed=0
+    while read -r pid age_sec; do
+        [ -z "$pid" ] && continue
+        [ -z "$age_sec" ] && continue
+        if ! [[ "$age_sec" =~ ^[0-9]+$ ]]; then
+            continue
+        fi
+        if [ "$pid_count" -le "$max_instances" ]; then
+            break
+        fi
+        if [ "$force_trim" != "1" ] && [ "$age_sec" -lt "$stale_sec" ]; then
+            continue
+        fi
+        kill "$pid" >/dev/null 2>&1 || true
+        sleep 0.2
+        if kill -0 "$pid" >/dev/null 2>&1; then
+            kill -9 "$pid" >/dev/null 2>&1 || true
+        fi
+        removed=$((removed + 1))
+        pid_count=$((pid_count - 1))
+    done < <(
+        ps -ax -o pid=,etime=,command= 2>/dev/null \
+          | awk '/openviking_mcp.py/ && !/awk/ {print $1" "$2}' \
+          | while read -r pid etime; do
+                [ -z "$pid" ] && continue
+                [ -z "$etime" ] && continue
+                age_sec="$(etime_to_seconds "$etime")"
+                echo "$pid $age_sec"
+            done \
+          | sort -k2 -nr
+    )
+
+    if [ "$removed" -gt 0 ]; then
+        if [ "$force_trim" = "1" ]; then
+            REPORT+="  ⚠️  openviking-mcp prune: removed=$removed keep_limit=$max_instances force_trim=1\n"
+        else
+            REPORT+="  ⚠️  openviking-mcp prune: removed=$removed keep_limit=$max_instances stale>=${stale_sec}s\n"
+        fi
+    fi
+    if [ "$pid_count" -gt "$max_instances" ]; then
+        REPORT+="  ⚠️  openviking-mcp pressure: current=$pid_count limit=$max_instances (all active)\n"
     fi
 }
 
@@ -68,15 +188,19 @@ check_openviking_api() {
     local deep_status=""
     http_status=$(curl -s -o /dev/null -w "%{http_code}" \
       "http://127.0.0.1:8090/health" \
-      --max-time 4 2>/dev/null || echo "000")
+      --max-time 6 2>/dev/null || true)
+    http_status="${http_status: -3}"
+    [ -z "$http_status" ] && http_status="000"
 
     if [ "$DEEP_PROBE" = "1" ] || [ "$http_status" != "200" ]; then
         # Deep probe verifies core search endpoint in addition to /health.
         deep_status=$(curl -s -o /dev/null -w "%{http_code}" \
           -X POST "http://127.0.0.1:8090/api/v1/search/find" \
           -H "Content-Type: application/json" \
-          -d '{"query":"healthcheck","target_uri":"viking://resources","limit":1}' \
-          --max-time 8 2>/dev/null || echo "000")
+          -d '{"query":"__healthcheck__","target_uri":"viking://resources","limit":1}' \
+          --max-time 15 2>/dev/null || true)
+        deep_status="${deep_status: -3}"
+        [ -z "$deep_status" ] && deep_status="000"
         if [ "$http_status" != "200" ]; then
             http_status="$deep_status"
         fi
@@ -105,13 +229,13 @@ check_onecontext() {
     if command -v onecontext >/dev/null 2>&1; then
         cli_name="onecontext"
         set +e
-        cli_output="$(onecontext search "healthcheck" -t all -l 1 --no-regex 2>&1)"
+        cli_output="$(onecontext search "healthcheck" -t all -l 1 2>&1)"
         rc=$?
         set -e
     elif command -v aline >/dev/null 2>&1; then
         cli_name="aline"
         set +e
-        cli_output="$(aline search "healthcheck" -t all -l 1 --no-regex 2>&1)"
+        cli_output="$(aline search "healthcheck" -t all -l 1 2>&1)"
         rc=$?
         set -e
     fi
@@ -128,20 +252,62 @@ check_onecontext() {
     fi
 }
 
-check_memory_viewer_api() {
-    local url="http://${CONTEXT_VIEWER_HOST}:${CONTEXT_VIEWER_PORT}/api/health"
-    local code
-    set +e
-    code=$(curl -s -o /dev/null -w "%{http_code}" "$url" --max-time 3 2>/dev/null)
-    local rc=$?
-    set -e
-    if [ "$rc" -ne 0 ] || [ -z "$code" ]; then
-        code="000"
+check_onecontext_coverage() {
+    if ! command -v sqlite3 >/dev/null 2>&1; then
+        REPORT+="  ℹ️  onecontext coverage: sqlite3 not found\n"
+        return 0
     fi
-    if [ "$code" = "200" ]; then
-        REPORT+="  ✅ memory-viewer-api: HTTP 200 (${CONTEXT_VIEWER_HOST}:${CONTEXT_VIEWER_PORT})\n"
-    else
-        REPORT+="  ℹ️  memory-viewer-api: HTTP $code (${CONTEXT_VIEWER_HOST}:${CONTEXT_VIEWER_PORT})\n"
+    local db="$HOME/.aline/db/aline.db"
+    if [ ! -f "$db" ]; then
+        REPORT+="  ⚠️  onecontext coverage: DB not found ($db)\n"
+        STATUS=1
+        return 0
+    fi
+
+    local sessions codex claude events llm_err queued_sp processing_sp
+    sessions=$(sqlite3 "$db" "SELECT count(*) FROM sessions;" 2>/dev/null || echo "ERR")
+    codex=$(sqlite3 "$db" "SELECT count(*) FROM sessions WHERE session_type='codex';" 2>/dev/null || echo "ERR")
+    claude=$(sqlite3 "$db" "SELECT count(*) FROM sessions WHERE session_type='claude';" 2>/dev/null || echo "ERR")
+    events=$(sqlite3 "$db" "SELECT count(*) FROM events;" 2>/dev/null || echo "ERR")
+    llm_err=$(sqlite3 "$db" "SELECT count(*) FROM sessions WHERE session_title LIKE '⚠ LLM API Error%';" 2>/dev/null || echo "ERR")
+    queued_sp=$(sqlite3 "$db" "SELECT count(*) FROM jobs WHERE kind='session_process' AND status='queued';" 2>/dev/null || echo "ERR")
+    processing_sp=$(sqlite3 "$db" "SELECT count(*) FROM jobs WHERE kind='session_process' AND status='processing';" 2>/dev/null || echo "ERR")
+
+    REPORT+="  ✅ onecontext sessions: total=$sessions codex=$codex claude=$claude events=$events\n"
+    REPORT+="  ✅ onecontext queue: session_process queued=$queued_sp processing=$processing_sp\n"
+    REPORT+="  ✅ onecontext summary-error sessions: $llm_err\n"
+
+    local codex_local claude_local
+    codex_local=$(find "$HOME/.codex/sessions" -type f -name '*.jsonl' 2>/dev/null | wc -l | tr -d ' ')
+    claude_local=$(find "$HOME/.claude/projects" -type f -name '*.jsonl' ! -path '*/subagents/*' 2>/dev/null | wc -l | tr -d ' ')
+    REPORT+="  ✅ local session files: codex=$codex_local claude_main=$claude_local\n"
+
+    # Coverage check (python for path-level exact diff)
+    if command -v python3 >/dev/null 2>&1; then
+        local cov
+        cov="$(python3 - <<'PY'
+from pathlib import Path
+import sqlite3, os
+db = os.path.expanduser("~/.aline/db/aline.db")
+conn = sqlite3.connect(db)
+cur = conn.cursor()
+db_paths = set(r[0] for r in cur.execute("select session_file_path from sessions where session_file_path is not null"))
+conn.close()
+codex = [str(p) for p in Path(os.path.expanduser("~/.codex/sessions")).rglob("*.jsonl")]
+claude = [str(p) for p in Path(os.path.expanduser("~/.claude/projects")).rglob("*.jsonl") if "/subagents/" not in str(p)]
+miss_codex = sum(1 for p in codex if p not in db_paths)
+miss_claude = sum(1 for p in claude if p not in db_paths)
+print(f"{miss_codex},{miss_claude}")
+PY
+)"
+        local miss_codex miss_claude
+        miss_codex="${cov%%,*}"
+        miss_claude="${cov##*,}"
+        REPORT+="  ✅ onecontext missing files: codex=$miss_codex claude_main=$miss_claude\n"
+        if [ "$miss_codex" -gt 0 ] || [ "$miss_claude" -gt 0 ]; then
+            REPORT+="  ⚠️  onecontext backlog exists; run run_onecontext_maintenance.sh\n"
+            STATUS=1
+        fi
     fi
 }
 
@@ -184,12 +350,24 @@ check_perm_max() {
     local label="$1"
     local path="$2"
     local max_perm="$3"
-    if [ ! -f "$path" ]; then
-        REPORT+="  ℹ️  $label not found: $path\n"
+    local effective_path="$path"
+    if [ -L "$path" ]; then
+        local target
+        target="$(readlink "$path" 2>/dev/null || true)"
+        if [ -n "$target" ]; then
+            if [[ "$target" = /* ]]; then
+                effective_path="$target"
+            else
+                effective_path="$(cd "$(dirname "$path")" && pwd)/$target"
+            fi
+        fi
+    fi
+    if [ ! -f "$effective_path" ]; then
+        REPORT+="  ℹ️  $label not found: $effective_path\n"
         return 0
     fi
     local perm
-    perm=$(file_perm_mode "$path")
+    perm=$(file_perm_mode "$effective_path")
     if [ "$perm" -le "$max_perm" ]; then
         REPORT+="  ✅ $label perms: $perm\n"
     else
@@ -229,13 +407,14 @@ REPORT+="[$TS] Context System Health Check\n"
 REPORT+="─────────────────────────────────\n"
 REPORT+="Processes:\n"
 
+dedupe_process_keep_launchd "aline-watcher" "realign.watcher_daemon" "com.aline.watcher"
+dedupe_process_keep_launchd "aline-worker" "realign.worker_daemon" "com.aline.worker"
 check_process "viking_daemon" "viking_daemon.py"
 check_process "openviking-server" "openviking-server|openviking.server.bootstrap"
 check_process "aline-watcher" "realign.watcher_daemon"
 check_process "aline-worker" "realign.worker_daemon"
-check_optional_process "memory-viewer" "memory_viewer.py"
+prune_stale_openviking_mcp
 check_openviking_api
-check_memory_viewer_api
 check_onecontext
 
 REPORT+="\nLaunchd:\n"
@@ -255,38 +434,31 @@ check_perm_max "openviking-config" "$HOME/.openviking_data/ov.conf" 600
 check_perm_max "antigravity-secrets" "$HOME/.antigravity_secrets" 600
 
 REPORT+="\nLog Sizes:\n"
-check_log_size "viking_daemon" "$LOG_DIR/viking_daemon.log" "$MAX_LOG_MB_VIKING_DAEMON"
-check_log_size "openviking_server" "$LOG_DIR/openviking_server_launchd.log" "$MAX_LOG_MB_OPENVIKING_SERVER"
-check_log_size "aline_watcher" "$HOME/.aline/.logs/watcher_core.log" "$MAX_LOG_MB_ALINE_WATCHER"
-check_log_size "aline_worker" "$HOME/.aline/.logs/worker_core.log" "$MAX_LOG_MB_ALINE_WORKER"
-check_log_size "aline_watcher_stderr" "$HOME/.aline/.logs/watcher_stderr.log" "$MAX_LOG_MB_ALINE_WATCHER_STDERR"
-check_log_size "aline_llm" "$HOME/.aline/.logs/llm.log" "$MAX_LOG_MB_ALINE_LLM"
+check_log_size "viking_daemon" "$LOG_DIR/viking_daemon.log" 50
+check_log_size "openviking_server" "$LOG_DIR/openviking_server_launchd.log" 50
+check_log_size "aline_watcher" "$HOME/.aline/.logs/watcher_core.log" 100
+check_log_size "aline_worker" "$HOME/.aline/.logs/worker_core.log" 100
+check_log_size "aline_watcher_stderr" "$HOME/.aline/.logs/watcher_stderr.log" 120
+check_log_size "aline_llm" "$HOME/.aline/.logs/llm.log" 120
 
 REPORT+="\nAline DB:\n"
 if ! command -v sqlite3 >/dev/null 2>&1; then
     REPORT+="  ℹ️  sqlite3 not found, skipping DB checks\n"
 elif [ -f "$HOME/.aline/db/aline.db" ]; then
-    RECENT=$(sqlite3 "$HOME/.aline/db/aline.db" "
-        SELECT count(*) FROM sessions
-        WHERE
-          CASE
-            WHEN trim(CAST(created_at AS TEXT)) GLOB '[0-9]*' AND length(trim(CAST(created_at AS TEXT))) >= 13
-              THEN datetime(CAST(created_at AS INTEGER) / 1000, 'unixepoch')
-            WHEN trim(CAST(created_at AS TEXT)) GLOB '[0-9]*' AND length(trim(CAST(created_at AS TEXT))) >= 10
-              THEN datetime(CAST(created_at AS INTEGER), 'unixepoch')
-            ELSE datetime(created_at)
-          END > datetime('now', '-${RECENT_SESSIONS_WINDOW_HOURS} hours');
-    " 2>/dev/null || echo "ERR")
+    RECENT=$(sqlite3 "$HOME/.aline/db/aline.db" "SELECT count(*) FROM sessions WHERE created_at > datetime('now', '-2 hours');" 2>/dev/null || echo "ERR")
     if [ "$RECENT" = "0" ] || [ "$RECENT" = "ERR" ]; then
-        REPORT+="  ⚠️  No new sessions in the last ${RECENT_SESSIONS_WINDOW_HOURS} hours ($RECENT)\n"
+        REPORT+="  ⚠️  No new sessions in the last 2 hours ($RECENT)\n"
     else
-        REPORT+="  ✅ $RECENT sessions in the last ${RECENT_SESSIONS_WINDOW_HOURS} hours\n"
+        REPORT+="  ✅ $RECENT sessions in the last 2 hours\n"
     fi
     DB_SIZE=$(( $(file_size_bytes "$HOME/.aline/db/aline.db") / 1048576 ))
     REPORT+="  📦 DB size: ${DB_SIZE}MB\n"
 else
     REPORT+="  ⚠️  ~/.aline/db/aline.db missing\n"
 fi
+
+REPORT+="\nOneContext Coverage:\n"
+check_onecontext_coverage
 
 REPORT+="\nViking Sync:\n"
 PENDING_DIR="$UNIFIED_CONTEXT_STORAGE_ROOT/resources/shared/history/.pending"
@@ -299,24 +471,6 @@ if [ -d "$PENDING_DIR" ]; then
     fi
 else
     REPORT+="  ✅ No pending directory\n"
-fi
-
-REPORT+="\nMemory Index:\n"
-INDEX_DB="${MEMORY_INDEX_DB_PATH:-$UNIFIED_CONTEXT_STORAGE_ROOT/index/memory_index.db}"
-if [ -f "$INDEX_DB" ]; then
-    if command -v sqlite3 >/dev/null 2>&1; then
-        OBS_COUNT=$(sqlite3 "$INDEX_DB" "SELECT count(*) FROM observations;" 2>/dev/null || echo "ERR")
-        if [ "$OBS_COUNT" = "ERR" ]; then
-            REPORT+="  ⚠️  memory index unreadable: $INDEX_DB\n"
-            STATUS=1
-        else
-            REPORT+="  ✅ memory index observations: $OBS_COUNT\n"
-        fi
-    else
-        REPORT+="  ✅ memory index present: $INDEX_DB\n"
-    fi
-else
-    REPORT+="  ℹ️  memory index missing: $INDEX_DB\n"
 fi
 
 REPORT+="\n"
