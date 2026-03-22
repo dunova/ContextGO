@@ -16,9 +16,9 @@ from pathlib import Path
 from typing import Any
 
 
-RECALL_PATH = Path("/Users/dunova/.agents/skills/recall/scripts/recall.py")
-MCP_PATH = Path("/Users/dunova/.codex/skills/openviking-memory-sync/scripts/openviking_mcp.py")
-OPENVIKING_PYTHON = Path("/Users/dunova/.openviking_env/bin/python")
+RECALL_PATH = Path(os.environ.get("RECALL_PATH", "/usr/local/bin/recall.py"))
+MCP_PATH = Path(os.environ.get("MCP_PATH", "/usr/local/bin/openviking_mcp.py"))
+OPENVIKING_PYTHON = Path(os.environ.get("OPENVIKING_PYTHON", sys.executable))
 RECALL_DB = Path.home() / ".recall.db"
 RANDOM_SEED = 20260306
 
