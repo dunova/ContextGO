@@ -38,22 +38,37 @@ Context Mesh Foundry (CMF) 是一个**本地优先、无 MCP 依赖、零 Docker
 
 ## 系统架构
 
-<div align="center">
-  <img src="https://raw.githubusercontent.com/dunova/context-mesh-foundry/main/docs/assets/architecture_visual.png" width="800px" alt="Context Mesh Foundry Architecture"/>
-</div>
-
-```mermaid
-graph TD
-    A["AI 终端 / Agents<br/>(Claude Code, Codex, OpenCode...)"] -->|python3 context_cli.py| B["context_cli.py (核心网关)"]
-    subgraph "存储与索引 (Memory Core)"
-        C["recall.py (SQLite 精确索引)"]
-        D["OpenViking API (向量语义库)"]
-    end
-    B --> C
-    B --> D
-    E["viking_daemon.py (后台脱敏进程)"] -.->|自动归档| C
-    E -.->|隐私清洗 & 数据导出| E
-    F[终端历史 / Shell History] --> E
+```text
+┌─────────────────────────────────────────────┐
+│              AI 终端 / Agent                 │
+│     (Claude Code, Codex CLI, OpenCode…)     │
+└──────────────┬──────────────────────────────┘
+               │ 调用 python3 context_cli.py
+               ▼
+┌─────────────────────────────────────────────┐
+│          context_cli.py (CLI 入口)           │
+│ • search: recall.py → 本地文件扫描           │
+│ • semantic: 语义匹配 (可选对接 OpenViking)   │
+│ • save: 持久化保存关键决策与约束             │
+│ • health: 全栈健康自检                       │
+└──────────────┬──────────────────────────────┘
+               │
+       ┌───────┴───────┐
+       ▼               ▼
+┌────────────┐  ┌─────────────────┐
+│  recall.py │  │  OpenViking API │
+│  (SQLite   │  │  (可选向量引擎)   │
+│   混合索引) │  │                 │
+└────────────┘  └─────────────────┘
+       ▲
+       │ 空闲时自动归档
+┌──────┴──────────────────────────────────────┐
+│          viking_daemon.py (守护进程)         │
+│ • 监控: Claude, Codex, OpenCode, Shell...  │
+│ • 清洗: 15+ 种隐私/密钥脱敏模式              │
+│ • 导出: 格式化 Markdown → 本地/远程存储      │
+│ • 队列: 离线时自动存入 .pending/ 等待重试     │
+└─────────────────────────────────────────────┘
 ```
 
 ### GSD 集成
@@ -223,22 +238,38 @@ Blind whole-disk scans (`~/`, `/Volumes/*`) without prior recall are **forbidden
 
 ## Architecture
 
-<div align="center">
-  <img src="https://raw.githubusercontent.com/dunova/context-mesh-foundry/main/docs/assets/architecture_visual.png" width="800px" alt="Context Mesh Foundry Architecture"/>
-</div>
-
-```mermaid
-graph TD
-    A["AI Terminals / Agents<br/>(Claude Code, Codex, OpenCode...)"] -->|python3 context_cli.py| B["context_cli.py (CLI Gateway)"]
-    subgraph "Memory Core"
-        C["recall.py (SQLite Precise Index)"]
-        D["OpenViking API (Vector Store)"]
-    end
-    B --> C
-    B --> D
-    E["viking_daemon.py (Daemon Process)"] -.->|Auto-Archive| C
-    E -.->|Privacy Scrubbing & Export| E
-    F[Terminal History / Shell History] --> E
+```text
+┌─────────────────────────────────────────────┐
+│              AI Terminals / Agents           │
+│     (Claude Code, Codex CLI, OpenCode…)     │
+└──────────────┬──────────────────────────────┘
+               │ call python3 context_cli.py
+               ▼
+┌─────────────────────────────────────────────┐
+│          context_cli.py (CLI Gateway)       │
+│ • search: recall.py → Local File Scan       │
+│ • semantic: Semantic match (OpenViking opt) │
+│ • save: Persist key decisions / constraints │
+│ • health: Full-stack health check           │
+└──────────────┬──────────────────────────────┘
+               │
+       ┌───────┴───────┐
+       ▼               ▼
+┌────────────┐  ┌─────────────────┐
+│  recall.py │  │  OpenViking API │
+│  (SQLite   │  │  (vectorized    │
+│   hybrid)  │  │   search)       │
+└────────────┘  └─────────────────┘
+       ▲
+       │  auto-export on idle
+┌──────┴──────────────────────────────────────┐
+│           viking_daemon.py (Daemon)         │
+│   • Watches: Claude, Codex, OpenCode,       │
+│     Kilo, zsh/bash, Gemini walkthroughs     │
+│   • Sanitizes: 15+ redaction patterns       │
+│   • Exports: markdown → local storage       │
+│   • Queues failures to .pending/            │
+└─────────────────────────────────────────────┘
 ```
 
 ### GSD Integration
