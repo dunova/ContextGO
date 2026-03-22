@@ -10,11 +10,18 @@ Modern AI-assisted development spawns many parallel sessions — Claude Code, Co
 
 ## What This Does
 
-Context Mesh Foundry (CMF) is a **local-first, MCP-free** context persistence layer. It weaves together three subsystems into a unified memory mesh:
+Context Mesh Foundry (CMF) is a **local-first, MCP-free, and Zero-Docker** context persistence layer. It weaves together three subsystems into a unified memory mesh:
 
 1. **recall.py** — Hybrid search across all AI session histories (SQLite index + regex)
 2. **context_cli.py** — Lightweight CLI for search, semantic query, save, and health check — the **default entry point**
-3. **viking_daemon.py** — Background daemon that watches terminal/AI histories and exports sanitized markdown to OpenViking for vectorization
+3. **viking_daemon.py** — Background daemon that watches terminal/AI histories and exports sanitized markdown to local storage.
+
+### 🚀 Zero-Docker / Pure-Python Operation
+
+Unlike many context systems that require complex vector databases (Milvus, Chroma) running in Docker, CMF is designed to be **server-optional**:
+
+- **Default Mode**: Operates entirely as local Python scripts. It uses a local SQLite index and standard file search. No Docker, no background servers, no overhead.
+- **Advanced Mode (Optional)**: If you already have [OpenViking](https://github.com/Open-Wise/OpenViking) running, CMF can automatically sync to it for high-dimensional semantic search. But for 90% of use cases, the local-only mode is faster and sufficient.
 
 ### Hit-First Retrieval Protocol
 
@@ -266,11 +273,18 @@ See [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) for known failures and 
 
 ## 这个项目做了什么
 
-Context Mesh Foundry (CMF) 是一个**本地优先、无 MCP 依赖**的上下文持久层。它将三个子系统缝合成统一的记忆网格：
+Context Mesh Foundry (CMF) 是一个**本地优先、无 MCP 依赖、零 Docker 运行**的上下文持久层。它将三个子系统缝合成统一的记忆网格：
 
 1. **recall.py** — 跨所有 AI 会话历史的混合搜索（SQLite 索引 + 正则）
 2. **context_cli.py** — 轻量 CLI，支持 search / semantic / save / health — **默认入口**
-3. **viking_daemon.py** — 后台守护进程，监控终端/AI 历史并导出清洗后的 markdown 到 OpenViking 做向量化
+3. **viking_daemon.py** — 后台守护进程，监控终端/AI 历史并将清洗后的内容导出到本地存储。
+
+### 🚀 零 Docker / 纯 Python 协议
+
+与许多需要 Docker 运行复杂向量数据库（Milvus、Chroma）的上下文系统不同，CMF 设计为**服务器可选**：
+
+- **默认模式**：完全作为本地 Python 脚本运行。使用本地 SQLite 索引和标准文件搜索。无需 Docker，无需后台服务器，无额外开销。
+- **高级模式（可选）**：如果你已经在运行 [OpenViking](https://github.com/Open-Wise/OpenViking) 服务器，CMF 可以自动同步到服务器以支持高维语义搜索。但对于 90% 的场景，纯本地模式更快且足够好用。
 
 ### 三段式预热协议（强制执行）
 
