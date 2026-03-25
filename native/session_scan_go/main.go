@@ -12,6 +12,17 @@ import (
 	"time"
 )
 
+var noiseMarkers = []string{
+	"# agents.md instructions",
+	"### available skills",
+	"prompt engineer and agent skill optimizer",
+	"current skill name:",
+	"skill.md",
+	"python -m pytest",
+	"benchmarks/run.py",
+	"<instructions>",
+}
+
 type WorkItem struct {
 	Source string
 	Path   string
@@ -144,22 +155,85 @@ func processFile(item WorkItem, query string) (SessionSummary, bool) {
 			continue
 		}
 		summary.Lines++
-		if queryLower != "" && strings.Contains(strings.ToLower(line), queryLower) && summary.Snippet == "" {
-			matchFound = true
-			if len(line) > 220 {
-				summary.Snippet = line[:220]
-			} else {
-				summary.Snippet = line
-			}
-		}
 		var payload map[string]any
 		if err := json.Unmarshal([]byte(line), &payload); err == nil {
 			if sid := extractSessionID(payload); sid != "" {
 				summary.SessionID = sid
 			}
+			if queryLower != "" && summary.Snippet == "" {
+				for _, text := range extractTextCandidates(payload) {
+					textLower := strings.ToLower(text)
+					if strings.Contains(textLower, queryLower) && !isNoiseLine(textLower) {
+						matchFound = true
+						if len(text) > 220 {
+							summary.Snippet = text[:220]
+						} else {
+							summary.Snippet = text
+						}
+						break
+					}
+				}
+			}
+		} else if queryLower != "" && summary.Snippet == "" {
+			lineLower := strings.ToLower(line)
+			if strings.Contains(lineLower, queryLower) && !isNoiseLine(lineLower) {
+				matchFound = true
+				if len(line) > 220 {
+					summary.Snippet = line[:220]
+				} else {
+					summary.Snippet = line
+				}
+			}
 		}
 	}
 	return summary, matchFound
+}
+
+func isNoiseLine(line string) bool {
+	for _, marker := range noiseMarkers {
+		if strings.Contains(line, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func extractTextCandidates(payload map[string]any) []string {
+	out := make([]string, 0, 8)
+	appendIfString := func(value any) {
+		if text, ok := value.(string); ok {
+			text = strings.TrimSpace(text)
+			if text != "" {
+				out = append(out, text)
+			}
+		}
+	}
+	for _, key := range []string{"message", "display", "text", "input", "prompt", "output", "content"} {
+		appendIfString(payload[key])
+	}
+	if nested, ok := payload["payload"].(map[string]any); ok {
+		for _, key := range []string{"message", "display", "text", "input", "prompt", "output"} {
+			appendIfString(nested[key])
+		}
+		if content, ok := nested["content"].([]any); ok {
+			for _, item := range content {
+				if m, ok := item.(map[string]any); ok {
+					appendIfString(m["text"])
+				}
+			}
+		}
+	}
+	if message, ok := payload["message"].(map[string]any); ok {
+		appendIfString(message["content"])
+		if content, ok := message["content"].([]any); ok {
+			for _, item := range content {
+				if m, ok := item.(map[string]any); ok {
+					appendIfString(m["text"])
+				}
+			}
+		}
+	}
+	return out
 }
 
 func extractSessionID(payload map[string]any) string {

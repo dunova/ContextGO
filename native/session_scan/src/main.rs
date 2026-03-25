@@ -10,6 +10,17 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use walkdir::WalkDir;
 
+const NOISE_MARKERS: &[&str] = &[
+    "# agents.md instructions",
+    "### available skills",
+    "prompt engineer and agent skill optimizer",
+    "current skill name:",
+    "skill.md",
+    "python -m pytest",
+    "benchmarks/run.py",
+    "<instructions>",
+];
+
 #[derive(Parser)]
 #[command(author, version, about = "高性能 Codex / Claude 会话扫描原型")]
 struct Args {
@@ -273,10 +284,6 @@ fn process_file(item: &WorkItem, query: &str) -> Result<SessionSummary> {
             continue;
         }
         lines += 1;
-        if !query_lower.is_empty() && line.to_lowercase().contains(&query_lower) && snippet.is_none() {
-            matched = true;
-            snippet = Some(line.chars().take(220).collect::<String>());
-        }
         if let Ok(json) = serde_json::from_str::<Value>(&line) {
             if let Some(id) = extract_session_id(&json) {
                 session_id = id;
@@ -286,6 +293,22 @@ fn process_file(item: &WorkItem, query: &str) -> Result<SessionSummary> {
                     first_timestamp = Some(ts.clone());
                 }
                 last_timestamp = Some(ts);
+            }
+            if !query_lower.is_empty() && snippet.is_none() {
+                for text in extract_text_candidates(&json) {
+                    let lowered = text.to_lowercase();
+                    if lowered.contains(&query_lower) && !is_noise_line(&lowered) {
+                        matched = true;
+                        snippet = Some(text.chars().take(220).collect::<String>());
+                        break;
+                    }
+                }
+            }
+        } else if !query_lower.is_empty() && snippet.is_none() {
+            let line_lower = line.to_lowercase();
+            if line_lower.contains(&query_lower) && !is_noise_line(&line_lower) {
+                matched = true;
+                snippet = Some(line.chars().take(220).collect::<String>());
             }
         }
     }
@@ -304,6 +327,46 @@ fn process_file(item: &WorkItem, query: &str) -> Result<SessionSummary> {
         last_timestamp,
         snippet,
     })
+}
+
+fn is_noise_line(line: &str) -> bool {
+    NOISE_MARKERS.iter().any(|marker| line.contains(marker))
+}
+
+fn extract_text_candidates(value: &Value) -> Vec<String> {
+    let mut out = Vec::new();
+    collect_text_candidate(value.get("message"), &mut out);
+    for key in ["display", "text", "input", "prompt", "output", "content"] {
+        collect_text_candidate(value.get(key), &mut out);
+    }
+    if let Some(payload) = value.get("payload") {
+        for key in ["message", "display", "text", "input", "prompt", "output"] {
+            collect_text_candidate(payload.get(key), &mut out);
+        }
+        if let Some(items) = payload.get("content").and_then(|v| v.as_array()) {
+            for item in items {
+                collect_text_candidate(item.get("text"), &mut out);
+            }
+        }
+    }
+    if let Some(message) = value.get("message") {
+        collect_text_candidate(message.get("content"), &mut out);
+        if let Some(items) = message.get("content").and_then(|v| v.as_array()) {
+            for item in items {
+                collect_text_candidate(item.get("text"), &mut out);
+            }
+        }
+    }
+    out
+}
+
+fn collect_text_candidate(value: Option<&Value>, out: &mut Vec<String>) {
+    if let Some(text) = value.and_then(|v| v.as_str()) {
+        let trimmed = text.trim();
+        if !trimmed.is_empty() {
+            out.push(trimmed.to_string());
+        }
+    }
 }
 
 fn extract_session_id(value: &Value) -> Option<String> {
