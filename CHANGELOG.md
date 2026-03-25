@@ -22,6 +22,7 @@
 - built-in session index backed by local SQLite
 - benchmark harness under [`benchmarks/`](/Volumes/AI/GitHub/context-mesh-foundry/benchmarks)
 - Rust session-scan prototype under [`native/session_scan/`](/Volumes/AI/GitHub/context-mesh-foundry/native/session_scan)
+- 文档中补充了平台安装矩阵、验证清单与 Native 迁移叙事，帮助商业用户理解从 Python 到 Rust/Go 的确定性路线。
 
 ### Changed
 

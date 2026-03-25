@@ -116,9 +116,9 @@ check_logs_and_pending() {
     health_log="$LOG_DIR/healthcheck.log"
 
     if [ -f "$daemon_log" ]; then
-        report_ok "daemon 日志大小：$(( $(file_size_bytes "$daemon_log") / 1048576 ))MB"
+        report_ok "Context Mesh daemon 日志大小：$(( $(file_size_bytes "$daemon_log") / 1048576 ))MB"
     elif [ -f "$legacy_daemon_log" ]; then
-        report_warn "检测到旧 daemon 日志名：$legacy_daemon_log（viking_daemon.log）"
+        report_warn "检测到历史守护进程日志：$legacy_daemon_log（旧 viking_daemon.log）"
     else
         report_warn "daemon 日志不存在（如未启动可忽略）"
     fi
@@ -142,9 +142,9 @@ check_legacy_remote_processes() {
     local pids
     pids="$(pgrep -f 'context_daemon.py|viking_daemon.py|openviking_mcp.py|openviking-server' 2>/dev/null || true)"
     if [ -n "$pids" ]; then
-        report_warn "检测到遗留 OpenViking/MCP 远程同步进程：$(echo "$pids" | tr '\n' ' ' | sed 's/  */ /g')"
+        report_warn "检测到遗留 Context Mesh 远程同步进程（OpenViking/MCP）：$(echo "$pids" | tr '\n' ' ' | sed 's/  */ /g')"
     else
-        report_ok "未检测到遗留 OpenViking/MCP 远程同步进程"
+        report_ok "未检测到遗留 Context Mesh 远程同步进程（OpenViking/MCP）"
     fi
 }
 

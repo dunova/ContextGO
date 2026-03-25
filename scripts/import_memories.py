@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Legacy wrapper for `context_cli.py import`."""
+"""Thin wrapper for `context_cli.py import`."""
 
 from __future__ import annotations
 

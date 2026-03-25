@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
-"""Legacy wrapper for `context_cli.py export`."""
+"""Thin wrapper for `context_cli.py export`."""
 
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
-
 import context_cli
 
 

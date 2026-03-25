@@ -37,6 +37,24 @@ The release strategy is deliberately staged:
 3. replace only hot paths in Rust or Go
 4. keep the operator-facing product stable throughout while recording benchmark data before every native swap
 
+## 安装矩阵
+
+1. **Linux (x86_64/ARM64)**：准备 Python 3.11、SQLite、bash，`git clone https://github.com/dunova/context-mesh-foundry.git && cd context-mesh-foundry && cp .env.example .env && bash scripts/unified_context_deploy.sh`，再用 `python3 scripts/context_cli.py health`、`python3 scripts/context_cli.py smoke` 验证守护进程。
+2. **macOS (Intel/Apple Silicon)**：确认 `/opt/homebrew/bin` 在 PATH，系统 Python 3.11 或 `pyenv` 安装好后与 Linux 同步运行上面的脚本，必要时用 `brew install sqlite` 补齐 sqlite3。
+3. **Windows (WSL2 / PowerShell)**：在 WSL 2 (Ubuntu 22.04+) 内运行 `git clone https://github.com/dunova/context-mesh-foundry.git && cd context-mesh-foundry && cp .env.example .env && bash scripts/unified_context_deploy.sh`，使用 `python3 scripts/context_cli.py health`、`python3 scripts/context_cli.py native-scan --backend auto --threads 4` 做健康检查，避免跨环境权限冲突。
+
+## Native 路线
+
+1. 先用 `python -m benchmarks --query <真实业务>` 量化 Python 单体的 latency/throughput，并把结果写入 release notes。
+2. 把瓶颈抽象成 `native/session_scan`（Rust）或 `native/session_scan_go`（Go）原型，保持 `context_cli.py native-scan` 不变，CLI 参数一致。
+3. 通过 `cargo run --release` 与 `python3 scripts/context_cli.py native-scan --backend auto --threads 4` 对比性能，确保 `benchmarks/` 输出体现提升后再切换。
+4. 每次 native 替换后，继续用 `python3 scripts/context_cli.py health` 和 `python3 scripts/context_cli.py smoke` 复测，记录结果供后续版本参考。
+
+## FAQ
+
+1. **有没有平台安装的速查表？** 见上面安装矩阵，所有平台都围绕 `bash scripts/unified_context_deploy.sh` 和 `python3 scripts/context_cli.py health` 这两条命令构建，Rust 工具链只在需要 native 原型时附加。
+2. **Native 迁移会破坏已有 CLI 吗？** 不会，它始终通过 `context_cli.py native-scan` 入口；工程师只需要在 `benchmarks/` 及 `cargo run --release`/`go run` 间比较指标，就能在保留操作一致性的情况下升级。
+
 ## Recommended Post-Release Checks
 
 ```bash
