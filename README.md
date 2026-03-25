@@ -49,12 +49,52 @@ python3 scripts/context_cli.py maintain --dry-run
 python3 scripts/context_cli.py health
 ```
 
+### 安装态烟测
+
+```bash
+python3 scripts/smoke_installed_runtime.py
+```
+
 ## 部署与运维
 
 - 默认安装目录：`~/.local/share/context-mesh-foundry`。
 - 本地服务：`com.contextmesh.daemon`、`com.contextmesh.healthcheck`。
 - `CONTEXT_MESH_*` 系列变量统一配置：`STORAGE_ROOT`、`REMOTE_URL`、`ENABLE_REMOTE_SYNC`、`VIEWER_HOST`、`VIEWER_PORT`、`SESSION_INDEX_DB_PATH`。
 - 旧桥接（`recall-lite`、`openviking`、`aline`）可清理，部署流程仅需 `bash scripts/unified_context_deploy.sh`。
+
+## FAQ
+
+### 这是一个库、一个工具，还是一套本地服务？
+
+三者都是，但对使用者来说它首先是一套本地产品：
+
+- CLI：`context_cli.py`
+- daemon：`context_daemon.py`
+- viewer：`context_server.py`
+- health/deploy：`context_healthcheck.sh` / `unified_context_deploy.sh`
+
+你可以只把它当命令行工具用，也可以把它部署成常驻本地上下文基础设施。
+
+### 为什么默认不启用远程同步？
+
+因为默认目标是：
+
+- 最少依赖
+- 最低 surprise
+- 最稳定本地链路
+- 最低 token / 网络开销
+
+远程同步是可选增强，不是默认主路径。
+
+### 为什么不直接全部用 Rust/Go 重写？
+
+因为当前最优路线是：
+
+1. 先把 Python 主链收敛成稳定单体
+2. 用 benchmark 找真实热点
+3. 只把热点模块逐步替换成 Rust/Go
+
+这样能同时兼顾速度、稳定性和迁移成本。
 
 ## 版本与发布
 

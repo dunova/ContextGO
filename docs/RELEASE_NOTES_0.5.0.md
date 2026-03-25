@@ -43,6 +43,7 @@ The release strategy is deliberately staged:
 python3 scripts/context_cli.py health
 python3 scripts/e2e_quality_gate.py
 python3 -m benchmarks --iterations 1 --warmup 0 --query benchmark
+python3 scripts/smoke_installed_runtime.py
 ```
 
 ## Upgrade Note
