@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Lightweight memory viewer API + SSE for Context Mesh Foundry."""
+"""Lightweight memory viewer API + SSE for ContextGO."""
 
 from __future__ import annotations
 
@@ -103,9 +103,9 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         if parsed.path == "/":
             self._send_html(
-                """<!doctype html><html><head><meta charset="utf-8"><title>Context Mesh Viewer</title></head>
+                """<!doctype html><html><head><meta charset="utf-8"><title>ContextGO Viewer</title></head>
 <body style="font-family: -apple-system, sans-serif; max-width: 960px; margin: 24px auto;">
-<h1>Context Mesh Viewer</h1>
+<h1>ContextGO Viewer</h1>
 <input id="q" style="width:70%" placeholder="搜索记忆关键词"/><button onclick="run()">Search</button>
 <pre id="out" style="white-space: pre-wrap; background:#f6f8fa; padding:12px;"></pre>
 <script>
@@ -116,7 +116,7 @@ async function run(){
   document.getElementById('out').textContent = JSON.stringify(j,null,2);
 }
 const es = new EventSource('/api/events');
-es.onmessage = (e)=>{ try{ const d=JSON.parse(e.data); document.title='Context Mesh Viewer ('+d.total_observations+')'; }catch(_){} };
+es.onmessage = (e)=>{ try{ const d=JSON.parse(e.data); document.title='ContextGO Viewer ('+d.total_observations+')'; }catch(_){} };
 </script></body></html>"""
             )
             return
@@ -214,7 +214,7 @@ def main():
     if HOST not in LOOPBACK_HOSTS and not VIEWER_TOKEN:
         raise SystemExit("CONTEXT_VIEWER_TOKEN is required when binding non-loopback host.")
     server = ThreadingHTTPServer((HOST, PORT), Handler)
-    print(f"Context Mesh Viewer listening on http://{HOST}:{PORT}")
+    print(f"ContextGO Viewer listening on http://{HOST}:{PORT}")
     server.serve_forever()
 
 

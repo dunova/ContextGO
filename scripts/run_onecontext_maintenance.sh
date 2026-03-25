@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_DIR="$HOME/.context_system/logs"
 LOG_FILE="${CONTEXT_MESH_MAINTENANCE_LOG:-$LOG_DIR/context_mesh_maintenance.log}"
-SERVICE_LABEL="Context Mesh maintenance"
+SERVICE_LABEL="ContextGO maintenance"
 
 log_line() {
   local ts

@@ -1,4 +1,4 @@
-# Context Mesh 单体产品架构
+# ContextGO 单体产品架构
 
 ## 组件概览
 

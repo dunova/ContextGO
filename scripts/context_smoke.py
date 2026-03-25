@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Smoke-test helpers for Context Mesh runtimes."""
+"""Smoke-test helpers for ContextGO runtimes."""
 
 from __future__ import annotations
 

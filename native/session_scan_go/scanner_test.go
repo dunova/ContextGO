@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestNoiseFilter(t *testing.T) {
 	filter := NewNoiseFilter([]string{"marker", "agent"})
@@ -25,15 +28,24 @@ func TestSnippetMatcher(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected match for text containing query")
 	}
-	if snippet != "befor" {
-		t.Fatalf("expected snippet truncated to limit, got %q", snippet)
+	if len(snippet) != 5 {
+		t.Fatalf("expected snippet to honor limit, got %q", snippet)
 	}
 
-	if _, ok := matcher.Match("noise skill.md query"); ok {
+	if _, ok := NewSnippetMatcher("query", filter, 40).Match("prefix query noise skill.md near match"); ok {
 		t.Fatalf("expected noise lines to stay filtered")
 	}
 	if _, ok := matcher.Match("missing keyword here"); ok {
 		t.Fatalf("expected lines without keyword to not match")
+	}
+	snippet, ok = NewSnippetMatcher("notebooklm", NewNoiseFilter(DefaultNoiseMarkers), 60).Match(
+		"skill.md very far away before the useful section and no longer near the final match ................................ NotebookLM useful content near query",
+	)
+	if !ok {
+		t.Fatalf("expected local query window to survive distant noise markers")
+	}
+	if !strings.Contains(strings.ToLower(snippet), "notebooklm") {
+		t.Fatalf("expected snippet to keep query, got %q", snippet)
 	}
 	if !NewSnippetMatcher("", filter, 1).QueryEmpty() {
 		t.Fatalf("empty query should be considered empty")

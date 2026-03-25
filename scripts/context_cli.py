@@ -152,7 +152,7 @@ def _legacy_bridge_process_count() -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Context Mesh unified CLI (search, viewer, native scan, smoke, and maintenance)."
+        description="ContextGO unified CLI (search, viewer, native scan, smoke, and maintenance)."
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -199,7 +199,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     native_scan = sub.add_parser(
         "native-scan",
-        help="Run the Context Mesh native scan workflow",
+        help="Run the ContextGO native scan workflow",
         description="Run the native scan workflow that exercises the Rust/Go backends without extra wrappers.",
     )
     native_scan.add_argument("--backend", choices=["auto", "rust", "go"], default="auto")
@@ -213,7 +213,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser(
         "smoke",
-        help="Run the Context Mesh smoke gate",
+        help="Run the ContextGO smoke gate",
         description="Run the smoke gate that checks CLI, viewer, and memory flows end to end.",
     )
 

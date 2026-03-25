@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Unified benchmark harness for the Context Mesh Foundry context chain."""
+"""Unified benchmark harness for the ContextGO context chain."""
 
 from __future__ import annotations
 
@@ -158,7 +158,7 @@ def _prepare_fake_home(home: Path, query: str) -> None:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run Context Mesh Foundry benchmarks.")
+    parser = argparse.ArgumentParser(description="Run ContextGO benchmarks.")
     parser.add_argument(
         "--mode",
         choices=("python", "native", "both"),
@@ -257,6 +257,12 @@ def _build_mode_sequence(mode: str) -> list[str]:
     return [mode]
 
 
+def _display_mode_label(mode: str) -> str:
+    if mode == "native":
+        return "native-wrapper"
+    return mode
+
+
 def _execute_mode(mode: str, args: argparse.Namespace) -> list[BenchmarkStats]:
     if mode == "python":
         scripts_path = str(SCRIPTS_DIR)
@@ -348,7 +354,7 @@ def _build_comparison_summary(
 def _print_comparison_text(comparisons: list[dict[str, float | None]]) -> None:
     if not comparisons:
         return
-    print("\nBenchmark Comparison (python vs native)")
+    print("\nBenchmark Comparison (python vs native-wrapper)")
     header = (
         "  "
         + "name".ljust(32)
@@ -512,10 +518,12 @@ def main(argv: list[str] | None = None) -> int:
             for index, (mode, stats_list) in enumerate(results_by_mode):
                 if index:
                     print()
-                _print_summary_text(stats_list, header=f"Benchmark Summary ({mode})")
+                display_mode = _display_mode_label(mode)
+                _print_summary_text(stats_list, header=f"Benchmark Summary ({display_mode})")
                 for stats in stats_list:
-                    _print_sample(f"{mode} · {stats.name}", stats.sample)
+                    _print_sample(f"{display_mode} · {stats.name}", stats.sample)
             if args.mode == "both" and len(results_by_mode) == 2:
+                print("\nNote: `native-wrapper` measures subprocess CLI/native-wrapper overhead, not pure Go/Rust core execution.")
                 comparisons = _build_comparison_summary(
                     results_by_mode[0][1], results_by_mode[1][1]
                 )

@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# Context Mesh Health Check (standalone local index)
+# ContextGO Health Check (standalone local index)
 # Default mode is non-intrusive and low-overhead.
 # --deep enables optional legacy/remote probes.
 # =============================================================================
@@ -115,11 +115,11 @@ check_remote_sync_probe() {
     [ -z "$http_status" ] && http_status="000"
 
     if [ "$http_status" = "200" ]; then
-        report_ok "Context Mesh 远程同步可选探针：HTTP 200"
+        report_ok "ContextGO 远程同步可选探针：HTTP 200"
         summary="HTTP 200"
         status="ok"
     else
-        report_warn "Context Mesh 远程同步可选探针：HTTP ${http_status}（不影响本地主链）"
+        report_warn "ContextGO 远程同步可选探针：HTTP ${http_status}（不影响本地主链）"
         summary="HTTP ${http_status}"
     fi
 
@@ -154,10 +154,10 @@ check_logs_and_pending() {
     local health_status="missing"
 
     if [ -f "$daemon_log" ]; then
-        report_ok "Context Mesh daemon 日志大小：$(( $(file_size_bytes "${daemon_log}") / 1048576 ))MB"
+        report_ok "ContextGO daemon 日志大小：$(( $(file_size_bytes "${daemon_log}") / 1048576 ))MB"
         daemon_status="present"
     elif [ -f "$legacy_daemon_log" ]; then
-        report_warn "检测到旧 Context Mesh daemon 日志：${legacy_daemon_log}（旧 context_daemon.log）"
+        report_warn "检测到旧 ContextGO daemon 日志：${legacy_daemon_log}（旧 context_daemon.log）"
         daemon_status="legacy"
         status="warn"
     elif [ -f "$very_legacy_daemon_log" ]; then
@@ -165,7 +165,7 @@ check_logs_and_pending() {
         daemon_status="viking"
         status="warn"
     else
-        report_warn "Context Mesh daemon 日志不存在（如未启动可忽略）"
+        report_warn "ContextGO daemon 日志不存在（如未启动可忽略）"
         daemon_status="missing"
         status="warn"
     fi
@@ -197,11 +197,11 @@ check_legacy_remote_processes() {
     pids="$(pgrep -f 'context_daemon.py|viking_daemon.py|openviking_mcp.py|openviking-server' 2>/dev/null || true)"
     local summary status
     if [ -n "$pids" ]; then
-        report_warn "检测到遗留 Context Mesh 远程同步进程（OpenViking/MCP）：$(echo "$pids" | tr '\n' ' ' | sed 's/  */ /g')"
+        report_warn "检测到遗留 ContextGO 远程同步进程（OpenViking/MCP）：$(echo "$pids" | tr '\n' ' ' | sed 's/  */ /g')"
         summary="pids=${pids}"
         status="warn"
     else
-        report_ok "未检测到遗留 Context Mesh 远程同步进程（OpenViking/MCP）"
+        report_ok "未检测到遗留 ContextGO 远程同步进程（OpenViking/MCP）"
         summary="none"
         status="ok"
     fi
@@ -209,7 +209,7 @@ check_legacy_remote_processes() {
     record_check_result "optional.legacy_remote" "$status" "$summary"
 }
 
-REPORT+="[$TS] Context Mesh Health Check\n"
+REPORT+="[$TS] ContextGO Health Check\n"
 REPORT+="─────────────────────────────────\n"
 REPORT+="Core:\n"
 check_launchd_runtime
@@ -253,9 +253,9 @@ fi
 
 REPORT+="\n"
 if [ "$STATUS" -eq 0 ]; then
-    REPORT+="🟢 Context Mesh checks passed.\n"
+    REPORT+="🟢 ContextGO checks passed.\n"
 else
-    REPORT+="🔴 Context Mesh issues detected.\n"
+    REPORT+="🔴 ContextGO issues detected.\n"
 fi
 REPORT+="─────────────────────────────────\n\n"
 

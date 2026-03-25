@@ -10,12 +10,13 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import time
 from typing import Any
 
 try:
-    from context_config import env_str
+    from context_config import env_int, env_str
 except ImportError:  # pragma: no cover
-    from .context_config import env_str  # type: ignore[import-not-found]
+    from .context_config import env_int, env_str  # type: ignore[import-not-found]
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -23,6 +24,8 @@ NATIVE_ROOT = REPO_ROOT / "native"
 RUST_PROJECT = NATIVE_ROOT / "session_scan"
 GO_PROJECT = NATIVE_ROOT / "session_scan_go"
 DEFAULT_TARGET_DIR = env_str("CONTEXT_MESH_NATIVE_TARGET_DIR", default="/tmp/context_mesh_target")
+NATIVE_HEALTH_CACHE_TTL_SEC = env_int("CONTEXT_MESH_NATIVE_HEALTH_CACHE_TTL_SEC", default=30, minimum=0)
+NATIVE_HEALTH_CACHE_PATH = Path(DEFAULT_TARGET_DIR) / "native_health_cache.json"
 
 
 @dataclass
@@ -309,6 +312,39 @@ def run_native_scan(
     return _execute_native_command(cmd=cmd, cwd=cwd, env=env, timeout=timeout, backend=chosen)
 
 
+def _load_health_cache() -> dict[str, Any] | None:
+    if NATIVE_HEALTH_CACHE_TTL_SEC <= 0 or not NATIVE_HEALTH_CACHE_PATH.exists():
+        return None
+    try:
+        payload = json.loads(NATIVE_HEALTH_CACHE_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    cached_at = float(payload.get("cached_at") or 0)
+    if cached_at <= 0:
+        return None
+    if (time.time() - cached_at) > NATIVE_HEALTH_CACHE_TTL_SEC:
+        return None
+    cached_payload = payload.get("payload")
+    if isinstance(cached_payload, dict):
+        return cached_payload
+    return None
+
+
+def _store_health_cache(payload: dict[str, Any]) -> None:
+    if NATIVE_HEALTH_CACHE_TTL_SEC <= 0:
+        return
+    try:
+        NATIVE_HEALTH_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        NATIVE_HEALTH_CACHE_PATH.write_text(
+            json.dumps({"cached_at": int(time.time()), "payload": payload}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    except Exception:
+        return
+
+
 def main() -> int:
     result = run_native_scan()
     if result.stdout:
@@ -319,6 +355,9 @@ def main() -> int:
 
 
 def health_payload() -> dict[str, Any]:
+    cached = _load_health_cache()
+    if cached is not None:
+        return cached
     payload: dict[str, Any] = {
         "available_backends": available_backends(),
         "default_target_dir": DEFAULT_TARGET_DIR,
@@ -333,6 +372,7 @@ def health_payload() -> dict[str, Any]:
             }
         except Exception as exc:
             payload[backend] = {"ok": False, "error": str(exc)}
+    _store_health_cache(payload)
     return payload
 
 

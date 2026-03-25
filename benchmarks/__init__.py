@@ -1,1 +1,1 @@
-"""Benchmark helpers for Context Mesh Foundry."""
+"""Benchmark helpers for ContextGO."""

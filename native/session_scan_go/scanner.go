@@ -179,13 +179,45 @@ func (m *SnippetMatcher) Match(text string) (string, bool) {
 		return "", false
 	}
 	lower := strings.ToLower(trimmed)
-	if !strings.Contains(lower, m.queryLower) || (m.filter != nil && m.filter.IsNoise(lower)) {
+	idx := strings.Index(lower, m.queryLower)
+	if idx < 0 {
 		return "", false
 	}
-	if m.snippetLimit > 0 && len(trimmed) > m.snippetLimit {
-		return trimmed[:m.snippetLimit], true
+	snippet := trimmed
+	if m.snippetLimit > 0 {
+		snippet = clipSnippet(trimmed, idx, len(m.queryLower), m.snippetLimit)
 	}
-	return trimmed, true
+	if m.filter != nil && m.filter.IsNoise(strings.ToLower(snippet)) {
+		return "", false
+	}
+	return snippet, true
+}
+
+func clipSnippet(text string, index int, queryLen int, limit int) string {
+	if limit <= 0 || len(text) <= limit {
+		return text
+	}
+	if queryLen < 0 {
+		queryLen = 0
+	}
+	radius := limit / 2
+	start := index - radius
+	if start < 0 {
+		start = 0
+	}
+	end := start + limit
+	if end > len(text) {
+		end = len(text)
+		start = max(0, end-limit)
+	}
+	return text[start:end]
+}
+
+func max(a int, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func extractTextCandidates(payload map[string]any) []string {
@@ -202,7 +234,7 @@ func extractTextCandidates(payload map[string]any) []string {
 		appendIfString(payload[key])
 	}
 	if nested, ok := payload["payload"].(map[string]any); ok {
-		for _, key := range []string{"message", "display", "text", "input", "prompt", "output"} {
+		for _, key := range []string{"message", "display", "text", "input", "prompt", "output", "user_instructions", "last_agent_message"} {
 			appendIfString(nested[key])
 		}
 		if content, ok := nested["content"].([]any); ok {
@@ -223,6 +255,8 @@ func extractTextCandidates(payload map[string]any) []string {
 			}
 		}
 	}
+	appendIfString(payload["user_instructions"])
+	appendIfString(payload["last_agent_message"])
 	return out
 }
 
