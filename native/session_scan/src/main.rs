@@ -15,10 +15,23 @@ const NOISE_MARKERS: &[&str] = &[
     "### available skills",
     "prompt engineer and agent skill optimizer",
     "current skill name:",
+    "base directory for this skill:",
+    "hit-first query rules",
+    "default mode is `hybrid`",
+    "search past claude/codex sessions",
+    "query_viking_memory",
+    "onecontext search",
+    "name: openviking-memory-sync",
+    "name: recall",
     "skill.md",
     "python -m pytest",
     "benchmarks/run.py",
     "<instructions>",
+    "chunk id:",
+    "wall time:",
+    "process exited with code",
+    "original token count:",
+    "\noutput:",
 ];
 
 const NOISE_PREFIXES: &[&str] = &["##", "```", "> ", "- [", "* ", "http", "https"];
@@ -392,20 +405,24 @@ fn process_file(item: &WorkItem, query: &str) -> Result<SessionSummary> {
             }
             if !query_lower.is_empty() && snippet.is_none() {
                 for detail in extract_text_candidates(&json) {
-                    let lowered = detail.text.to_lowercase();
-                    if lowered.contains(&query_lower) && !is_noise_line(&lowered) {
+                    if let Some(candidate) = matched_snippet(&detail.text, &query_lower, 220) {
+                        if is_noise_line(&candidate.to_lowercase()) {
+                            continue;
+                        }
                         matched = true;
-                        snippet = Some(detail.text.chars().take(220).collect::<String>());
+                        snippet = Some(candidate);
                         match_field = Some(detail.field.to_string());
                         break;
                     }
                 }
             }
         } else if !query_lower.is_empty() && snippet.is_none() {
-            let line_lower = line.to_lowercase();
-            if line_lower.contains(&query_lower) && !is_noise_line(&line_lower) {
+            if let Some(candidate) = matched_snippet(&line, &query_lower, 220) {
+                if is_noise_line(&candidate.to_lowercase()) {
+                    continue;
+                }
                 matched = true;
-                snippet = Some(line.chars().take(220).collect::<String>());
+                snippet = Some(candidate);
                 match_field = Some(RAW_LINE_FIELD.to_string());
             }
         }
@@ -428,6 +445,32 @@ fn process_file(item: &WorkItem, query: &str) -> Result<SessionSummary> {
     })
 }
 
+fn matched_snippet(text: &str, query_lower: &str, limit: usize) -> Option<String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() || query_lower.is_empty() {
+        return None;
+    }
+    let lower = trimmed.to_lowercase();
+    let idx = lower.find(query_lower)?;
+    Some(clip_snippet(trimmed, idx, query_lower.len(), limit))
+}
+
+fn clip_snippet(text: &str, index: usize, query_len: usize, limit: usize) -> String {
+    let total_chars = text.chars().count();
+    if limit == 0 || total_chars <= limit {
+        return text.to_string();
+    }
+    let start_chars = text[..index].chars().count();
+    let query_chars = text[index..index + query_len].chars().count();
+    let radius = limit / 2;
+    let start = start_chars.saturating_sub(radius);
+    let end = (start_chars + query_chars + radius).min(total_chars);
+    text.chars()
+        .skip(start)
+        .take(end.saturating_sub(start))
+        .collect()
+}
+
 fn is_noise_line(line: &str) -> bool {
     let trimmed = line.trim();
     if trimmed.is_empty() {
@@ -446,18 +489,18 @@ fn extract_text_candidates(value: &Value) -> Vec<MatchDetail> {
     const ROOT_FIELDS: &[(&str, &str)] = &[
         ("root.display", "display"),
         ("root.text", "text"),
-        ("root.input", "input"),
         ("root.prompt", "prompt"),
-        ("root.output", "output"),
         ("root.content", "content"),
+        ("root.user_instructions", "user_instructions"),
+        ("root.last_agent_message", "last_agent_message"),
     ];
     const PAYLOAD_FIELDS: &[(&str, &str)] = &[
         ("payload.message", "message"),
         ("payload.display", "display"),
         ("payload.text", "text"),
-        ("payload.input", "input"),
         ("payload.prompt", "prompt"),
-        ("payload.output", "output"),
+        ("payload.user_instructions", "user_instructions"),
+        ("payload.last_agent_message", "last_agent_message"),
     ];
 
     let mut out = Vec::new();

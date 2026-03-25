@@ -15,6 +15,13 @@ var DefaultNoiseMarkers = []string{
 	"prompt engineer and agent skill optimizer",
 	"current skill name:",
 	"base directory for this skill:",
+	"hit-first query rules",
+	"default mode is `hybrid`",
+	"search past claude/codex sessions",
+	"query_viking_memory",
+	"onecontext search",
+	"name: openviking-memory-sync",
+	"name: recall",
 	"skill.md",
 	"python -m pytest",
 	"benchmarks/run.py",
@@ -230,11 +237,11 @@ func extractTextCandidates(payload map[string]any) []string {
 			}
 		}
 	}
-	for _, key := range []string{"message", "display", "text", "input", "prompt", "output", "content"} {
+	for _, key := range []string{"message", "display", "text", "prompt", "output", "content"} {
 		appendIfString(payload[key])
 	}
 	if nested, ok := payload["payload"].(map[string]any); ok {
-		for _, key := range []string{"message", "display", "text", "input", "prompt", "output", "user_instructions", "last_agent_message"} {
+		for _, key := range []string{"message", "display", "text", "prompt", "output", "user_instructions", "last_agent_message"} {
 			appendIfString(nested[key])
 		}
 		if content, ok := nested["content"].([]any); ok {

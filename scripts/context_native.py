@@ -26,6 +26,7 @@ GO_PROJECT = NATIVE_ROOT / "session_scan_go"
 DEFAULT_TARGET_DIR = env_str("CONTEXTGO_NATIVE_TARGET_DIR", default="/tmp/contextgo_target")
 NATIVE_HEALTH_CACHE_TTL_SEC = env_int("CONTEXTGO_NATIVE_HEALTH_CACHE_TTL_SEC", default=30, minimum=0)
 NATIVE_HEALTH_CACHE_PATH = Path(DEFAULT_TARGET_DIR) / "native_health_cache.json"
+RUST_RELEASE_BIN = Path(DEFAULT_TARGET_DIR) / "release" / "session_scan"
 
 
 @dataclass
@@ -171,6 +172,28 @@ def _build_rust_cmd(
     json_output: bool,
     limit: int | None,
 ) -> tuple[list[str], Path, dict[str, str]]:
+    def rust_binary_fresh() -> bool:
+        if not RUST_RELEASE_BIN.exists():
+            return False
+        binary_mtime = RUST_RELEASE_BIN.stat().st_mtime
+        candidates = [RUST_PROJECT / "Cargo.toml", *list((RUST_PROJECT / "src").rglob("*.rs"))]
+        return all(not candidate.exists() or candidate.stat().st_mtime <= binary_mtime for candidate in candidates)
+
+    if release and rust_binary_fresh():
+        cmd = [str(RUST_RELEASE_BIN)]
+        if codex_root:
+            cmd.extend(["--codex-root", codex_root])
+        if claude_root:
+            cmd.extend(["--claude-root", claude_root])
+        cmd.extend(["--threads", str(max(1, threads))])
+        if query:
+            cmd.extend(["--query", query])
+        if limit is not None:
+            cmd.extend(["--limit", str(max(1, limit))])
+        if json_output:
+            cmd.append("--json")
+        return cmd, REPO_ROOT, os.environ.copy()
+
     cmd = ["cargo", "run"]
     if release:
         cmd.append("--release")
