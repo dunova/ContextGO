@@ -77,7 +77,7 @@ if LOCAL_STORAGE_ROOT.exists():
     if LOCAL_STORAGE_ROOT.is_symlink():
         print(f"WARNING: {LOCAL_STORAGE_ROOT} is a symlink – following cautiously", file=sys.stderr)
 
-LOG_DIR = Path.home() / ".contextgo_system" / "logs"
+LOG_DIR = LOCAL_STORAGE_ROOT / "logs"
 DAEMON_LOG_NAME = "contextgo_daemon.log"
 DAEMON_LOCK_NAME = "contextgo_daemon.lock"
 LOGGER_NAME = "contextgo.daemon"

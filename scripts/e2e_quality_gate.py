@@ -187,9 +187,8 @@ def main() -> int:
         env.update(
             {
                 "HOME": str(fake_home),
-                "UNIFIED_CONTEXT_STORAGE_ROOT": str(storage_root),
                 "CONTEXTGO_STORAGE_ROOT": str(storage_root),
-                "CMF_SESSION_SYNC_MIN_INTERVAL_SEC": "0",
+                "CONTEXTGO_SESSION_SYNC_MIN_INTERVAL_SEC": "0",
                 "CONTEXTGO_SOURCE_CACHE_TTL_SEC": "0",
             }
         )

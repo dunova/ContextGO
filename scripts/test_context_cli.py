@@ -54,7 +54,7 @@ class ContextCliTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_root = Path(tmpdir)
             output_path = tmp_root / "export.json"
-            env_key = "UNIFIED_CONTEXT_STORAGE_ROOT"
+            env_key = "CONTEXTGO_STORAGE_ROOT"
             old_env = os.environ.get(env_key)
             os.environ[env_key] = str(tmp_root)
             try:
@@ -169,14 +169,14 @@ class ContextCliTests(unittest.TestCase):
         viewer = Viewer()
         saved = {
             key: os.environ.get(key)
-            for key in ("CONTEXT_VIEWER_HOST", "CONTEXT_VIEWER_PORT", "CONTEXT_VIEWER_TOKEN")
+            for key in ("CONTEXTGO_VIEWER_HOST", "CONTEXTGO_VIEWER_PORT", "CONTEXTGO_VIEWER_TOKEN")
         }
         try:
             context_cli._configure_viewer_module(viewer, "0.0.0.0", 1234, " secret ")
             self.assertEqual(viewer.calls, [("0.0.0.0", 1234, "secret")])
-            self.assertEqual(os.environ["CONTEXT_VIEWER_HOST"], "0.0.0.0")
-            self.assertEqual(os.environ["CONTEXT_VIEWER_PORT"], "1234")
-            self.assertEqual(os.environ["CONTEXT_VIEWER_TOKEN"], "secret")
+            self.assertEqual(os.environ["CONTEXTGO_VIEWER_HOST"], "0.0.0.0")
+            self.assertEqual(os.environ["CONTEXTGO_VIEWER_PORT"], "1234")
+            self.assertEqual(os.environ["CONTEXTGO_VIEWER_TOKEN"], "secret")
         finally:
             for key, value in saved.items():
                 if value is None:
@@ -191,16 +191,16 @@ class ContextCliTests(unittest.TestCase):
         viewer = Viewer()
         saved = {
             key: os.environ.get(key)
-            for key in ("CONTEXT_VIEWER_HOST", "CONTEXT_VIEWER_PORT", "CONTEXT_VIEWER_TOKEN")
+            for key in ("CONTEXTGO_VIEWER_HOST", "CONTEXTGO_VIEWER_PORT", "CONTEXTGO_VIEWER_TOKEN")
         }
         try:
             context_cli._configure_viewer_module(viewer, "1.2.3.4", 5678, "")
             self.assertEqual(viewer.HOST, "1.2.3.4")
             self.assertEqual(viewer.PORT, 5678)
             self.assertEqual(viewer.VIEWER_TOKEN, "")
-            self.assertEqual(os.environ["CONTEXT_VIEWER_HOST"], "1.2.3.4")
-            self.assertEqual(os.environ["CONTEXT_VIEWER_PORT"], "5678")
-            self.assertFalse(os.environ.get("CONTEXT_VIEWER_TOKEN"))
+            self.assertEqual(os.environ["CONTEXTGO_VIEWER_HOST"], "1.2.3.4")
+            self.assertEqual(os.environ["CONTEXTGO_VIEWER_PORT"], "5678")
+            self.assertFalse(os.environ.get("CONTEXTGO_VIEWER_TOKEN"))
         finally:
             for key, value in saved.items():
                 if value is None:

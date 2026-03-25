@@ -94,12 +94,12 @@ def _load_context_maintenance():
 
 def _configure_viewer_module(module, host: str, port: int, token: str) -> None:
     token_value = (token or "").strip()
-    os.environ["CONTEXT_VIEWER_HOST"] = host
-    os.environ["CONTEXT_VIEWER_PORT"] = str(port)
+    os.environ["CONTEXTGO_VIEWER_HOST"] = host
+    os.environ["CONTEXTGO_VIEWER_PORT"] = str(port)
     if token_value:
-        os.environ["CONTEXT_VIEWER_TOKEN"] = token_value
+        os.environ["CONTEXTGO_VIEWER_TOKEN"] = token_value
     else:
-        os.environ.pop("CONTEXT_VIEWER_TOKEN", None)
+        os.environ.pop("CONTEXTGO_VIEWER_TOKEN", None)
 
     if hasattr(module, "apply_runtime_config"):
         module.apply_runtime_config(host, port, token_value)
@@ -182,9 +182,9 @@ def build_parser() -> argparse.ArgumentParser:
     import_cmd.add_argument("--no-sync", action="store_true")
 
     serve = sub.add_parser("serve", help="Start local memory viewer")
-    serve.add_argument("--host", default=env_str("CONTEXT_VIEWER_HOST", "CONTEXTGO_VIEWER_HOST", default="127.0.0.1"))
-    serve.add_argument("--port", type=int, default=env_int("CONTEXT_VIEWER_PORT", "CONTEXTGO_VIEWER_PORT", default=37677, minimum=1))
-    serve.add_argument("--token", default=env_str("CONTEXT_VIEWER_TOKEN", "CONTEXTGO_VIEWER_TOKEN", default=""))
+    serve.add_argument("--host", default=env_str("CONTEXTGO_VIEWER_HOST", default="127.0.0.1"))
+    serve.add_argument("--port", type=int, default=env_int("CONTEXTGO_VIEWER_PORT", default=37677, minimum=1))
+    serve.add_argument("--token", default=env_str("CONTEXTGO_VIEWER_TOKEN", default=""))
 
     maintain = sub.add_parser("maintain", help="Run local maintenance workflow")
     maintain.add_argument("--db", default="~/.aline/db/aline.db")

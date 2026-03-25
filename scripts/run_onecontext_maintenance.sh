@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LOG_DIR="$HOME/.contextgo_system/logs"
+LOG_DIR="${CONTEXTGO_STORAGE_ROOT:-$HOME/.contextgo}/logs"
 LOG_FILE="${CONTEXTGO_MAINTENANCE_LOG:-$LOG_DIR/contextgo_maintenance.log}"
 SERVICE_LABEL="ContextGO maintenance"
 

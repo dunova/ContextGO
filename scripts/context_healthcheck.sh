@@ -7,9 +7,9 @@
 
 set -u
 
-LOG_DIR="$HOME/.contextgo_system/logs"
+CONTEXTGO_STORAGE_ROOT="${CONTEXTGO_STORAGE_ROOT:-$HOME/.contextgo}"
+LOG_DIR="$CONTEXTGO_STORAGE_ROOT/logs"
 HEALTHCHECK_LOG="$LOG_DIR/healthcheck.log"
-UNIFIED_CONTEXT_STORAGE_ROOT="${UNIFIED_CONTEXT_STORAGE_ROOT:-${CONTEXTGO_STORAGE_ROOT:-$HOME/.contextgo}}"
 REMOTE_SYNC_BASE_URL="${CONTEXTGO_REMOTE_URL:-http://127.0.0.1:8090/api/v1}"
 REMOTE_SYNC_HEALTH_URL="${REMOTE_SYNC_HEALTH_URL:-${REMOTE_SYNC_BASE_URL%/}/health}"
 
@@ -174,7 +174,7 @@ check_logs_and_pending() {
         status="warn"
     fi
 
-    pending_dir="$UNIFIED_CONTEXT_STORAGE_ROOT/resources/shared/history/.pending"
+    pending_dir="$CONTEXTGO_STORAGE_ROOT/resources/shared/history/.pending"
     if [ -d "$pending_dir" ]; then
         pending_count=$(ls -1 "$pending_dir"/*.md 2>/dev/null | wc -l | tr -d ' ')
         report_ok "pending 队列文件数：${pending_count:-0}"

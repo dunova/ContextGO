@@ -22,12 +22,12 @@ from typing import Callable
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS_DIR = REPO_ROOT / "scripts"
-DEFAULT_QUERY = os.environ.get("CMF_BENCH_QUERY", "benchmark")
-DEFAULT_ITERATIONS = max(1, int(os.environ.get("CMF_BENCH_ITERATIONS", "3")))
-DEFAULT_SEARCH_LIMIT = max(1, int(os.environ.get("CMF_BENCH_SEARCH_LIMIT", "5")))
+DEFAULT_QUERY = os.environ.get("CONTEXTGO_BENCH_QUERY", "benchmark")
+DEFAULT_ITERATIONS = max(1, int(os.environ.get("CONTEXTGO_BENCH_ITERATIONS", "3")))
+DEFAULT_SEARCH_LIMIT = max(1, int(os.environ.get("CONTEXTGO_BENCH_SEARCH_LIMIT", "5")))
 DEFAULT_WARMUP = 1
 DEFAULT_FORMAT = "text"
-DEFAULT_SOURCE_CACHE_TTL = os.environ.get("CMF_SOURCE_CACHE_TTL_SEC", "60")
+DEFAULT_SOURCE_CACHE_TTL = os.environ.get("CONTEXTGO_SOURCE_CACHE_TTL_SEC", "60")
 SYNC_ACTION_CODE = (
     "import sys;"
     f"sys.path.insert(0, {str(SCRIPTS_DIR)!r});"
@@ -459,17 +459,15 @@ def _build_native_cases(env: dict[str, str], query: str, search_limit: int) -> l
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    with tempfile.TemporaryDirectory(prefix="cmf-bench-") as tmpdir:
+    with tempfile.TemporaryDirectory(prefix="contextgo-bench-") as tmpdir:
         fake_home = Path(tmpdir)
-        storage_root = fake_home / ".unified_context_data"
+        storage_root = fake_home / ".contextgo"
         env_vars = {
             "HOME": str(fake_home),
-            "UNIFIED_CONTEXT_STORAGE_ROOT": str(storage_root),
-            "CONTEXT_MESH_STORAGE_ROOT": str(storage_root),
-            "OPENVIKING_STORAGE_ROOT": str(storage_root),
-            "CMF_SESSION_SYNC_MIN_INTERVAL_SEC": "0",
+            "CONTEXTGO_STORAGE_ROOT": str(storage_root),
+            "CONTEXTGO_SESSION_SYNC_MIN_INTERVAL_SEC": "0",
         }
-        env_vars["CONTEXT_MESH_SOURCE_CACHE_TTL_SEC"] = DEFAULT_SOURCE_CACHE_TTL
+        env_vars["CONTEXTGO_SOURCE_CACHE_TTL_SEC"] = DEFAULT_SOURCE_CACHE_TTL
         os.environ.update(env_vars)
 
         print("Benchmark environment:")

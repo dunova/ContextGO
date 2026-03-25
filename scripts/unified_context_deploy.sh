@@ -5,8 +5,8 @@ umask 077
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 HOME_DIR="${HOME:-$(cd ~ && pwd)}"
-INSTALL_ROOT="${CONTEXTGO_INSTALL_ROOT:-${CGO_INSTALL_ROOT:-$HOME_DIR/.local/share/contextgo}}"
-UNIFIED_CONTEXT_STORAGE_ROOT="${UNIFIED_CONTEXT_STORAGE_ROOT:-${CONTEXTGO_STORAGE_ROOT:-$HOME_DIR/.contextgo}}"
+INSTALL_ROOT="${CONTEXTGO_INSTALL_ROOT:-$HOME_DIR/.local/share/contextgo}"
+CONTEXTGO_STORAGE_ROOT="${CONTEXTGO_STORAGE_ROOT:-$HOME_DIR/.contextgo}"
 PATCH_LAUNCHD="${PATCH_LAUNCHD:-1}"
 RELOAD_LAUNCHD="${RELOAD_LAUNCHD:-1}"
 APPLY_CONTEXT_POLICY="${APPLY_CONTEXT_POLICY:-1}"
@@ -39,10 +39,8 @@ require_dir "$REPO_ROOT"
 require_dir "$REPO_ROOT/scripts"
 require_dir "$REPO_ROOT/templates"
 
-mkdir -p "$UNIFIED_CONTEXT_STORAGE_ROOT"
-chmod 700 "$UNIFIED_CONTEXT_STORAGE_ROOT" >/dev/null 2>&1 || true
-mkdir -p "$HOME_DIR/.contextgo_system/logs"
-chmod 700 "$HOME_DIR/.contextgo_system" "$HOME_DIR/.contextgo_system/logs" >/dev/null 2>&1 || true
+mkdir -p "$CONTEXTGO_STORAGE_ROOT/logs"
+chmod 700 "$CONTEXTGO_STORAGE_ROOT" "$CONTEXTGO_STORAGE_ROOT/logs" >/dev/null 2>&1 || true
 
 sync_dir "$REPO_ROOT/scripts" "$INSTALL_ROOT/scripts"
 sync_dir "$REPO_ROOT/templates" "$INSTALL_ROOT/templates"
@@ -54,9 +52,8 @@ if [ "$APPLY_CONTEXT_POLICY" = "1" ] && [ -f "$REPO_ROOT/scripts/apply_context_f
 fi
 
 if [ "$PATCH_LAUNCHD" = "1" ] && command -v launchctl >/dev/null 2>&1; then
-export CGO_INSTALL_ROOT="$INSTALL_ROOT"
 export CONTEXTGO_INSTALL_ROOT="$INSTALL_ROOT"
-export UNIFIED_CONTEXT_STORAGE_ROOT
+export CONTEXTGO_STORAGE_ROOT
 python3 - <<'PY'
 import plistlib
 from pathlib import Path
@@ -66,7 +63,7 @@ import shutil
 
 home = Path.home()
 launch = home / 'Library' / 'LaunchAgents'
-install_root = Path(os.environ['CGO_INSTALL_ROOT'])
+install_root = Path(os.environ['CONTEXTGO_INSTALL_ROOT'])
 script_dir = install_root / 'scripts'
 template_dir = install_root / 'templates' / 'launchd'
 launch.mkdir(parents=True, exist_ok=True)
@@ -120,7 +117,7 @@ patches = [
         ['/bin/bash', str(script_dir / 'context_healthcheck.sh'), '--quiet'],
         None,
         {
-            'UNIFIED_CONTEXT_STORAGE_ROOT': os.environ.get('UNIFIED_CONTEXT_STORAGE_ROOT', str(home / '.contextgo')),
+            'CONTEXTGO_STORAGE_ROOT': os.environ.get('CONTEXTGO_STORAGE_ROOT', str(home / '.contextgo')),
         },
     ),
 ]
@@ -131,7 +128,7 @@ for template_path, plist_path, args, wd, extra_env in patches:
         continue
     raw = template_path.read_text(encoding='utf-8')
     raw = raw.replace('__SCRIPTS_DIR__', str(script_dir))
-    raw = raw.replace('__LOG_DIR__', str(home / '.contextgo_system' / 'logs'))
+    raw = raw.replace('__LOG_DIR__', str(home / '.contextgo' / 'logs'))
     raw = raw.replace('__HOME__', str(home))
     plist_path.write_text(raw, encoding='utf-8')
     with plist_path.open('rb') as f:

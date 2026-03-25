@@ -34,14 +34,14 @@ except Exception:  # pragma: no cover
     )
 
 
-HOST = env_str("CONTEXTGO_VIEWER_HOST", "CONTEXT_VIEWER_HOST", default="127.0.0.1")
-PORT = env_int("CONTEXTGO_VIEWER_PORT", "CONTEXT_VIEWER_PORT", default=37677, minimum=1)
-VIEWER_TOKEN = env_str("CONTEXTGO_VIEWER_TOKEN", "CONTEXT_VIEWER_TOKEN", default="").strip()
+HOST = env_str("CONTEXTGO_VIEWER_HOST", default="127.0.0.1")
+PORT = env_int("CONTEXTGO_VIEWER_PORT", default=37677, minimum=1)
+VIEWER_TOKEN = env_str("CONTEXTGO_VIEWER_TOKEN", default="").strip()
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
-MAX_POST_BYTES = env_int("CONTEXTGO_VIEWER_MAX_POST_BYTES", "CONTEXT_VIEWER_MAX_POST_BYTES", default=1048576, minimum=1024)
-MAX_BATCH_IDS = env_int("CONTEXTGO_VIEWER_MAX_BATCH_IDS", "CONTEXT_VIEWER_MAX_BATCH_IDS", default=500, minimum=1)
-SSE_INTERVAL_SEC = env_float("CONTEXTGO_VIEWER_SSE_INTERVAL_SEC", "CONTEXT_VIEWER_SSE_INTERVAL_SEC", default=1.0, minimum=0.2)
-SSE_MAX_TICKS = env_int("CONTEXTGO_VIEWER_SSE_MAX_TICKS", "CONTEXT_VIEWER_SSE_MAX_TICKS", default=120, minimum=1)
+MAX_POST_BYTES = env_int("CONTEXTGO_VIEWER_MAX_POST_BYTES", default=1048576, minimum=1024)
+MAX_BATCH_IDS = env_int("CONTEXTGO_VIEWER_MAX_BATCH_IDS", default=500, minimum=1)
+SSE_INTERVAL_SEC = env_float("CONTEXTGO_VIEWER_SSE_INTERVAL_SEC", default=1.0, minimum=0.2)
+SSE_MAX_TICKS = env_int("CONTEXTGO_VIEWER_SSE_MAX_TICKS", default=120, minimum=1)
 SYNC_MIN_INTERVAL_SEC = env_float("CONTEXTGO_VIEWER_SYNC_MIN_INTERVAL_SEC", default=5.0, minimum=0.0)
 _SYNC_STATE = {"at": 0.0, "payload": None}
 _SYNC_LOCK = threading.Lock()
@@ -212,7 +212,7 @@ es.onmessage = (e)=>{ try{ const d=JSON.parse(e.data); document.title='ContextGO
 
 def main():
     if HOST not in LOOPBACK_HOSTS and not VIEWER_TOKEN:
-        raise SystemExit("CONTEXT_VIEWER_TOKEN is required when binding non-loopback host.")
+        raise SystemExit("CONTEXTGO_VIEWER_TOKEN is required when binding non-loopback host.")
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     print(f"ContextGO Viewer listening on http://{HOST}:{PORT}")
     server.serve_forever()

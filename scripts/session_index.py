@@ -23,9 +23,9 @@ except ImportError:  # pragma: no cover
     from . import context_native  # type: ignore[import-not-found]
 
 
-SESSION_DB_PATH_ENV = "SESSION_INDEX_DB_PATH"
-MAX_CONTENT_CHARS = env_int("CGO_SESSION_MAX_CONTENT_CHARS", "CONTEXTGO_SESSION_MAX_CONTENT_CHARS", default=24000, minimum=4000)
-SYNC_MIN_INTERVAL_SEC = env_int("CGO_SESSION_SYNC_MIN_INTERVAL_SEC", "CONTEXTGO_SESSION_SYNC_MIN_INTERVAL_SEC", default=15, minimum=0)
+SESSION_DB_PATH_ENV = "CONTEXTGO_SESSION_INDEX_DB_PATH"
+MAX_CONTENT_CHARS = env_int("CONTEXTGO_SESSION_MAX_CONTENT_CHARS", default=24000, minimum=4000)
+SYNC_MIN_INTERVAL_SEC = env_int("CONTEXTGO_SESSION_SYNC_MIN_INTERVAL_SEC", default=15, minimum=0)
 SOURCE_CACHE_TTL_SEC = env_int("CONTEXTGO_SOURCE_CACHE_TTL_SEC", default=10, minimum=0)
 EXPERIMENTAL_SEARCH_BACKEND = os.environ.get("CONTEXTGO_EXPERIMENTAL_SEARCH_BACKEND", "").strip().lower()
 EXPERIMENTAL_SYNC_BACKEND = os.environ.get("CONTEXTGO_EXPERIMENTAL_SYNC_BACKEND", "").strip().lower()
@@ -107,7 +107,7 @@ def _home() -> Path:
 
 
 def get_session_db_path() -> Path:
-    override = os.environ.get("CONTEXTGO_SESSION_INDEX_DB_PATH", "").strip() or os.environ.get(SESSION_DB_PATH_ENV, "").strip()
+    override = os.environ.get(SESSION_DB_PATH_ENV, "").strip()
     if override:
         return Path(os.path.expanduser(override))
     return get_storage_root() / "index" / "session_index.db"

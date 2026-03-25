@@ -47,7 +47,6 @@ def storage_root(default_home_name: str = ".contextgo") -> Path:
         os.path.expanduser(
             env_str(
                 "CONTEXTGO_STORAGE_ROOT",
-                "UNIFIED_CONTEXT_STORAGE_ROOT",
                 default=str(Path.home() / default_home_name),
             )
         )

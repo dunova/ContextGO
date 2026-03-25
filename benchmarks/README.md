@@ -14,7 +14,7 @@ python -m benchmarks.run [--mode python|native] [--format text|json]
 python -m benchmarks [--mode python|native] [--format text|json]
 ```
 
-可选参数：`--iterations`、`--warmup`、`--query`、`--search-limit`，均支持环境变量 `CMF_BENCH_*` 覆盖（如 `CMF_BENCH_QUERY`、`CMF_BENCH_ITERATIONS`、`CMF_BENCH_SEARCH_LIMIT`）。脚本会在一次临时的 `HOME` 环境下生成样本 `.codex`、`.claude`、`.zsh_history` 等数据，避免依赖实际用户目录。
+可选参数：`--iterations`、`--warmup`、`--query`、`--search-limit`，均支持环境变量 `CONTEXTGO_BENCH_*` 覆盖（如 `CONTEXTGO_BENCH_QUERY`、`CONTEXTGO_BENCH_ITERATIONS`、`CONTEXTGO_BENCH_SEARCH_LIMIT`）。脚本会在一次临时的 `HOME` 环境下生成样本 `.codex`、`.claude`、`.zsh_history` 等数据，避免依赖实际用户目录。
 
 ### 比较 Python/Native 路径
 

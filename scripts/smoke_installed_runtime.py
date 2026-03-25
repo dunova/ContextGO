@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 def resolve_install_root() -> Path:
-    explicit = os.environ.get("CONTEXTGO_INSTALL_ROOT") or os.environ.get("CGO_INSTALL_ROOT")
+    explicit = os.environ.get("CONTEXTGO_INSTALL_ROOT")
     if explicit:
         base = Path(explicit).expanduser()
         return base if base.name == "scripts" else base / "scripts"
