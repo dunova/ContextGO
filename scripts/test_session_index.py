@@ -292,6 +292,19 @@ class SessionIndexTests(unittest.TestCase):
             finally:
                 conn.close()
 
+    def test_search_noise_penalty_demotes_prompt_like_content(self) -> None:
+        noisy = session_index._search_noise_penalty(
+            "skills-repo",
+            "Current Skill Name: notebooklm\nCurrent Description:\nQuery AND UPLOAD to Google NotebookLM",
+            "/tmp/skills/file.jsonl",
+        )
+        clean = session_index._search_noise_penalty(
+            "product-notes",
+            "NotebookLM integration decision for local runtime",
+            "/tmp/contextgo/notes.jsonl",
+        )
+        self.assertGreater(noisy, clean)
+
 
 if __name__ == "__main__":
     unittest.main()
