@@ -17,6 +17,7 @@ from memory_index import get_storage_root
 
 SESSION_DB_PATH_ENV = "SESSION_INDEX_DB_PATH"
 MAX_CONTENT_CHARS = max(4000, int(os.environ.get("CMF_SESSION_MAX_CONTENT_CHARS", "24000")))
+SYNC_MIN_INTERVAL_SEC = max(0, int(os.environ.get("CMF_SESSION_SYNC_MIN_INTERVAL_SEC", "15")))
 STOPWORDS = {
     "the", "and", "for", "with", "that", "this", "from", "into", "what", "when", "where",
     "which", "who", "how", "please", "search", "session", "history", "continue", "find",
@@ -362,13 +363,37 @@ def ensure_session_db() -> Path:
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_session_created ON session_documents(created_at_epoch DESC)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_session_source ON session_documents(source_type, created_at_epoch DESC)")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS session_index_meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+            """
+        )
         conn.commit()
     finally:
         conn.close()
     return db_path
 
 
-def sync_session_index() -> dict[str, int]:
+def _meta_get(conn: sqlite3.Connection, key: str) -> str | None:
+    row = conn.execute("SELECT value FROM session_index_meta WHERE key = ?", (key,)).fetchone()
+    return str(row[0]) if row else None
+
+
+def _meta_set(conn: sqlite3.Connection, key: str, value: str) -> None:
+    conn.execute(
+        """
+        INSERT INTO session_index_meta(key, value)
+        VALUES(?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        """,
+        (key, value),
+    )
+
+
+def sync_session_index(force: bool = False) -> dict[str, int]:
     db_path = ensure_session_db()
     conn = sqlite3.connect(db_path)
     added = 0
@@ -378,6 +403,20 @@ def sync_session_index() -> dict[str, int]:
     now_epoch = int(datetime.now().timestamp())
     seen_paths: set[str] = set()
     try:
+        last_sync_raw = _meta_get(conn, "last_sync_epoch")
+        last_sync_epoch = int(last_sync_raw or "0")
+        if not force and last_sync_epoch and (now_epoch - last_sync_epoch) < SYNC_MIN_INTERVAL_SEC:
+            total = conn.execute("SELECT COUNT(*) FROM session_documents").fetchone()[0]
+            return {
+                "scanned": 0,
+                "added": 0,
+                "updated": 0,
+                "removed": 0,
+                "skipped_recent": 1,
+                "last_sync_epoch": last_sync_epoch,
+                "total_sessions": int(total or 0),
+            }
+
         for source_type, path in _iter_sources():
             scanned += 1
             file_path = str(path)
@@ -446,10 +485,18 @@ def sync_session_index() -> dict[str, int]:
             if file_path not in seen_paths:
                 conn.execute("DELETE FROM session_documents WHERE file_path = ?", (file_path,))
                 removed += 1
+        _meta_set(conn, "last_sync_epoch", str(now_epoch))
         conn.commit()
     finally:
         conn.close()
-    return {"scanned": scanned, "added": added, "updated": updated, "removed": removed}
+    return {
+        "scanned": scanned,
+        "added": added,
+        "updated": updated,
+        "removed": removed,
+        "skipped_recent": 0,
+        "last_sync_epoch": now_epoch,
+    }
 
 
 def build_query_terms(query: str) -> list[str]:

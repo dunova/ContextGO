@@ -57,6 +57,32 @@ class SessionIndexTests(unittest.TestCase):
                     self.assertIn("sample-session", text)
                     self.assertIn("NotebookLM", text)
 
+    def test_recent_sync_skips_rescan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            codex_root = root / ".codex" / "sessions" / "2026" / "03" / "25"
+            codex_root.mkdir(parents=True)
+            (codex_root / "sample.jsonl").write_text(
+                json.dumps(
+                    {
+                        "type": "session_meta",
+                        "payload": {
+                            "id": "sample-session",
+                            "cwd": "/tmp/project",
+                            "timestamp": "2026-03-25T00:00:00Z",
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            db_path = root / "session_index.db"
+            with mock.patch.object(session_index, "_home", return_value=root):
+                with mock.patch.dict(os.environ, {session_index.SESSION_DB_PATH_ENV: str(db_path)}, clear=False):
+                    first = session_index.sync_session_index(force=True)
+                    second = session_index.sync_session_index(force=False)
+                    self.assertGreaterEqual(first["scanned"], 1)
+                    self.assertEqual(second["skipped_recent"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()
