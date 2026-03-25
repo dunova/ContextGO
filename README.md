@@ -103,9 +103,9 @@ graph TD
 | `context_daemon.py` | canonical daemon 入口；默认部署和 launchd/systemd 使用它 |
 | `context_server.py` | canonical viewer/server 入口 |
 | `viking_daemon.py` | 底层守护实现；默认由 `context_daemon.py` 入口调用 |
-| `openviking_mcp.py` | 可选 legacy 兼容层；默认主链不依赖，建议停用 |
+| `openviking_mcp.py` | legacy wrapper；实际归档实现位于 `scripts/legacy/` |
 | `context_healthcheck.sh` | 针对整个 Context Mesh 主链的全面健康检查 |
-| `start_openviking.sh` | 可选 legacy remote sync/server 启动脚本 |
+| `start_openviking.sh` | legacy wrapper；实际 remote-sync/server 脚本位于 `scripts/legacy/` |
 | `unified_context_deploy.sh` | 部署工具：安装 canonical runtime 到本地并注册服务 |
 | `scf_context_prewarm.sh` | Shell 助手，用于在 GSD 动作执行前预热上下文 |
 
@@ -134,9 +134,9 @@ graph TD
 | 脚本 | 用途 |
 |--------|---------|
 | `context_maintenance.py` | canonical maintenance 入口；推荐通过 `context_cli.py maintain` 调用 |
-| `onecontext_maintenance.py` | legacy 兼容实现 |
+| `onecontext_maintenance.py` | legacy wrapper；实际实现位于 `scripts/legacy/` |
 | `run_onecontext_maintenance.sh` | legacy wrapper；转发到统一 CLI |
-| `patch_openviking_semantic_processor.py` | 针对 VLM 的可选静默补丁 |
+| `patch_openviking_semantic_processor.py` | legacy wrapper；实际补丁脚本位于 `scripts/legacy/` |
 
 ## 系统要求
 
@@ -328,9 +328,9 @@ When used with the [GSD workflow](https://github.com/dunova/get-shit-done) (`dis
 | `context_daemon.py` | Canonical daemon entrypoint used by deployment and services |
 | `context_server.py` | Canonical viewer/server entrypoint |
 | `viking_daemon.py` | Low-level daemon implementation invoked by `context_daemon.py` |
-| `openviking_mcp.py` | Optional legacy compatibility layer; not used by the default path |
+| `openviking_mcp.py` | legacy wrapper; archived implementation lives under `scripts/legacy/` |
 | `context_healthcheck.sh` | Comprehensive health checks for the standalone stack |
-| `start_openviking.sh` | Optional legacy remote-sync/server bootstrap |
+| `start_openviking.sh` | legacy wrapper; archived remote-sync/server bootstrap lives under `scripts/legacy/` |
 | `unified_context_deploy.sh` | Deploy canonical runtime locally and register services |
 | `scf_context_prewarm.sh` | Shell helper for context warmup before GSD actions |
 
@@ -359,9 +359,9 @@ When used with the [GSD workflow](https://github.com/dunova/get-shit-done) (`dis
 | Script | Purpose |
 |--------|---------|
 | `context_maintenance.py` | canonical maintenance entrypoint; prefer `context_cli.py maintain` |
-| `onecontext_maintenance.py` | legacy compatibility implementation |
+| `onecontext_maintenance.py` | legacy wrapper; archived implementation lives under `scripts/legacy/` |
 | `run_onecontext_maintenance.sh` | Legacy wrapper forwarding to unified CLI |
-| `patch_openviking_semantic_processor.py` | Optional VLM quiet patch |
+| `patch_openviking_semantic_processor.py` | legacy wrapper; archived patch helper lives under `scripts/legacy/` |
 
 ## Requirements
 
@@ -424,7 +424,7 @@ context-mesh-foundry/
 │   ├── context_cli.py                # Default CLI entry point
 │   ├── context_daemon.py             # Canonical daemon entrypoint
 │   ├── viking_daemon.py              # Daemon implementation
-│   ├── openviking_mcp.py             # Legacy MCP bridge
+│   ├── legacy/                       # Archived compatibility implementations
 │   ├── context_healthcheck.sh        # Health checks
 │   ├── unified_context_deploy.sh     # Deploy & sync
 │   ├── ...

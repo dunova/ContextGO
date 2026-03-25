@@ -14,7 +14,7 @@
 
 3. 检索层。  
 • `context_cli.py` 作为统一入口，承接搜索、导入导出、viewer、maintenance。  
-• `openviking_mcp.py` 仅保留为 optional legacy 兼容层。  
+• `openviking_mcp.py` 仅保留为 legacy wrapper；实际归档实现放在 `scripts/legacy/`。  
 • 默认主链：`session_index.py` 精确检索 + `memory_index.py` 本地记忆检索。  
 
 4. 交互层。  

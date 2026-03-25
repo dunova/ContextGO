@@ -62,7 +62,7 @@ Ensure that your `LaunchAgent` plist or `systemd` service explicitly includes `P
 
 ## 4. Legacy MCP / Config Drift Still Exists
 
-Even though the mainline no longer depends on MCP, stale configs can still leave old `openviking_mcp.py` references around.
+Even though the mainline no longer depends on MCP, stale configs can still leave old `openviking_mcp.py` wrapper references around.
 
 **Common hidden sources to verify:**
 - `~/.claude.json`
