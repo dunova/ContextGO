@@ -5,30 +5,56 @@ on:
   pull_request:
 
 jobs:
-  syntax:
+  verify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
-      - name: Install minimal runtime deps for import smoke
+          python-version: "3.11"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Python test deps
         run: |
           python -m pip install --upgrade pip
-          python -m pip install httpx mcp
+          python -m pip install pytest
+
       - name: Bash syntax
         run: |
-          for f in scripts/*.sh; do bash -n "$f"; done
+          bash -n scripts/*.sh
+
       - name: Python syntax
-        run: python -m py_compile scripts/*.py
-      - name: Import smoke
         run: |
-          python - <<'PY'
-          import httpx
-          from mcp.server.fastmcp import FastMCP
-          print("import smoke ok", httpx.__version__, FastMCP.__name__)
-          PY
-      - name: Secret/path scan (basic)
+          python -m py_compile scripts/*.py benchmarks/*.py
+
+      - name: Python tests
+        run: |
+          python -m pytest scripts/test_context_cli.py scripts/test_context_core.py scripts/test_session_index.py
+
+      - name: Quality gate
+        run: |
+          python scripts/e2e_quality_gate.py
+
+      - name: Benchmark smoke
+        run: |
+          python -m benchmarks --iterations 1 --warmup 0 --query benchmark
+
+      - name: Go native prototype
+        working-directory: native/session_scan_go
+        run: |
+          go test ./...
+
+      - name: Rust native prototype
+        run: |
+          CARGO_TARGET_DIR=/tmp/context_mesh_target cargo check --manifest-path native/session_scan/Cargo.toml
+
+      - name: Secret and path scan
         run: |
           ! rg -n "AIza[0-9A-Za-z_-]{20,}|sk-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}" --glob '!.github/' .
-          ! rg -n "/Users/\w+/" --glob '!.github/' scripts/
+          ! rg -n "/Users/\\w+/" --glob '!.github/' scripts/
