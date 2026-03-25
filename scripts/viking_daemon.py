@@ -87,6 +87,7 @@ ENABLE_CLAUDE_HISTORY_MONITOR = _env_flag("VIKING_ENABLE_CLAUDE_HISTORY_MONITOR"
 ENABLE_CODEX_HISTORY_MONITOR = _env_flag("VIKING_ENABLE_CODEX_HISTORY_MONITOR", "1")
 ENABLE_OPENCODE_MONITOR = _env_flag("VIKING_ENABLE_OPENCODE_MONITOR", "0")
 ENABLE_KILO_MONITOR = _env_flag("VIKING_ENABLE_KILO_MONITOR", "0")
+ENABLE_REMOTE_SYNC = _env_flag("VIKING_ENABLE_REMOTE_SYNC", "0")
 ENABLE_CODEX_SESSION_MONITOR = _env_flag("VIKING_ENABLE_CODEX_SESSION_MONITOR", "1")
 ENABLE_CLAUDE_TRANSCRIPTS_MONITOR = _env_flag("VIKING_ENABLE_CLAUDE_TRANSCRIPTS_MONITOR", "1")
 ENABLE_ANTIGRAVITY_MONITOR = _env_flag("VIKING_ENABLE_ANTIGRAVITY_MONITOR", "1")
@@ -366,7 +367,7 @@ class SessionTracker:
         self._cached_claude_transcript_files: list[str] = []
         self._cached_antigravity_dirs: list[str] = []
 
-        if _HTTPX_OK:
+        if ENABLE_REMOTE_SYNC and _HTTPX_OK:
             try:
                 self._http_client = httpx.Client(
                     timeout=EXPORT_HTTP_TIMEOUT_SEC, trust_env=False, follow_redirects=False
@@ -1131,6 +1132,9 @@ class SessionTracker:
                 logger.warning("Viking HTTP %d for %s %s", resp.status_code, source, sid[:12])
             except Exception as exc:
                 logger.warning("Viking offline, queue pending: %s", exc)
+        elif not ENABLE_REMOTE_SYNC:
+            self._export_count += 1
+            return True
 
         pending_path = PENDING_DIR / file_path.name
         try:
@@ -1320,6 +1324,7 @@ def main():
     if not _acquire_single_instance_lock():
         raise SystemExit(1)
     logger.info("Starting OpenViking Hardened Daemon v4.0")
+    logger.info("Remote sync: %s", "on" if ENABLE_REMOTE_SYNC else "off")
     logger.info("OpenViking URL: %s", OPENVIKING_URL)
     logger.info("Codex sessions path: %s", CODEX_SESSIONS)
     logger.info("Antigravity brain path: %s", ANTIGRAVITY_BRAIN)
@@ -1328,6 +1333,7 @@ def main():
         " CodexScan=%ds ClaudeScan=%ds AntigravityScan=%ds"
         " AGIngest=%s AGQuiet=%ds AGMinDoc=%dB AGSuspendBusy=%s AGBusyThreshold=%d"
         " Monitors={claude_history:%s,codex_history:%s,opencode:%s,kilo:%s,codex_session:%s,claude_transcripts:%s,antigravity:%s}"
+        " RemoteSync=%s"
         " CycleBudget=%ss IndexSyncMin=%ss BackoffMax=%ss Jitter=%ss",
         IDLE_TIMEOUT_SEC,
         POLL_INTERVAL_SEC,
@@ -1350,6 +1356,7 @@ def main():
         "on" if ENABLE_CODEX_SESSION_MONITOR else "off",
         "on" if ENABLE_CLAUDE_TRANSCRIPTS_MONITOR else "off",
         "on" if ENABLE_ANTIGRAVITY_MONITOR else "off",
+        "on" if ENABLE_REMOTE_SYNC else "off",
         CYCLE_BUDGET_SEC,
         INDEX_SYNC_MIN_INTERVAL_SEC,
         ERROR_BACKOFF_MAX_SEC,
