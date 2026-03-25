@@ -21,7 +21,7 @@ def expand(path: str) -> Path:
     return Path(path).expanduser().resolve()
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Maintain OneContext backlog and coverage")
     parser.add_argument("--db", default="~/.aline/db/aline.db", help="Path to aline.db")
     parser.add_argument("--codex-root", default="~/.codex/sessions", help="Codex sessions root")
@@ -37,7 +37,7 @@ def parse_args() -> argparse.Namespace:
         help="Treat processing jobs older than this as stale when --repair-queue is set",
     )
     parser.add_argument("--dry-run", action="store_true")
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def collect_local_session_files(codex_root: Path, claude_root: Path, include_subagents: bool) -> list[tuple[str, Path, str]]:
@@ -179,8 +179,8 @@ def enqueue_missing(
     return inserted, revived
 
 
-def main() -> int:
-    args = parse_args()
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
     db_path = expand(args.db)
     codex_root = expand(args.codex_root)
     claude_root = expand(args.claude_root)

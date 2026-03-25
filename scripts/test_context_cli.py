@@ -93,6 +93,25 @@ class ContextCliTests(unittest.TestCase):
                 else:
                     os.environ[env_key] = old_env
 
+    def test_serve_subcommand_delegates_to_viewer(self) -> None:
+        args = context_cli.build_parser().parse_args(["serve", "--host", "127.0.0.1", "--port", "40001"])
+        with mock.patch.object(context_cli.memory_viewer, "main", return_value=None) as mock_main:
+            rc = context_cli.run(args)
+        self.assertEqual(rc, 0)
+        mock_main.assert_called_once()
+
+    def test_onecontext_maintain_subcommand_delegates(self) -> None:
+        args = context_cli.build_parser().parse_args(
+            ["onecontext-maintain", "--repair-queue", "--enqueue-missing", "--dry-run"]
+        )
+        with mock.patch.object(context_cli.onecontext_maintenance, "main", return_value=0) as mock_main:
+            rc = context_cli.run(args)
+        self.assertEqual(rc, 0)
+        forwarded = mock_main.call_args.args[0]
+        self.assertIn("--repair-queue", forwarded)
+        self.assertIn("--enqueue-missing", forwarded)
+        self.assertIn("--dry-run", forwarded)
+
 
 if __name__ == "__main__":
     unittest.main()

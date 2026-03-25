@@ -12,6 +12,8 @@ from pathlib import Path
 
 import context_core
 from memory_index import export_observations_payload, import_observations_payload
+import memory_viewer
+import onecontext_maintenance
 
 
 HOME = Path.home()
@@ -201,6 +203,22 @@ def build_parser() -> argparse.ArgumentParser:
     import_cmd.add_argument("input", help="Input JSON path")
     import_cmd.add_argument("--no-sync", action="store_true")
 
+    serve = sub.add_parser("serve", help="Start local memory viewer")
+    serve.add_argument("--host", default=os.environ.get("CONTEXT_VIEWER_HOST", "127.0.0.1"))
+    serve.add_argument("--port", type=int, default=int(os.environ.get("CONTEXT_VIEWER_PORT", "37677")))
+    serve.add_argument("--token", default=os.environ.get("CONTEXT_VIEWER_TOKEN", ""))
+
+    maintain = sub.add_parser("onecontext-maintain", help="Run OneContext maintenance workflow")
+    maintain.add_argument("--db", default="~/.aline/db/aline.db")
+    maintain.add_argument("--codex-root", default="~/.codex/sessions")
+    maintain.add_argument("--claude-root", default="~/.claude/projects")
+    maintain.add_argument("--include-subagents", action="store_true")
+    maintain.add_argument("--repair-queue", action="store_true")
+    maintain.add_argument("--enqueue-missing", action="store_true")
+    maintain.add_argument("--max-enqueue", type=int, default=2000)
+    maintain.add_argument("--stale-minutes", type=int, default=15)
+    maintain.add_argument("--dry-run", action="store_true")
+
     sub.add_parser("health", help="Check context system health")
     return parser
 
@@ -263,6 +281,40 @@ def run(args: argparse.Namespace) -> int:
         )
         return 0
 
+    if args.command == "serve":
+        os.environ["CONTEXT_VIEWER_HOST"] = str(args.host)
+        os.environ["CONTEXT_VIEWER_PORT"] = str(args.port)
+        if args.token:
+            os.environ["CONTEXT_VIEWER_TOKEN"] = str(args.token)
+        memory_viewer.HOST = os.environ["CONTEXT_VIEWER_HOST"]
+        memory_viewer.PORT = int(os.environ["CONTEXT_VIEWER_PORT"])
+        memory_viewer.VIEWER_TOKEN = os.environ.get("CONTEXT_VIEWER_TOKEN", "").strip()
+        memory_viewer.main()
+        return 0
+
+    if args.command == "onecontext-maintain":
+        forwarded = [
+            "--db",
+            args.db,
+            "--codex-root",
+            args.codex_root,
+            "--claude-root",
+            args.claude_root,
+            "--max-enqueue",
+            str(args.max_enqueue),
+            "--stale-minutes",
+            str(args.stale_minutes),
+        ]
+        if args.include_subagents:
+            forwarded.append("--include-subagents")
+        if args.repair_queue:
+            forwarded.append("--repair-queue")
+        if args.enqueue_missing:
+            forwarded.append("--enqueue-missing")
+        if args.dry_run:
+            forwarded.append("--dry-run")
+        return onecontext_maintenance.main(forwarded)
+
     if args.command == "health":
         rc, out, err = _run_recall(health=True)
         recall_payload = _parse_health_payload(out or err)
@@ -294,8 +346,8 @@ def run(args: argparse.Namespace) -> int:
     return 2
 
 
-def main() -> int:
-    return run(build_parser().parse_args())
+def main(argv: list[str] | None = None) -> int:
+    return run(build_parser().parse_args(argv))
 
 
 if __name__ == "__main__":

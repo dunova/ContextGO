@@ -6,4 +6,4 @@ HOST="${CONTEXT_VIEWER_HOST:-127.0.0.1}"
 PORT="${CONTEXT_VIEWER_PORT:-37677}"
 
 echo "Starting Context Mesh Viewer on ${HOST}:${PORT}"
-exec python3 "$SCRIPT_DIR/memory_viewer.py"
+exec python3 "$SCRIPT_DIR/context_cli.py" serve --host "$HOST" --port "$PORT"
