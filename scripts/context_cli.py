@@ -200,6 +200,8 @@ def build_parser() -> argparse.ArgumentParser:
     native_scan.add_argument("--codex-root")
     native_scan.add_argument("--claude-root")
     native_scan.add_argument("--threads", type=int, default=4)
+    native_scan.add_argument("--query")
+    native_scan.add_argument("--json", action="store_true")
     native_scan.add_argument("--debug-build", action="store_true")
 
     sub.add_parser("smoke", help="Run full smoke tests against the current runtime")
@@ -301,6 +303,8 @@ def run(args: argparse.Namespace) -> int:
             claude_root=args.claude_root,
             threads=args.threads,
             release=not args.debug_build,
+            query=args.query,
+            json_output=bool(args.json),
         )
         if result.stdout:
             print(result.stdout.rstrip())

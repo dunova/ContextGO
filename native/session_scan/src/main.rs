@@ -21,6 +21,12 @@ struct Args {
 
     #[arg(long, default_value_t = 4, help = "Rayon 并行线程数")]
     threads: usize,
+
+    #[arg(long, default_value = "", help = "仅保留包含 query 的结果")]
+    query: String,
+
+    #[arg(long, default_value_t = false, help = "输出 JSON")]
+    json: bool,
 }
 
 struct WorkItem {
@@ -36,6 +42,26 @@ struct SessionSummary {
     size_bytes: u64,
     first_timestamp: Option<String>,
     last_timestamp: Option<String>,
+    snippet: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+struct ScanOutput {
+    files_scanned: usize,
+    query: String,
+    matches: Vec<SerializableSummary>,
+}
+
+#[derive(serde::Serialize)]
+struct SerializableSummary {
+    source: String,
+    path: String,
+    session_id: String,
+    lines: usize,
+    size_bytes: u64,
+    first_timestamp: Option<String>,
+    last_timestamp: Option<String>,
+    snippet: Option<String>,
 }
 
 struct SourceRoot {
@@ -97,10 +123,10 @@ impl Scanner {
             .collect()
     }
 
-    fn scan(&self, work_items: &[WorkItem]) -> (Vec<SessionSummary>, Vec<anyhow::Error>) {
+    fn scan(&self, work_items: &[WorkItem], query: &str) -> (Vec<SessionSummary>, Vec<anyhow::Error>) {
         let results: Vec<_> = work_items
             .par_iter()
-            .map(|item| process_file(item))
+            .map(|item| process_file(item, query))
             .collect();
         let mut summaries = Vec::new();
         let mut errors = Vec::new();
@@ -186,13 +212,34 @@ fn main() -> Result<()> {
     let work_items = scanner.collect_work_items();
     let total_files = work_items.len();
 
-    let (summaries, errors) = scanner.scan(&work_items);
+    let (summaries, errors) = scanner.scan(&work_items, &args.query);
     let duration = start.elapsed();
+    if args.json {
+        let payload = ScanOutput {
+            files_scanned: total_files,
+            query: args.query.clone(),
+            matches: summaries
+                .iter()
+                .map(|item| SerializableSummary {
+                    source: item.source.to_string(),
+                    path: item.path.display().to_string(),
+                    session_id: item.session_id.clone(),
+                    lines: item.lines,
+                    size_bytes: item.size_bytes,
+                    first_timestamp: item.first_timestamp.clone(),
+                    last_timestamp: item.last_timestamp.clone(),
+                    snippet: item.snippet.clone(),
+                })
+                .collect(),
+        };
+        println!("{}", serde_json::to_string_pretty(&payload)?);
+        return Ok(());
+    }
     scanner.report(total_files, &summaries, &errors, duration);
     Ok(())
 }
 
-fn process_file(item: &WorkItem) -> Result<SessionSummary> {
+fn process_file(item: &WorkItem, query: &str) -> Result<SessionSummary> {
     let file = File::open(&item.path)
         .with_context(|| format!("无法打开会话文件 {}", item.path.display()))?;
     let metadata = file
@@ -209,6 +256,9 @@ fn process_file(item: &WorkItem) -> Result<SessionSummary> {
     let mut first_timestamp = None;
     let mut last_timestamp = None;
     let mut lines = 0usize;
+    let query_lower = query.trim().to_lowercase();
+    let mut snippet = None;
+    let mut matched = query_lower.is_empty();
 
     let reader = BufReader::new(file);
     for line in reader.lines() {
@@ -223,6 +273,10 @@ fn process_file(item: &WorkItem) -> Result<SessionSummary> {
             continue;
         }
         lines += 1;
+        if !query_lower.is_empty() && line.to_lowercase().contains(&query_lower) && snippet.is_none() {
+            matched = true;
+            snippet = Some(line.chars().take(220).collect::<String>());
+        }
         if let Ok(json) = serde_json::from_str::<Value>(&line) {
             if let Some(id) = extract_session_id(&json) {
                 session_id = id;
@@ -236,6 +290,10 @@ fn process_file(item: &WorkItem) -> Result<SessionSummary> {
         }
     }
 
+    if !matched {
+        anyhow::bail!("query not matched")
+    }
+
     Ok(SessionSummary {
         source: item.source,
         path: item.path.clone(),
@@ -244,6 +302,7 @@ fn process_file(item: &WorkItem) -> Result<SessionSummary> {
         size_bytes: metadata.len(),
         first_timestamp,
         last_timestamp,
+        snippet,
     })
 }
 

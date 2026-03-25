@@ -131,6 +131,8 @@ class ContextCliTests(unittest.TestCase):
             claude_root=None,
             threads=2,
             release=False,
+            query=None,
+            json_output=False,
         )
         printed = "\n".join(" ".join(str(x) for x in call.args) for call in mock_print.call_args_list)
         self.assertIn("native ok", printed)

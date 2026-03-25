@@ -4,11 +4,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import os
 from pathlib import Path
 import shutil
 import subprocess
 import sys
+from typing import Any
 
 try:
     from context_config import env_str
@@ -29,6 +31,15 @@ class NativeRunResult:
     returncode: int
     stdout: str
     stderr: str
+
+    def json_payload(self) -> dict[str, Any] | None:
+        text = (self.stdout or "").strip()
+        if not text:
+            return None
+        try:
+            return json.loads(text)
+        except Exception:
+            return None
 
 
 def available_backends() -> list[str]:
@@ -53,7 +64,15 @@ def resolve_backend(requested: str) -> str:
     raise RuntimeError("no native backend available")
 
 
-def _build_rust_cmd(*, codex_root: str | None, claude_root: str | None, threads: int, release: bool) -> tuple[list[str], Path, dict[str, str]]:
+def _build_rust_cmd(
+    *,
+    codex_root: str | None,
+    claude_root: str | None,
+    threads: int,
+    release: bool,
+    query: str | None,
+    json_output: bool,
+) -> tuple[list[str], Path, dict[str, str]]:
     cmd = ["cargo", "run"]
     if release:
         cmd.append("--release")
@@ -63,17 +82,32 @@ def _build_rust_cmd(*, codex_root: str | None, claude_root: str | None, threads:
     if claude_root:
         cmd.extend(["--claude-root", claude_root])
     cmd.extend(["--threads", str(max(1, threads))])
+    if query:
+        cmd.extend(["--query", query])
+    if json_output:
+        cmd.append("--json")
     env = os.environ.copy()
     env.setdefault("CARGO_TARGET_DIR", DEFAULT_TARGET_DIR)
     return cmd, REPO_ROOT, env
 
 
-def _build_go_cmd(*, codex_root: str | None, claude_root: str | None, threads: int) -> tuple[list[str], Path, dict[str, str]]:
+def _build_go_cmd(
+    *,
+    codex_root: str | None,
+    claude_root: str | None,
+    threads: int,
+    query: str | None,
+    json_output: bool,
+) -> tuple[list[str], Path, dict[str, str]]:
     cmd = ["go", "run", ".", "--threads", str(max(1, threads))]
     if codex_root:
         cmd.extend(["--codex-root", codex_root])
     if claude_root:
         cmd.extend(["--claude-root", claude_root])
+    if query:
+        cmd.extend(["--query", query])
+    if json_output:
+        cmd.append("--json")
     return cmd, GO_PROJECT, os.environ.copy()
 
 
@@ -84,6 +118,8 @@ def run_native_scan(
     claude_root: str | None = None,
     threads: int = 4,
     release: bool = True,
+    query: str | None = None,
+    json_output: bool = False,
     timeout: int = 300,
 ) -> NativeRunResult:
     chosen = resolve_backend(backend)
@@ -93,12 +129,16 @@ def run_native_scan(
             claude_root=claude_root,
             threads=threads,
             release=release,
+            query=query,
+            json_output=json_output,
         )
     else:
         cmd, cwd, env = _build_go_cmd(
             codex_root=codex_root,
             claude_root=claude_root,
             threads=threads,
+            query=query,
+            json_output=json_output,
         )
 
     proc = subprocess.run(
