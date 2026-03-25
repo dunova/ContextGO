@@ -841,6 +841,13 @@ mod tests {
     }
 
     #[test]
+    fn is_noise_line_filters_meta_chatter() {
+        assert!(is_noise_line(
+            "我继续沿结果质量这条线打，不回到命名层。先复看当前工作树和主链 search NotebookLM 的命中。"
+        ));
+    }
+
+    #[test]
     fn summarize_by_source_keeps_first_sample() {
         let summaries = vec![
             SessionSummary {

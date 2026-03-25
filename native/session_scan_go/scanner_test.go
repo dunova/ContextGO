@@ -91,3 +91,11 @@ func TestShouldSkipRecordType(t *testing.T) {
 		t.Fatalf("did not expect normal message record to be skipped")
 	}
 }
+
+func TestNoiseFilterSkipsMetaChatter(t *testing.T) {
+	filter := NewNoiseFilter(DefaultNoiseMarkers)
+	line := "我继续沿结果质量这条线打，不回到命名层。先复看当前工作树和主链 search NotebookLM 的命中。"
+	if !filter.IsNoise(strings.ToLower(line)) {
+		t.Fatalf("expected active-session meta chatter to be filtered")
+	}
+}
