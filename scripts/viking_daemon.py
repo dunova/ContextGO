@@ -81,6 +81,10 @@ if LOCAL_STORAGE_ROOT.exists():
         print(f"WARNING: {LOCAL_STORAGE_ROOT} is a symlink – following cautiously", file=sys.stderr)
 
 LOG_DIR = Path.home() / ".context_system" / "logs"
+DAEMON_LOG_NAME = "context_mesh_daemon.log"
+DAEMON_LOCK_NAME = "context_mesh_daemon.lock"
+LOGGER_NAME = "context_mesh.daemon"
+LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 
 CODEX_SESSIONS = str(Path.home() / ".codex" / "sessions")
 ANTIGRAVITY_BRAIN = str(Path.home() / ".gemini" / "antigravity" / "brain")
@@ -244,23 +248,22 @@ try:
     os.chmod(LOG_DIR, 0o700)
 except OSError:
     pass
-log_file = LOG_DIR / "context_daemon.log"
-
-logger = logging.getLogger("context_daemon")
+log_file = LOG_DIR / DAEMON_LOG_NAME
+logger = logging.getLogger(LOGGER_NAME)
 logger.setLevel(logging.INFO)
 
 _rfh = logging.handlers.RotatingFileHandler(
     str(log_file), maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
 )
-_rfh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+_rfh.setFormatter(logging.Formatter(LOG_FORMAT))
 logger.addHandler(_rfh)
 
 _sh = logging.StreamHandler(sys.stderr)
 _sh.setLevel(logging.WARNING)
-_sh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+_sh.setFormatter(logging.Formatter(LOG_FORMAT))
 logger.addHandler(_sh)
 
-LOCK_FILE = LOG_DIR / "context_daemon.lock"
+LOCK_FILE = LOG_DIR / DAEMON_LOCK_NAME
 _LOCK_FD = None
 
 # ---------------------------------------------------------------------------
@@ -330,7 +333,7 @@ def _acquire_single_instance_lock() -> bool:
             except Exception:
                 pid = 0
             if pid > 0 and _pid_alive(pid):
-                logger.error("Another context_daemon instance is running (pid=%s), exiting.", pid)
+                logger.error("Another Context Mesh daemon instance is running (pid=%s), exiting.", pid)
                 return False
             try:
                 LOCK_FILE.unlink()

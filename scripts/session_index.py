@@ -500,53 +500,39 @@ def sync_session_index(force: bool = False) -> dict[str, int]:
             doc = _parse_source(source_type, path)
             if not doc:
                 continue
-            exists = conn.execute(
-                "SELECT 1 FROM session_documents WHERE file_path = ?",
-                (file_path,),
-            ).fetchone()
-            if exists:
-                conn.execute(
-                    """
-                    UPDATE session_documents
-                    SET source_type = ?, session_id = ?, title = ?, content = ?, created_at = ?,
-                        created_at_epoch = ?, file_mtime = ?, file_size = ?, updated_at_epoch = ?
-                    WHERE file_path = ?
-                    """,
-                    (
-                        doc.source_type,
-                        doc.session_id,
-                        doc.title,
-                        doc.content,
-                        doc.created_at,
-                        doc.created_at_epoch,
-                        doc.file_mtime,
-                        doc.file_size,
-                        now_epoch,
-                        doc.file_path,
-                    ),
-                )
+            conn.execute(
+                """
+                INSERT INTO session_documents(
+                    file_path, source_type, session_id, title, content,
+                    created_at, created_at_epoch, file_mtime, file_size, updated_at_epoch
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(file_path) DO UPDATE SET
+                    source_type = excluded.source_type,
+                    session_id = excluded.session_id,
+                    title = excluded.title,
+                    content = excluded.content,
+                    created_at = excluded.created_at,
+                    created_at_epoch = excluded.created_at_epoch,
+                    file_mtime = excluded.file_mtime,
+                    file_size = excluded.file_size,
+                    updated_at_epoch = excluded.updated_at_epoch
+                """,
+                (
+                    doc.file_path,
+                    doc.source_type,
+                    doc.session_id,
+                    doc.title,
+                    doc.content,
+                    doc.created_at,
+                    doc.created_at_epoch,
+                    doc.file_mtime,
+                    doc.file_size,
+                    now_epoch,
+                ),
+            )
+            if row:
                 updated += 1
             else:
-                conn.execute(
-                    """
-                    INSERT INTO session_documents(
-                        file_path, source_type, session_id, title, content,
-                        created_at, created_at_epoch, file_mtime, file_size, updated_at_epoch
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        doc.file_path,
-                        doc.source_type,
-                        doc.session_id,
-                        doc.title,
-                        doc.content,
-                        doc.created_at,
-                        doc.created_at_epoch,
-                        doc.file_mtime,
-                        doc.file_size,
-                        now_epoch,
-                    ),
-                )
                 added += 1
 
         stale = conn.execute("SELECT file_path FROM session_documents").fetchall()

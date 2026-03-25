@@ -21,6 +21,7 @@ DEEP_PROBE=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --quiet) PRINT_STDOUT=0 ;;
+        --local) ;;
         --deep) DEEP_PROBE=1 ;;
     esac
     shift
@@ -143,23 +144,28 @@ check_stale_claude_hooks() {
 }
 
 check_logs_and_pending() {
-    local daemon_log legacy_daemon_log health_log pending_dir pending_count
-    daemon_log="$LOG_DIR/context_daemon.log"
-    legacy_daemon_log="$LOG_DIR/viking_daemon.log"
+    local daemon_log legacy_daemon_log very_legacy_daemon_log health_log pending_dir pending_count
+    daemon_log="$LOG_DIR/context_mesh_daemon.log"
+    legacy_daemon_log="$LOG_DIR/context_daemon.log"
+    very_legacy_daemon_log="$LOG_DIR/viking_daemon.log"
     health_log="$LOG_DIR/healthcheck.log"
     local status="ok"
     local daemon_status="missing"
     local health_status="missing"
 
     if [ -f "$daemon_log" ]; then
-        report_ok "Context Mesh daemon 日志大小：$(( $(file_size_bytes "$daemon_log") / 1048576 ))MB"
+        report_ok "Context Mesh daemon 日志大小：$(( $(file_size_bytes "${daemon_log}") / 1048576 ))MB"
         daemon_status="present"
     elif [ -f "$legacy_daemon_log" ]; then
-        report_warn "检测到历史守护进程日志：$legacy_daemon_log（旧 viking_daemon.log）"
+        report_warn "检测到旧 Context Mesh daemon 日志：${legacy_daemon_log}（旧 context_daemon.log）"
         daemon_status="legacy"
         status="warn"
+    elif [ -f "$very_legacy_daemon_log" ]; then
+        report_warn "检测到遗留 Viking daemon 日志：${very_legacy_daemon_log}（旧 viking_daemon.log）"
+        daemon_status="viking"
+        status="warn"
     else
-        report_warn "daemon 日志不存在（如未启动可忽略）"
+        report_warn "Context Mesh daemon 日志不存在（如未启动可忽略）"
         daemon_status="missing"
         status="warn"
     fi

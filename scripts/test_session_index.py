@@ -3,11 +3,14 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import session_index
 
 
@@ -160,6 +163,81 @@ class SessionIndexTests(unittest.TestCase):
                     items = session_index._iter_sources()
         self.assertEqual(items, [("codex_session", Path("/tmp/native.jsonl"))])
         mock_run.assert_called_once()
+
+    def test_fetch_session_docs_by_paths_skips_duplicates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "session_index.db"
+            with mock.patch.dict(os.environ, {session_index.SESSION_DB_PATH_ENV: str(db_path)}, clear=False):
+                session_index.ensure_session_db()
+                conn = sqlite3.connect(db_path)
+                try:
+                    conn.execute(
+                        """
+                        INSERT INTO session_documents(
+                            file_path, source_type, session_id, title, content,
+                            created_at, created_at_epoch, file_mtime, file_size, updated_at_epoch
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            "/tmp/dedup.jsonl",
+                            "codex_session",
+                            "dedup",
+                            "Dedup Session",
+                            "Dedup NotebookLM content",
+                            "2026-03-25T00:00:00Z",
+                            1700000000,
+                            123,
+                            456,
+                            1700000000,
+                        ),
+                    )
+                    conn.commit()
+                    conn.row_factory = sqlite3.Row
+                    docs = session_index._fetch_session_docs_by_paths(
+                        conn, ["/tmp/dedup.jsonl", "/tmp/dedup.jsonl"]
+                    )
+                    self.assertIn("/tmp/dedup.jsonl", docs)
+                    self.assertEqual(docs["/tmp/dedup.jsonl"]["session_id"], "dedup")
+                finally:
+                    conn.close()
+
+    def test_enrich_native_rows_uses_index_document(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "session_index.db"
+            with mock.patch.dict(os.environ, {session_index.SESSION_DB_PATH_ENV: str(db_path)}, clear=False):
+                session_index.ensure_session_db()
+                conn = sqlite3.connect(db_path)
+                try:
+                    conn.execute(
+                        """
+                        INSERT INTO session_documents(
+                            file_path, source_type, session_id, title, content,
+                            created_at, created_at_epoch, file_mtime, file_size, updated_at_epoch
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            "/tmp/native.jsonl",
+                            "codex_session",
+                            "native-sample",
+                            "Native Session Title",
+                            "NotebookLM idea and decisions for the project",
+                            "2026-03-25T00:00:00Z",
+                            1700000000,
+                            123,
+                            456,
+                            1700000000,
+                        ),
+                    )
+                    conn.commit()
+                    conn.row_factory = sqlite3.Row
+                    rows = [
+                        {"file_path": "/tmp/native.jsonl", "snippet": "fallback snippet", "source_type": "native_session"}
+                    ]
+                    enriched = session_index._enrich_native_rows(rows, conn, ["NotebookLM"], limit=5)
+                    self.assertEqual(enriched[0]["session_id"], "native-sample")
+                    self.assertIn("NotebookLM", enriched[0]["snippet"])
+                finally:
+                    conn.close()
 
 
 if __name__ == "__main__":

@@ -13,12 +13,12 @@
 
 ## 商业定位与价值主张
 
-Context Mesh Foundry 0.5.0 把本地上下文设施打磨成面向企业的产品型单体：在工程团队对本地可控性、可审计性与速度有苛刻要求时，只需一套命令就能部署、验证、迁移与升级。
+Context Mesh Foundry 0.5.0 把本地上下文设施打磨成面向企业的单体产品：工程团队通过一套可复现的命令就能完成部署、验证、迁移与升级，所有操作始终在本地可控边界内。
 
-- **确定性部署与运营**：统一的 `context_cli.py` 入口（`search`、`serve`、`health`、`maintain` 等）与 `bash scripts/unified_context_deploy.sh` 脚本，让运维只需记住一套流程即可复现环境。
-- **本地治理与审计**：所有上下文数据、守护进程与 viewer 配置都在 SQLite + 本地目录里，可用 `python3 scripts/context_cli.py health`、`python3 scripts/context_cli.py smoke` 立刻确认状态。
-- **可度量迁移计划**：借助 `python -m benchmarks` 收集 latency、throughput，再用 `cargo run --release` / `go run` 与 `python3 scripts/context_cli.py native-scan --backend auto --threads 4` 比较结果，量化 Native 迁移收益。
-- **稳定演进不破坏体验**：Native 原型在 `native/session_scan`、`native/session_scan_go`，但 CLI 参数、守护进程入口、文档命令都保持不变，确保客户体验持续一致。
+- **确定性部署与运营**：统一的 `python3 scripts/context_cli.py` CLI（包含 `search`、`semantic`、`save`、`export`、`import`、`serve`、`maintain`、`health`、`smoke`、`native-scan`）联合 `bash scripts/unified_context_deploy.sh` 提供端到端流程，降低培训与交付成本。
+- **本地治理与审计**：上下文数据、守护进程与 viewer 配置都落在 SQLite+本地目录，工程师只需运行 `python3 scripts/context_cli.py health`、`python3 scripts/context_cli.py smoke` 检查健康，所有验证命令可被审计并自动记录。
+- **可度量迁移计划**：用 `python -m benchmarks --query <真实业务场景>` 先收集 latency/throughput，再用 `cargo run --release` / `go run` 与 `python3 scripts/context_cli.py native-scan --backend auto --threads 4` 的输出对比，形成可比绩效记录。
+- **稳定演进不破坏体验**：Native 原型（`native/session_scan`、`native/session_scan_go`）只在 hot-path 替换中出现，CLI 参数、守护进程入口、验证命令始终保持一致，保障客户感知零差异。
 
 ## 产品形态
 
@@ -71,7 +71,7 @@ python3 scripts/context_cli.py smoke
 
 ## 部署与运维
 
-- 默认安装目录：`~/.local/share/context-mesh-foundry`。
+- 默认安装目录：`~/.local/share/contextmesh`。
 - 本地服务：`com.contextmesh.daemon`、`com.contextmesh.healthcheck`。
 - `CONTEXT_MESH_*` 系列变量统一配置：`STORAGE_ROOT`、`REMOTE_URL`、`ENABLE_REMOTE_SYNC`、`VIEWER_HOST`、`VIEWER_PORT`、`SESSION_INDEX_DB_PATH`。
 - 旧桥接（`recall-lite`、`openviking`、`aline`）可清理，部署流程仅需 `bash scripts/unified_context_deploy.sh`。
@@ -79,64 +79,70 @@ python3 scripts/context_cli.py smoke
 
 ## 安装矩阵
 
-| 平台 | 先决条件 | 快速部署 | 说明 |
+| 平台 | 先决条件 | 快速部署 | 建议验证命令 |
 | --- | --- | --- | --- |
-| Linux x86_64 / ARM64 | Python 3.11+、SQLite3、本地 shell、可选 Rust 工具链 | `git clone https://github.com/dunova/context-mesh-foundry.git && cd context-mesh-foundry && cp .env.example .env && bash scripts/unified_context_deploy.sh`，再用 `python3 scripts/context_cli.py health`、`python3 scripts/context_cli.py smoke` 或 `python3 scripts/context_cli.py native-scan --backend auto --threads 4` 验证 | Rust/cargo 仅在构建 `native/session_scan` 原型时必须，其他模块只要 Python 即可运行。 |
-| macOS (Intel / Apple Silicon) | 同上，确保 `/opt/homebrew/bin` 在 PATH 中 | `git clone https://github.com/dunova/context-mesh-foundry.git && cd context-mesh-foundry && cp .env.example .env && bash scripts/unified_context_deploy.sh`，再用 `python3 scripts/context_cli.py health` 与 `python3 scripts/context_cli.py smoke` 复测 | `brew install sqlite` 仅在缺失时使用；`bash` 与 `cargo` 同样可用。 |
-| Windows (WSL2 / PowerShell) | WSL 2 (Ubuntu 22.04+) / Git Bash + Windows Terminal，启用 Windows Subsystem for Linux | `git clone https://github.com/dunova/context-mesh-foundry.git` 后在 WSL 里 `cp .env.example .env && bash scripts/unified_context_deploy.sh`，再用 `python3 scripts/context_cli.py health` 与 `python3 scripts/context_cli.py native-scan --backend auto --threads 4` 检查 | 建议在 WSL 环境中运行，避免混合文件权限。WSL 内可用 `rustup` 安装 native 依赖。 |
+| Linux x86_64 / ARM64 | Python 3.11+、SQLite3、bash shell、可选 Rust/cargo 工具 | `git clone https://github.com/dunova/context-mesh-foundry.git && cd context-mesh-foundry && cp .env.example .env && bash scripts/unified_context_deploy.sh` | `python3 scripts/context_cli.py health` / `python3 scripts/context_cli.py smoke` / `python3 scripts/context_cli.py native-scan --backend auto --threads 4` |
+| macOS (Intel / Apple Silicon) | 同上，确保 `/opt/homebrew/bin` 在 PATH，必要时 `brew install sqlite` | `git clone https://github.com/dunova/context-mesh-foundry.git && cd context-mesh-foundry && cp .env.example .env && bash scripts/unified_context_deploy.sh` | `python3 scripts/context_cli.py health` 与 `python3 scripts/context_cli.py smoke`、`python3 scripts/context_cli.py native-scan --backend auto --threads 4` |
+| Windows (WSL2 / PowerShell) | WSL2 Ubuntu 22.04+ 与 Git Bash/Windows Terminal，启用 Linux 子系统 | 在 WSL 里 `git clone https://github.com/dunova/context-mesh-foundry.git && cd context-mesh-foundry && cp .env.example .env && bash scripts/unified_context_deploy.sh` | `python3 scripts/context_cli.py health` / `python3 scripts/context_cli.py native-scan --backend auto --threads 4` |
 
 ## Native 路线
 
-1. 在 Python 单体内用 `python -m benchmarks --query <真实业务场景>` 按主权路径收集 latency/throughput 数据，产出可对比的凭证。
-2. 识别 CPU、IO 或内存重度热点后，把路径抽象成 `native/session_scan`（Rust）或 `native/session_scan_go`（Go）原型，复用 `context_cli.py native-scan --backend <auto|rust|go>` 入口。
-3. 每次 Native 替换都保持相同 CLI 参数，先在 Python 侧用 `python3 scripts/context_cli.py native-scan --backend auto --threads 4` 复测，再用 `cargo run --release` 或 `go run` 校验性能，最后运行 `python3 scripts/context_cli.py health` 与 `python3 scripts/context_cli.py smoke`、`python3 scripts/context_cli.py native-scan --backend auto --threads 4` 确认整体守护进程与扫描链路稳定。
-4. 发布前用 `python3 -m benchmarks --iterations 1 --warmup 0 --query perf` 记录对比数据，把结果写入 release notes 目录，并在 README/CHANGELOG 中注明审核命令与差异。
+1. 在 Python 单体中用 `python -m benchmarks --query <真实业务场景>` 量化 latency/throughput，数据写入 release notes 以建立迁移前 baseline。
+2. 把瓶颈抽象成 `native/session_scan`（Rust）或 `native/session_scan_go`（Go）原型，保持 `python3 scripts/context_cli.py native-scan --backend <auto|rust|go>` 入口不变，为工程师提供一致的调用体验。
+3. 每次 Native 替换先运行 `python3 scripts/context_cli.py native-scan --backend auto --threads 4` 复测，再用 `cargo run --release` / `go run` 校验性能，最后串联 `python3 scripts/context_cli.py health`、`python3 scripts/context_cli.py smoke` 与 `python3 scripts/context_cli.py native-scan --backend auto --threads 4` 确保守护进程、viewer 和扫描链路正常。
+4. 发布前执行 `python3 -m benchmarks --iterations 1 --warmup 0 --query perf` 记录对比数据，并把验证命令与差异写入 `docs/RELEASE_NOTES_0.5.0.md` 与 `CHANGELOG.md`，让客户看到迁移前后指标与验证流程。
 
 ## FAQ
 
 ### 这是一个库、一个工具，还是一套本地服务？
 
-三者都是，但对使用者来说它首先是一套本地产品：
+三者兼备，但首先是一个本地产品交付套件：
 
 - CLI：`context_cli.py`
 - daemon：`context_daemon.py`
 - viewer：`context_server.py`
 - health/deploy：`context_healthcheck.sh` / `unified_context_deploy.sh`
 
-你可以只把它当命令行工具用，也可以把它部署成常驻本地上下文基础设施。
+可按需选用：作为命令行工具，或注册守护进程/healthcheck 做常驻基础设施。
 
 ### 为什么默认不启用远程同步？
 
-因为默认目标是：
+因为我们优先保障：
 
-- 最少依赖
+- 最少外部依赖
 - 最低 surprise
 - 最稳定本地链路
-- 最低 token / 网络开销
+- 最少 token / 网络开销
 
-远程同步是可选增强，不是默认主路径。
+远程同步是可选增强，非默认主路径；先把本地体验打磨稳再逐步加装。
+
+### Native 迁移路线会影响操作体验吗？
+
+不会。任何热点替换都通过 `python3 scripts/context_cli.py native-scan` 入口触发，CLI 参数、守护进程名称与验证链路（`health`、`smoke`、`native-scan`）都不变。
+
+### 如何在不同平台快速部署并确认状态？
+
+以 `git clone https://github.com/dunova/context-mesh-foundry.git` 为起点，依赖 `bash scripts/unified_context_deploy.sh` 与 `python3 scripts/context_cli.py health` 完成主流程。详细依赖与差异请参阅上方安装矩阵；在 macOS/Windows 上先确认 Python 3.11 与 SQLite 可用，Linux 可直接在 shell 中运行相同步骤。
+
+### 如何验证部署与 Native 替换后的状态？
+
+每次部署或 Native 替换后依次运行：
+
+1. `python3 scripts/context_cli.py health`
+2. `python3 scripts/context_cli.py smoke`
+3. `python3 scripts/context_cli.py native-scan --backend auto --threads 4`
+
+必要时再对比 `cargo run --release` / `go run` 的输出，把 benchmark 结果与验证命令写入 `docs/RELEASE_NOTES_0.5.0.md` 与 `CHANGELOG.md` 供商业审计。
 
 ### 为什么不直接全部用 Rust/Go 重写？
 
-因为当前最优路线是：
+因为最优路线是：
 
 1. 先把 Python 主链收敛成稳定单体
 2. 用 benchmark 找真实热点
 3. 只把热点模块逐步替换成 Rust/Go
 
-这样能同时兼顾速度、稳定性和迁移成本。
-
-### 如何在不同平台选择安装流程？
-
-参考上面 `安装矩阵` 表格，所有平台都可以从 `git clone https://github.com/dunova/context-mesh-foundry.git` 开始，依赖同一套 `bash scripts/unified_context_deploy.sh` 和 `python3 scripts/context_cli.py health` 验证。Mac/Windows 需要先确认 Python 3.11 与 SQLite 可用，Linux 则额外可以直接在 shell 里按步骤运行脚本。
-
-### Native 迁移路线会影响操作体验吗？
-
-不会。每次用 `native/session_scan` 或 `native/session_scan_go` 替换热点时，仍然通过 `python3 scripts/context_cli.py native-scan` 触发，CLI 参数与守护进程入口一致。工程师只要在 `benchmarks/` 跑一次对比，确认 `cargo run --release` 与 `go run` 输出与 `python -m benchmarks` 的 latency 信息相当，就可以安全切换。
-
-### 如何验证部署及 Native 迁移后的状态？
-
-每一次部署或 Native 替换后，应连续运行 `python3 scripts/context_cli.py health` 与 `python3 scripts/context_cli.py smoke`，再用 `python3 scripts/context_cli.py native-scan --backend auto --threads 4` 检查扫描链路与 Native backend 配合是否有异常；必要时对比 `cargo run --release` 或 `go run` 的输出，提高迁移前后的可比性，并把 benchmark 结果写入 `docs/RELEASE_NOTES_0.5.0.md` 与 `CHANGELOG.md` 供商业审计。
+如此既能保持速度，又能兼顾稳定性与迁移成本。
 
 ## 版本与发布
 

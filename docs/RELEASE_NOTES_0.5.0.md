@@ -28,7 +28,7 @@
 - Remote sync disabled by default to prioritize predictable local behavior
 - Benchmark harness added so operators can reproduce latency/throughput before native migration
 - First Rust hot-path prototype added, showing a concrete Native 迁移路线 without breaking the CLI
-- README/CHANGELOG/docs/RELEASE_NOTES_0.5.0.md 统一强调商业价值、FAQ、安装矩阵与 native 路线，并围绕 `python3 scripts/context_cli.py health`、`smoke` 与 `native-scan --backend auto --threads 4` 命令构建验证流程。
+- README/CHANGELOG/docs/RELEASE_NOTES_0.5.0.md 统一强化商业故事、安装矩阵、FAQ 与 native 验证流程，同时把验证命令固定为 `python3 scripts/context_cli.py health` / `python3 scripts/context_cli.py smoke` / `python3 scripts/context_cli.py native-scan --backend auto --threads 4`，让部署后的复盘命令一致。
 
 ## Product Direction
 
@@ -68,6 +68,16 @@ python3 scripts/e2e_quality_gate.py
 python3 -m benchmarks --iterations 1 --warmup 0 --query benchmark
 python3 scripts/smoke_installed_runtime.py
 ```
+
+## 验证流程
+
+每次部署或 Native 替换后依次运行：
+
+1. `python3 scripts/context_cli.py health`
+2. `python3 scripts/context_cli.py smoke`
+3. `python3 scripts/context_cli.py native-scan --backend auto --threads 4`
+
+再根据需要对比 `cargo run --release` / `go run` 的指标，把 benchmark 结果与验证命令写入 `docs/RELEASE_NOTES_0.5.0.md` 与 `CHANGELOG.md`，以便商业客户复盘。
 
 ## Upgrade Note
 

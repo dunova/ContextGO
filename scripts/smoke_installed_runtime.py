@@ -3,10 +3,26 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import json
+import os
 import sys
-INSTALL_ROOT = Path.home() / ".local" / "share" / "context-mesh-foundry" / "scripts"
+from pathlib import Path
+
+
+def resolve_install_root() -> Path:
+    explicit = os.environ.get("CONTEXT_MESH_INSTALL_ROOT") or os.environ.get("CMF_INSTALL_ROOT")
+    if explicit:
+        base = Path(explicit).expanduser()
+        return base if base.name == "scripts" else base / "scripts"
+
+    default_root = Path.home() / ".local" / "share" / "contextmesh" / "scripts"
+    legacy_root = Path.home() / ".local" / "share" / "context-mesh-foundry" / "scripts"
+    if (default_root / "context_cli.py").exists() or not legacy_root.exists():
+        return default_root
+    return legacy_root
+
+
+INSTALL_ROOT = resolve_install_root()
 
 try:
     from context_smoke import run_smoke
@@ -16,18 +32,17 @@ except ImportError:  # pragma: no cover
 
 
 def main() -> int:
-    payload = run_smoke(INSTALL_ROOT / "context_cli.py", INSTALL_ROOT / "e2e_quality_gate.py")
-    print(
-        json.dumps(
-            {
-                "install_root": str(INSTALL_ROOT),
-                "summary": payload["summary"],
-                "results": payload["results"],
-            },
-            ensure_ascii=False,
-            indent=2,
-        )
-    )
+    cli_path = INSTALL_ROOT / "context_cli.py"
+    quality_gate_path = INSTALL_ROOT / "e2e_quality_gate.py"
+    payload = run_smoke(cli_path, quality_gate_path)
+    output = {
+        "scope": "installed",
+        "install_root": str(INSTALL_ROOT),
+        "cli_path": str(cli_path),
+        "quality_gate_path": str(quality_gate_path),
+        **payload,
+    }
+    print(json.dumps(output, ensure_ascii=False, indent=2))
     return 1 if payload["summary"]["failed"] else 0
 
 

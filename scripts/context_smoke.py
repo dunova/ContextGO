@@ -13,8 +13,10 @@ import urllib.request
 
 
 def run_cmd(args: list[str], timeout: int = 60) -> tuple[int, str, str]:
-    proc = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
-    return proc.returncode, proc.stdout or "", proc.stderr or ""
+    proc = subprocess.run(args, capture_output=True, text=False, timeout=timeout)
+    stdout = (proc.stdout or b"").decode("utf-8", errors="replace")
+    stderr = (proc.stderr or b"").decode("utf-8", errors="replace")
+    return proc.returncode, stdout, stderr
 
 
 def test_health(cli_path: Path) -> dict:
@@ -28,6 +30,17 @@ def test_quality_gate(quality_gate_path: Path) -> dict:
     rc, out, err = run_cmd([sys.executable, str(quality_gate_path)], timeout=120)
     text = (out or err).strip()
     return {"name": "quality_gate", "rc": rc, "ok": rc == 0, "detail": text}
+
+
+def test_healthcheck(healthcheck_path: Path) -> dict:
+    rc, out, err = run_cmd(["bash", str(healthcheck_path), "--quiet"])
+    text = (out or err).strip()
+    return {
+        "name": "healthcheck",
+        "rc": rc,
+        "ok": rc == 0,
+        "detail": text[:400],
+    }
 
 
 def test_rw_cycle(cli_path: Path) -> dict:
@@ -111,16 +124,17 @@ def test_viewer(cli_path: Path) -> dict:
 
 
 def run_smoke(cli_path: Path, quality_gate_path: Path) -> dict:
+    healthcheck_path = cli_path.with_name("context_healthcheck.sh")
     results = [
         test_health(cli_path),
+        test_healthcheck(healthcheck_path),
         test_quality_gate(quality_gate_path),
         test_rw_cycle(cli_path),
         test_maintain(cli_path),
         test_viewer(cli_path),
     ]
     return {
-        "cli_path": str(cli_path),
-        "quality_gate_path": str(quality_gate_path),
+        "healthcheck_path": str(healthcheck_path),
         "summary": summarize_results(results),
         "results": results,
     }
@@ -138,8 +152,17 @@ def summarize_results(results: list[dict]) -> dict:
 
 def main() -> int:
     root = Path(__file__).resolve().parent
-    payload = run_smoke(root / "context_cli.py", root / "e2e_quality_gate.py")
-    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    cli_path = root / "context_cli.py"
+    quality_gate_path = root / "e2e_quality_gate.py"
+    payload = run_smoke(cli_path, quality_gate_path)
+    output = {
+        "scope": "workspace",
+        "workspace_root": str(root),
+        "cli_path": str(cli_path),
+        "quality_gate_path": str(quality_gate_path),
+        **payload,
+    }
+    print(json.dumps(output, ensure_ascii=False, indent=2))
     return 1 if payload["summary"]["failed"] else 0
 
 

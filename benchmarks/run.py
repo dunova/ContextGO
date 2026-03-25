@@ -298,8 +298,8 @@ def _format_stats_line(stats: BenchmarkStats) -> str:
     )
 
 
-def _print_summary_text(stats_list: list[BenchmarkStats]) -> None:
-    print("\nBenchmark Summary")
+def _print_summary_text(stats_list: list[BenchmarkStats], header: str = "Benchmark Summary") -> None:
+    print(header)
     for stats in stats_list:
         print("  ", _format_stats_line(stats))
 
@@ -493,9 +493,7 @@ def main(argv: list[str] | None = None) -> int:
             for index, (mode, stats_list) in enumerate(results_by_mode):
                 if index:
                     print()
-                print(f"Benchmark Summary ({mode})")
-                for stats in stats_list:
-                    print("  ", _format_stats_line(stats))
+                _print_summary_text(stats_list, header=f"Benchmark Summary ({mode})")
                 for stats in stats_list:
                     _print_sample(f"{mode} · {stats.name}", stats.sample)
             if args.mode == "both" and len(results_by_mode) == 2:
