@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Lightweight memory viewer API + SSE for Context Mesh Foundry."""
+"""Lightweight memory viewer API + SSE for ContextGO."""
 
 from __future__ import annotations
 
@@ -7,8 +7,14 @@ from datetime import datetime
 import json
 import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import threading
 import time
 from urllib.parse import parse_qs, urlparse
+
+try:
+    from context_config import env_float, env_int, env_str
+except Exception:  # pragma: no cover
+    from .context_config import env_float, env_int, env_str  # type: ignore[import-not-found]
 
 try:
     from memory_index import (
@@ -28,36 +34,34 @@ except Exception:  # pragma: no cover
     )
 
 
-def _env_int(name: str, default: int, min_v: int, max_v: int) -> int:
-    raw = os.environ.get(name, str(default)).strip()
-    try:
-        value = int(raw)
-    except Exception:
-        value = default
-    return max(min_v, min(max_v, value))
-
-
-def _env_float(name: str, default: float, min_v: float, max_v: float) -> float:
-    raw = os.environ.get(name, str(default)).strip()
-    try:
-        value = float(raw)
-    except Exception:
-        value = default
-    return max(min_v, min(max_v, value))
-
-
-HOST = os.environ.get("CONTEXT_VIEWER_HOST", "127.0.0.1")
-PORT = _env_int("CONTEXT_VIEWER_PORT", 37677, 1, 65535)
-VIEWER_TOKEN = os.environ.get("CONTEXT_VIEWER_TOKEN", "").strip()
+HOST = env_str("CONTEXT_MESH_VIEWER_HOST", "CONTEXT_VIEWER_HOST", default="127.0.0.1")
+PORT = env_int("CONTEXT_MESH_VIEWER_PORT", "CONTEXT_VIEWER_PORT", default=37677, minimum=1)
+VIEWER_TOKEN = env_str("CONTEXT_MESH_VIEWER_TOKEN", "CONTEXT_VIEWER_TOKEN", default="").strip()
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
-MAX_POST_BYTES = _env_int("CONTEXT_VIEWER_MAX_POST_BYTES", 1048576, 1024, 16 * 1024 * 1024)
-MAX_BATCH_IDS = _env_int("CONTEXT_VIEWER_MAX_BATCH_IDS", 500, 1, 2000)
-SSE_INTERVAL_SEC = _env_float("CONTEXT_VIEWER_SSE_INTERVAL_SEC", 1.0, 0.2, 60.0)
-SSE_MAX_TICKS = _env_int("CONTEXT_VIEWER_SSE_MAX_TICKS", 120, 1, 3600)
+MAX_POST_BYTES = env_int("CONTEXT_MESH_VIEWER_MAX_POST_BYTES", "CONTEXT_VIEWER_MAX_POST_BYTES", default=1048576, minimum=1024)
+MAX_BATCH_IDS = env_int("CONTEXT_MESH_VIEWER_MAX_BATCH_IDS", "CONTEXT_VIEWER_MAX_BATCH_IDS", default=500, minimum=1)
+SSE_INTERVAL_SEC = env_float("CONTEXT_MESH_VIEWER_SSE_INTERVAL_SEC", "CONTEXT_VIEWER_SSE_INTERVAL_SEC", default=1.0, minimum=0.2)
+SSE_MAX_TICKS = env_int("CONTEXT_MESH_VIEWER_SSE_MAX_TICKS", "CONTEXT_VIEWER_SSE_MAX_TICKS", default=120, minimum=1)
+SYNC_MIN_INTERVAL_SEC = env_float("CONTEXT_MESH_VIEWER_SYNC_MIN_INTERVAL_SEC", default=5.0, minimum=0.0)
+_SYNC_STATE = {"at": 0.0, "payload": None}
+_SYNC_LOCK = threading.Lock()
 
 
 def _json_bytes(payload: dict) -> bytes:
     return json.dumps(payload, ensure_ascii=False).encode("utf-8")
+
+
+def _maybe_sync_index() -> dict:
+    now = time.monotonic()
+    with _SYNC_LOCK:
+        cached = _SYNC_STATE.get("payload")
+        if SYNC_MIN_INTERVAL_SEC > 0 and cached is not None and (_SYNC_STATE.get("at", 0.0) + SYNC_MIN_INTERVAL_SEC) > now:
+            return dict(cached)
+    payload = sync_index_from_storage()
+    with _SYNC_LOCK:
+        _SYNC_STATE["at"] = now
+        _SYNC_STATE["payload"] = dict(payload)
+    return payload
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -99,9 +103,9 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         if parsed.path == "/":
             self._send_html(
-                """<!doctype html><html><head><meta charset="utf-8"><title>Context Mesh Viewer</title></head>
+                """<!doctype html><html><head><meta charset="utf-8"><title>ContextGO Viewer</title></head>
 <body style="font-family: -apple-system, sans-serif; max-width: 960px; margin: 24px auto;">
-<h1>Context Mesh Viewer</h1>
+<h1>ContextGO Viewer</h1>
 <input id="q" style="width:70%" placeholder="搜索记忆关键词"/><button onclick="run()">Search</button>
 <pre id="out" style="white-space: pre-wrap; background:#f6f8fa; padding:12px;"></pre>
 <script>
@@ -112,7 +116,7 @@ async function run(){
   document.getElementById('out').textContent = JSON.stringify(j,null,2);
 }
 const es = new EventSource('/api/events');
-es.onmessage = (e)=>{ try{ const d=JSON.parse(e.data); document.title='Context Mesh Viewer ('+d.total_observations+')'; }catch(_){} };
+es.onmessage = (e)=>{ try{ const d=JSON.parse(e.data); document.title='ContextGO Viewer ('+d.total_observations+')'; }catch(_){} };
 </script></body></html>"""
             )
             return
@@ -122,7 +126,7 @@ es.onmessage = (e)=>{ try{ const d=JSON.parse(e.data); document.title='Context M
             return
 
         if parsed.path == "/api/health":
-            sync = sync_index_from_storage()
+            sync = _maybe_sync_index()
             self._send_json(200, {"ok": True, "checked_at": datetime.now().isoformat(), "sync": sync, **index_stats()})
             return
 
@@ -132,7 +136,7 @@ es.onmessage = (e)=>{ try{ const d=JSON.parse(e.data); document.title='Context M
             limit = self._parse_int(qs.get("limit", ["20"])[0] or "20", 20, 1, 200)
             offset = self._parse_int(qs.get("offset", ["0"])[0] or "0", 0, 0, 100000)
             source_type = (qs.get("source_type", ["all"])[0] or "all").strip()
-            sync = sync_index_from_storage()
+            sync = _maybe_sync_index()
             rows = search_index(query=query, limit=limit, offset=offset, source_type=source_type)
             self._send_json(200, {"sync": sync, "count": len(rows), "results": rows})
             return
@@ -142,7 +146,7 @@ es.onmessage = (e)=>{ try{ const d=JSON.parse(e.data); document.title='Context M
             anchor = self._parse_int(qs.get("anchor", ["0"])[0] or "0", 0, 0, 10_000_000)
             before = self._parse_int(qs.get("depth_before", ["3"])[0] or "3", 3, 0, 20)
             after = self._parse_int(qs.get("depth_after", ["3"])[0] or "3", 3, 0, 20)
-            sync = sync_index_from_storage()
+            sync = _maybe_sync_index()
             rows = timeline_index(anchor_id=anchor, depth_before=before, depth_after=after) if anchor > 0 else []
             self._send_json(200, {"sync": sync, "count": len(rows), "timeline": rows})
             return
@@ -156,7 +160,7 @@ es.onmessage = (e)=>{ try{ const d=JSON.parse(e.data); document.title='Context M
             self.end_headers()
             for _ in range(SSE_MAX_TICKS):
                 try:
-                    sync = sync_index_from_storage()
+                    sync = _maybe_sync_index()
                     data = {"at": datetime.now().isoformat(), "sync": sync, **index_stats()}
                     chunk = f"data: {json.dumps(data, ensure_ascii=False)}\n\n".encode("utf-8")
                     self.wfile.write(chunk)
@@ -193,7 +197,7 @@ es.onmessage = (e)=>{ try{ const d=JSON.parse(e.data); document.title='Context M
                 self._send_json(400, {"ok": False, "error": "too many ids"})
                 return
             limit = self._parse_int(str(data.get("limit") or "100"), 100, 1, 300)
-            sync = sync_index_from_storage()
+            sync = _maybe_sync_index()
             parsed_ids = []
             for x in ids:
                 try:
@@ -210,7 +214,7 @@ def main():
     if HOST not in LOOPBACK_HOSTS and not VIEWER_TOKEN:
         raise SystemExit("CONTEXT_VIEWER_TOKEN is required when binding non-loopback host.")
     server = ThreadingHTTPServer((HOST, PORT), Handler)
-    print(f"Context Mesh Viewer listening on http://{HOST}:{PORT}")
+    print(f"ContextGO Viewer listening on http://{HOST}:{PORT}")
     server.serve_forever()
 
 

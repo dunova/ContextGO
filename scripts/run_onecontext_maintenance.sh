@@ -2,16 +2,21 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PY_SCRIPT="$SCRIPT_DIR/onecontext_maintenance.py"
 LOG_DIR="$HOME/.context_system/logs"
-LOG_FILE="$LOG_DIR/onecontext_maintenance.log"
+LOG_FILE="${CONTEXT_MESH_MAINTENANCE_LOG:-$LOG_DIR/context_mesh_maintenance.log}"
+SERVICE_LABEL="ContextGO maintenance"
+
+log_line() {
+  local ts
+  ts="$(date '+%Y-%m-%d %H:%M:%S %z')"
+  printf "[%s] %s %s\n" "$ts" "$SERVICE_LABEL" "$1"
+}
 
 mkdir -p "$LOG_DIR"
 chmod 700 "$LOG_DIR" >/dev/null 2>&1 || true
 
 {
-  echo "[$(date '+%Y-%m-%d %H:%M:%S %z')] onecontext maintenance start"
-  python3 "$PY_SCRIPT" --repair-queue --enqueue-missing --max-enqueue 500
-  echo "[$(date '+%Y-%m-%d %H:%M:%S %z')] onecontext maintenance done"
+  log_line "start"
+  python3 "$SCRIPT_DIR/context_cli.py" maintain --repair-queue --enqueue-missing --max-enqueue 500
+  log_line "done"
 } >>"$LOG_FILE" 2>&1
-

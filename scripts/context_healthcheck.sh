@@ -1,15 +1,17 @@
 #!/bin/bash
 # =============================================================================
-# Context Lite Health Check (recall-first)
+# ContextGO Health Check (standalone local index)
 # Default mode is non-intrusive and low-overhead.
-# --deep enables optional legacy/openviking probes.
+# --deep enables optional legacy/remote probes.
 # =============================================================================
 
 set -u
 
 LOG_DIR="$HOME/.context_system/logs"
 HEALTHCHECK_LOG="$LOG_DIR/healthcheck.log"
-UNIFIED_CONTEXT_STORAGE_ROOT="${UNIFIED_CONTEXT_STORAGE_ROOT:-${OPENVIKING_STORAGE_ROOT:-$HOME/.unified_context_data}}"
+UNIFIED_CONTEXT_STORAGE_ROOT="${UNIFIED_CONTEXT_STORAGE_ROOT:-${CONTEXT_MESH_STORAGE_ROOT:-${OPENVIKING_STORAGE_ROOT:-$HOME/.unified_context_data}}}"
+REMOTE_SYNC_BASE_URL="${CONTEXT_MESH_REMOTE_URL:-${OPENVIKING_URL:-http://127.0.0.1:8090/api/v1}}"
+REMOTE_SYNC_HEALTH_URL="${REMOTE_SYNC_HEALTH_URL:-${REMOTE_SYNC_BASE_URL%/}/health}"
 
 mkdir -p "$LOG_DIR"
 chmod 700 "$LOG_DIR" 2>/dev/null || true
@@ -19,6 +21,7 @@ DEEP_PROBE=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --quiet) PRINT_STDOUT=0 ;;
+        --local) ;;
         --deep) DEEP_PROBE=1 ;;
     esac
     shift
@@ -27,6 +30,11 @@ done
 TS=$(date '+%Y-%m-%d %H:%M:%S')
 STATUS=0
 REPORT=""
+CHECK_SUMMARY=()
+
+record_check_result() {
+    CHECK_SUMMARY+=("$1|$2|$3")
+}
 
 report_ok() { REPORT+="  ✅ $1\n"; }
 report_warn() { REPORT+="  ⚠️  $1\n"; }
@@ -37,114 +45,175 @@ file_size_bytes() {
     stat -f%z "$p" 2>/dev/null || stat -c%s "$p" 2>/dev/null || echo 0
 }
 
-check_launchd_recall_lite() {
-    local uid_num state
+check_launchd_runtime() {
+    local uid_num state summary status="warn"
     uid_num="$(id -u)"
+
     if ! command -v launchctl >/dev/null 2>&1; then
-        report_warn "launchctl 不可用，跳过 recall-lite 服务检查"
+        report_warn "launchctl 不可用，跳过 LaunchAgent 检查"
+        summary="launchctl 不可用"
+        record_check_result "core.launchd_runtime" "$status" "$summary"
         return 0
     fi
 
-    state=$(launchctl print "gui/${uid_num}/com.context.recall-lite" 2>/dev/null | awk -F'= ' '/^[[:space:]]*state = / {print $2; exit}')
+    state=$(launchctl print "gui/${uid_num}/com.contextmesh.daemon" 2>/dev/null | awk -F'= ' '/^[[:space:]]*state = / {print $2; exit}')
     if [ -z "$state" ]; then
-        report_fail "launchd com.context.recall-lite 未加载"
+        report_warn "launchd com.contextmesh.daemon 未加载"
+        summary="daemon 未加载"
+        record_check_result "core.launchd_runtime" "$status" "$summary"
         return 0
     fi
 
     if [ "$state" = "running" ] || [ "$state" = "spawn scheduled" ] || [ "$state" = "not running" ]; then
-        report_ok "launchd com.context.recall-lite 已加载（state=${state}）"
+        report_ok "launchd com.contextmesh.daemon 已加载（state=${state}）"
+        summary="state=${state}"
+        status="ok"
     else
-        report_warn "launchd com.context.recall-lite state=$state"
+        report_warn "launchd com.contextmesh.daemon state=$state"
+        summary="state=${state}"
     fi
+
+    record_check_result "core.launchd_runtime" "$status" "$summary"
 }
 
-check_recall_runtime() {
-    local recall_script out
+check_cli_runtime() {
+    local cli_script out sessions db_path summary status
+    cli_script="${CONTEXT_CLI_SCRIPT:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/context_cli.py}"
+    summary="未知"
+    status="fail"
 
-    recall_script="${RECALL_SCRIPT:-$HOME/.agents/skills/recall/scripts/recall.py}"
-
-    if [ ! -f "$recall_script" ]; then
-        report_fail "recall 脚本缺失：$recall_script"
+    if [ ! -f "$cli_script" ]; then
+        report_fail "context_cli 脚本缺失：$cli_script"
+        summary="context_cli 脚本缺失"
+        record_check_result "core.cli_runtime" "$status" "$summary"
         return 0
     fi
 
-    out="$(python3 "$recall_script" --health 2>&1)"
-    if echo "$out" | grep -q '"recall_db_exists": true'; then
-        local sessions messages
-        sessions="$(echo "$out" | awk -F': ' '/"total_sessions"/ {gsub(/,/, "", $2); print $2; exit}')"
-        messages="$(echo "$out" | awk -F': ' '/"total_messages"/ {gsub(/,/, "", $2); print $2; exit}')"
-        report_ok "recall 健康检查通过（sessions=${sessions:-0}, messages=${messages:-0}）"
+    out="$(python3 "$cli_script" health 2>&1)"
+    if echo "$out" | grep -q '"all_ok": true'; then
+        sessions="$(echo "$out" | awk -F': ' '/"sessions"/ {gsub(/,/, "", $2); print $2; exit}')"
+        db_path="$(echo "$out" | awk -F': ' '/"db"/ {gsub(/[",]/, "", $2); print $2; exit}')"
+        report_ok "本地会话索引健康检查通过（sessions=${sessions:-0}）"
+        if [ -n "$db_path" ]; then
+            report_ok "会话索引数据库：$db_path"
+        fi
+        report_ok "上下文主链路：内置 session index + 本地 context_cli（无 MCP）"
+        summary="sessions=${sessions:-0}, db=${db_path:-未返回}"
+        status="ok"
     else
-        report_fail "recall 健康检查失败"
+        report_fail "context_cli health 失败"
+        summary="health 失败"
     fi
 
-    report_ok "上下文主链路：recall.py + 本地 context_cli（无 MCP）"
+    record_check_result "core.cli_runtime" "$status" "$summary"
 }
 
-check_openviking_optional() {
-    local http_status
-    http_status=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:8090/health" --max-time 3 2>/dev/null || true)
+check_remote_sync_probe() {
+    local http_status summary status="warn"
+    http_status=$(curl -s -o /dev/null -w "%{http_code}" "$REMOTE_SYNC_HEALTH_URL" --max-time 3 2>/dev/null || true)
     http_status="${http_status: -3}"
     [ -z "$http_status" ] && http_status="000"
 
     if [ "$http_status" = "200" ]; then
-        report_ok "openviking 可选探针：HTTP 200"
+        report_ok "ContextGO 远程同步可选探针：HTTP 200"
+        summary="HTTP 200"
+        status="ok"
     else
-        report_warn "openviking 可选探针：HTTP ${http_status}（不影响 recall-lite 主链路）"
+        report_warn "ContextGO 远程同步可选探针：HTTP ${http_status}（不影响本地主链）"
+        summary="HTTP ${http_status}"
     fi
+
+    record_check_result "optional.remote_sync_probe" "$status" "$summary"
 }
 
 check_stale_claude_hooks() {
     local hit
     hit="$(rg -n 'aline-ai|realign/claude_hooks' "$HOME/.claude/settings.json" "$HOME/.claude/settings.local.json" 2>/dev/null || true)"
+    local summary status
     if [ -n "$hit" ]; then
         report_fail "检测到失效 Claude hooks（aline/realign），可能引发卡顿"
+        summary="检测到失效 hooks"
+        status="fail"
     else
         report_ok "Claude 配置未发现失效 aline hooks"
+        summary="未发现失效 hooks"
+        status="ok"
     fi
+
+    record_check_result "core.claude_hooks" "$status" "$summary"
 }
 
 check_logs_and_pending() {
-    local viking_log recall_log pending_dir pending_count
-    viking_log="$LOG_DIR/viking_daemon.log"
-    recall_log="$LOG_DIR/recall_lite.log"
+    local daemon_log legacy_daemon_log very_legacy_daemon_log health_log pending_dir pending_count
+    daemon_log="$LOG_DIR/context_mesh_daemon.log"
+    legacy_daemon_log="$LOG_DIR/context_daemon.log"
+    very_legacy_daemon_log="$LOG_DIR/viking_daemon.log"
+    health_log="$LOG_DIR/healthcheck.log"
+    local status="ok"
+    local daemon_status="missing"
+    local health_status="missing"
 
-    if [ -f "$viking_log" ]; then
-        report_ok "viking_daemon 日志大小：$(( $(file_size_bytes "$viking_log") / 1048576 ))MB"
+    if [ -f "$daemon_log" ]; then
+        report_ok "ContextGO daemon 日志大小：$(( $(file_size_bytes "${daemon_log}") / 1048576 ))MB"
+        daemon_status="present"
+    elif [ -f "$legacy_daemon_log" ]; then
+        report_warn "检测到旧 ContextGO daemon 日志：${legacy_daemon_log}（旧 context_daemon.log）"
+        daemon_status="legacy"
+        status="warn"
+    elif [ -f "$very_legacy_daemon_log" ]; then
+        report_warn "检测到遗留 Viking daemon 日志：${very_legacy_daemon_log}（旧 viking_daemon.log）"
+        daemon_status="viking"
+        status="warn"
     else
-        report_warn "viking_daemon 日志不存在（如已停用可忽略）"
+        report_warn "ContextGO daemon 日志不存在（如未启动可忽略）"
+        daemon_status="missing"
+        status="warn"
     fi
 
-    if [ -f "$recall_log" ]; then
-        report_ok "recall_lite 日志大小：$(( $(file_size_bytes "$recall_log") / 1048576 ))MB"
+    if [ -f "$health_log" ]; then
+        report_ok "healthcheck 日志大小：$(( $(file_size_bytes "$health_log") / 1048576 ))MB"
+        health_status="present"
     else
-        report_warn "recall_lite 日志不存在"
+        report_warn "healthcheck 日志不存在"
+        health_status="missing"
+        status="warn"
     fi
 
     pending_dir="$UNIFIED_CONTEXT_STORAGE_ROOT/resources/shared/history/.pending"
     if [ -d "$pending_dir" ]; then
         pending_count=$(ls -1 "$pending_dir"/*.md 2>/dev/null | wc -l | tr -d ' ')
         report_ok "pending 队列文件数：${pending_count:-0}"
+        pending_count=${pending_count:-0}
     else
         report_ok "pending 队列目录不存在（当前无离线积压）"
+        pending_count=0
     fi
+    local summary="daemon_log=${daemon_status}, health_log=${health_status}, pending=${pending_count}"
+    record_check_result "storage.logs_pending" "$status" "$summary"
 }
 
-check_deep_legacy_runtime() {
+check_legacy_remote_processes() {
     local pids
-    pids="$(pgrep -f 'viking_daemon.py|openviking_mcp.py|openviking-server' 2>/dev/null || true)"
+    pids="$(pgrep -f 'context_daemon.py|viking_daemon.py|openviking_mcp.py|openviking-server' 2>/dev/null || true)"
+    local summary status
     if [ -n "$pids" ]; then
-        report_warn "检测到旧 OpenViking/MCP 进程残留：$(echo "$pids" | tr '\n' ' ' | sed 's/  */ /g')"
+        report_warn "检测到遗留 ContextGO 远程同步进程（OpenViking/MCP）：$(echo "$pids" | tr '\n' ' ' | sed 's/  */ /g')"
+        summary="pids=${pids}"
+        status="warn"
     else
-        report_ok "未检测到旧 OpenViking/MCP 进程残留"
+        report_ok "未检测到遗留 ContextGO 远程同步进程（OpenViking/MCP）"
+        summary="none"
+        status="ok"
     fi
+
+    record_check_result "optional.legacy_remote" "$status" "$summary"
 }
 
-REPORT+="[$TS] Context Lite Health Check\n"
+REPORT+="[$TS] ContextGO Health Check\n"
 REPORT+="─────────────────────────────────\n"
 REPORT+="Core:\n"
-check_launchd_recall_lite
-check_recall_runtime
+check_launchd_runtime
+check_cli_runtime
 check_stale_claude_hooks
 
 REPORT+="\nStorage/Logs:\n"
@@ -152,15 +221,41 @@ check_logs_and_pending
 
 if [ "$DEEP_PROBE" = "1" ]; then
     REPORT+="\nOptional Deep Checks:\n"
-    check_openviking_optional
-    check_deep_legacy_runtime
+    check_remote_sync_probe
+    check_legacy_remote_processes
+fi
+
+SUMMARY_TOTAL=${#CHECK_SUMMARY[@]}
+SUMMARY_WARN=0
+SUMMARY_FAIL=0
+SUMMARY_FAILED_NAMES=()
+for entry in "${CHECK_SUMMARY[@]}"; do
+    IFS='|' read -r name status detail <<< "$entry"
+    case "$status" in
+        fail)
+            SUMMARY_FAIL=$((SUMMARY_FAIL + 1))
+            SUMMARY_FAILED_NAMES+=("$name")
+            ;;
+        warn)
+            SUMMARY_WARN=$((SUMMARY_WARN + 1))
+            ;;
+    esac
+done
+SUMMARY_STATUS="pass"
+if [ "$SUMMARY_FAIL" -gt 0 ]; then
+    SUMMARY_STATUS="fail"
+fi
+REPORT+="\nSummary:\n"
+REPORT+="  状态：${SUMMARY_STATUS}  总检查数：${SUMMARY_TOTAL}  警告：${SUMMARY_WARN}  失败：${SUMMARY_FAIL}\n"
+if [ "$SUMMARY_FAIL" -gt 0 ]; then
+    REPORT+="  失败项：${SUMMARY_FAILED_NAMES[*]}\n"
 fi
 
 REPORT+="\n"
 if [ "$STATUS" -eq 0 ]; then
-    REPORT+="🟢 Context Lite checks passed.\n"
+    REPORT+="🟢 ContextGO checks passed.\n"
 else
-    REPORT+="🔴 Context Lite issues detected.\n"
+    REPORT+="🔴 ContextGO issues detected.\n"
 fi
 REPORT+="─────────────────────────────────\n\n"
 

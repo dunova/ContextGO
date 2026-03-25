@@ -1,88 +1,55 @@
-# Troubleshooting & Integration Gotchas
+# 故障排查
 
-This document summarizes known issues, integration blind spots, and troubleshooting steps for the recall-first + OpenViking + GSD ecosystem, including the legacy timeline compatibility layer.
+## 1. 首次索引构建慢
 
-> **Note**: All paths referenced below are standard/relative forms. Actual deployment paths vary based on your environment configurations.
+- **现象**：`python3 scripts/context_cli.py health` 或 `search` 第一次运行耗时明显。
+- **原因**：`session_index.py` 扫描本机历史并建立 SQLite 索引需要完整数据。
+- **解决**：
+  - 完成一次 `context_cli.py health` 后再发起 search，索引会在后台追加。
+  - 确认 storage root（默认 `~/.unified_context_data`）下存在 `index/session_index.db` 和 `index/memory_index.db`。
+  - 运行 `python3 -m benchmarks --iterations 1 --warmup 0 --query benchmark` 获取基准并排查是否受限于 IO 或 CPU。
+  - 若依赖 `CONTEXT_MESH_STORAGE_ROOT` 等自定义目录，先在上下文脚本里 `print(storage_root())` 确认路径，再重建索引。
 
-## 1. OpenViking Server Crash Loop (`litellm` Dependency)
+## 2. viewer 无法访问
 
-**Symptom:**
-`com.openviking.server` (or equivalent systemd service) is stuck in a crash loop (`spawn scheduled`).
-Logs indicate:
-```text
-ModuleNotFoundError: No module named 'litellm.llms.base_llm.skills'
+- **现象**：`python3 scripts/context_cli.py serve` 启动后打开 `http://127.0.0.1:38880/api/health` 时失败。
+- **原因**：端口冲突、health 未就绪、旧版本进程未退出或 `context_server` 绑定本地以外地址。
+- **解决**：
+  - 先用 `python3 scripts/context_cli.py health` 验证 CLI 健康，确认 `context_smoke.py`（包含 serve + viewer health 查询）通过。
+  - 确认没有旧服务占用端口：`lsof -iTCP:38880` / `ps` 后 kill 再重启。
+  - 若是已安装运行时（`~/.local/share/context-mesh-foundry`），执行 `python3 scripts/smoke_installed_runtime.py`，观察 viewer 访问与 quality gate 结果。
+
+## 3. 搜索结果为空
+
+- **现象**：`context_cli search ...` 没有命中最近会话。
+- **原因**：`context_daemon` 尚未写入、新历史落在未索引目录、`session_index` 未刷新，或 clin_path 指向非默认 storage。
+- **解决**：
+  - 确认 `~/.unified_context_data`（或 `CONTEXT_MESH_STORAGE_ROOT` 覆盖路径）下的 `raw/`、`index/` 有更新文件。
+  - 检查常见来源（如 `~/.codex/sessions/`、`~/.claude/projects/`、`~/.zsh_history`、`~/.bash_history`）是否出现在 `context_daemon` 抓取目录。
+  - 运行 `python3 scripts/context_cli.py health` + `python3 scripts/context_smoke.py` 验证写入/semantic pipeline。
+  - 用 `python3 scripts/e2e_quality_gate.py` 或 `python3 -m benchmarks --iterations 1 --warmup 0 --query benchmark` 检查 index/CLI 的整体可用性。
+
+## 4. 权限或路径问题
+
+- **现象**：访问本地索引/记忆目录时出现权限错误。
+- **解决**：
+  - 确认目录位于 `scripts/context_config.py` 计算的 storage root（默认 `~/.unified_context_data`）下，`ls -ld $(storage_root)` 验证拥有者。
+  - `stat` 输出确认 `index/`、`raw/` 的权限与当前用户一致。
+  - 若路径被移动或清空，先用 `bash scripts/context_healthcheck.sh`（可附 `--deep` 探测）定位缺失目录或权限问题，必要时清理并恢复 `scripts/context_config.storage_root()`（默认 `~/.unified_context_data`，可由 `CONTEXT_MESH_STORAGE_ROOT`/`UNIFIED_CONTEXT_STORAGE_ROOT` 覆盖）指向的路径，再运行 `python3 scripts/context_smoke.py` 验证默认 storage root 上的 smoke 链路恢复正常。
+
+## 5. 发布前检查
+
+发布前建议至少执行：
+
+```
+bash -n scripts/*.sh
+python3 -m py_compile scripts/*.py
+python3 -m pytest scripts/test_context_cli.py scripts/test_context_core.py scripts/test_session_index.py
+python3 scripts/e2e_quality_gate.py
+python3 -m benchmarks --iterations 1 --warmup 0 --query benchmark
+python3 scripts/context_smoke.py
+python3 scripts/smoke_installed_runtime.py
+bash scripts/context_healthcheck.sh
 ```
 
-**Root Cause:**
-OpenViking requires the `skills` module from `litellm`, which was refactored or removed in `litellm` versions >= `1.81.0`.
-
-**Fix:**
-Downgrade or pin `litellm` to `<1.81.0` within the OpenViking virtual environment before starting the server.
-```bash
-# Example
-/path/to/openviking_env/bin/pip install "litellm<1.81.0"
-```
-*Tip: Always restart the daemon or launch agent after modifying the environment.*
-
-## 2. Aline Watcher/Worker Failures (`realign` Import Error)
-
-**Symptom:**
-If you rely on `Aline`'s hooks for capturing events (e.g., Claude Code), you might notice that recent conversations aren't indexed.
-Logs for `aline_watcher_launchd.err` show:
-```text
-ModuleNotFoundError: No module named 'realign'
-```
-*(Even when using an isolated runner like `uv tool`.)*
-
-**Root Cause:**
-When starting the watcher/worker module via `python -m realign.watcher_daemon`, Python may fail to resolve the package if the wrapper scripts do not properly set the working directory or `PYTHONPATH` to the top layer of the `.venv/lib/python3.XX/site-packages`.
-
-**Fix:**
-Ensure that your `LaunchAgent` plist or `systemd` service explicitly includes `PYTHONPATH` pointing to the `site-packages` directory where `realign` is installed.
-```xml
-<key>EnvironmentVariables</key>
-<dict>
-    <key>PYTHONPATH</key>
-    <string>/path/to/aline-ai/lib/python3.x/site-packages</string>
-</dict>
-```
-
-## 3. MCP Configuration Blind Spots across Terminals
-
-A unified context system is only as good as its integrations. Terminals often have different MCP config locations and syntax:
-
-### Claude Code (`claude`)
-- **Config file**: `~/.claude/settings.json`
-- **Gotcha**: Ensure you declare the MCP block inside `mcpServers` alongside existing keys like `hooks` or `model`.
-
-### OpenCode
-- **Config file**: `~/.config/opencode/opencode.json` (or `~/.opencode/opencode.json`)
-- **Gotcha**: Requires an array structure under `"command"`. Watch out for legacy or broken paths if you renamed your skills directory.
-
-### OpenClaw
-- **Config file**: `~/.openclaw/workspace/config/mcporter.json`
-- **Gotcha**: Do not write MCP objects straight to a root JSON; it uses standard `mcpServers` format wrapped in `mcporter.json`.
-
-### Antigravity / Gemini
-- **Config file**: `~/.gemini/antigravity/mcp_config.json`
-- Configuration handles generic MCPs cleanly but relies on accurate script targets (`openviking_mcp.py`).
-
-## 4. Hidden Config Override (Path Drift Still Happens)
-
-Even after fixing `~/.claude/settings.json`, some clients may still read other persisted config files first.
-
-**Common hidden sources to verify:**
-- `~/.claude.json` (global Claude CLI state; can include `mcpServers`)
-- `~/.codex/config.toml`
-- `~/.gemini/antigravity/mcp_config.json`
-
-**Symptom:**
-MCP list/health still points to an old script path (for example a removed `~/.gemini/.../openviking_mcp.py`) even though your primary config is already fixed.
-
-**Fix:**
-Ensure all active client config sources reference the same absolute script path.
-
-## 5. General Diagnosis Advice
-1. **Healthcheck Command**: Always run the included `context_healthcheck.sh --deep`. It probes `/health` and forces a dummy query against `/api/v1/search/find`.
-2. **Reviewing Logs**: Keep an eye on `.context_system/logs/` or `journalctl --user -u viking-daemon`.
-3. **Empty Searches?**: If the legacy compatibility search finds nothing for "today", verify the actual JSONL sources (like `history.jsonl`) are being actively modified by your terminals. Sometimes terminals change their implicit storage paths.
+上述命令依赖 `scripts/context_config.storage_root()`（默认 `~/.unified_context_data`），请确认当前用户可以读写该目录，并在 `CONTEXT_MESH_STORAGE_ROOT` / `UNIFIED_CONTEXT_STORAGE_ROOT` 替换被启用时同步更新。安装态 `scripts/smoke_installed_runtime.py` 会从 `~/.local/share/context-mesh-foundry/scripts` 调用 `context_cli.py` 与 `e2e_quality_gate.py`；发布前务必确认这两个入口存在，并额外保留 `benchmarks/run.py` 与 `context_healthcheck.sh` 供运维排障使用。

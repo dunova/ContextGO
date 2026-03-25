@@ -1,435 +1,164 @@
-# Context Mesh Foundry
+# ContextGO
 
-[中文版](#中文版) | [English](#english)
+ContextGO 是一个面向多 agent AI 编码团队的本地优先上下文运行时。
+它把上下文采集、会话索引、记忆存储、viewer、运维验证和 Native 热点迁移收进一个单体产品里：无 MCP、无 Docker、默认无远程依赖。
 
----
+## 产品定位
 
-<a name="中文版"></a>
-## 问题是什么
+- 本地单体：默认所有核心能力都在本机完成，数据留在本地 SQLite 与本地目录。
+- 统一入口：统一通过 `python3 scripts/context_cli.py` 驱动搜索、记忆、导入导出、viewer、运维与 smoke。
+- 低 token：优先精确检索、局部 snippet、结构化回退，不依赖向量云调用。
+- 可商用：带部署脚本、healthcheck、smoke、benchmark、release 文档，适合直接交付团队使用。
+- 渐进提速：Python 主链先稳定交付，Rust/Go 只替换热点路径，不破坏 CLI 体验。
 
-现代 AI 辅助开发会产生很多并行会话 — Claude Code、Codex CLI、OpenCode、终端 Shell… 每个都从零上下文开始。一个会话中的决策、调试历史和架构约束对下一个会话是不可见的，导致 AI 反复犯错或需要你重复重复喂背景。
+## 为什么存在
 
-## 这个项目做了什么
+多数 AI 编码团队真正缺的不是再加一个编排层，而是一个可控、可审计、可回滚的本地上下文底座。
 
-Context Mesh Foundry (CMF) 是一个**本地优先、无 MCP 依赖、零 Docker 运行**的上下文持久层。它将三个子系统缝合成统一的记忆网格：
+ContextGO 解决的是四个直接问题：
 
-1. **recall.py** — 跨所有 AI 会话历史的混合搜索（SQLite 索引 + 正则）
-2. **context_cli.py** — 轻量 CLI，支持 search / semantic / save / health — **默认入口**
-3. **viking_daemon.py** — 后台守护进程，监控终端/AI 历史并将清洗后的内容导出到本地存储。
+- 会话和历史分散在 Codex、Claude、shell、本地记忆文件里，难统一搜索。
+- 一旦把上下文能力拆成多个桥接项目，维护成本和故障面会迅速上升。
+- 为了“更智能”而引入远程依赖，常常会增加 token、延迟和不确定性。
+- 热点模块需要提速，但团队不能接受每次提速都改命令、改部署、改运维路径。
 
-### 🚀 零 Docker / 纯 Python 协议
+## 核心能力
 
-与许多需要 Docker 运行复杂向量数据库（Milvus、Chroma）的上下文系统不同，CMF 设计为**服务器可选**：
+- `search`：统一搜 Codex、Claude、shell 与本地索引。
+- `semantic`：先查本地记忆，再回退历史内容。
+- `save` / `export` / `import`：沉淀与迁移团队记忆。
+- `serve`：启动本地 viewer。
+- `maintain`：执行维护与修复。
+- `health`：检查主链健康。
+- `smoke`：跑完整工作副本 smoke。
+- `native-scan`：验证 Rust/Go 热路径原型。
 
-- **默认模式**：完全作为本地 Python 脚本运行。使用本地 SQLite 索引和标准文件搜索。无需 Docker，无需后台服务器，无额外开销。
-- **高级模式（可选）**：如果你已经在运行 [OpenViking](https://github.com/Open-Wise/OpenViking) 服务器，CMF 可以自动同步到服务器以支持高维语义搜索。但对于 90% 的场景，纯本地模式更快且足够好用。
-
-### 三段式预热协议（强制执行）
-
-每个 AI 会话在执行任务前，应遵循以下检索顺序：
-
-```
-1. Recall 精确检索       （必做，查找具体 session 或代码片段）
-2. 本地语义检索          （仅 recall 未命中时，查找宽泛概念）
-3. 代码库扫描            （最后手段，针对当前文件的定向扫描）
-```
-
-未经 recall 预热就做全盘穷举扫描（如 `rg` 扫 `~/` 或 `/Volumes/*`）是**被禁止的**。
-
-## 系统架构
-
-```text
-┌─────────────────────────────────────────────┐
-│              AI 终端 / Agent                 │
-│     (Claude Code, Codex CLI, OpenCode…)     │
-└──────────────┬──────────────────────────────┘
-               │ 调用 python3 context_cli.py
-               ▼
-┌─────────────────────────────────────────────┐
-│          context_cli.py (CLI 入口)           │
-│ • search: recall.py → 本地文件扫描           │
-│ • semantic: 语义匹配 (可选对接 OpenViking)   │
-│ • save: 持久化保存关键决策与约束             │
-│ • health: 全栈健康自检                       │
-└──────────────┬──────────────────────────────┘
-               │
-       ┌───────┴───────┐
-       ▼               ▼
-┌────────────┐  ┌─────────────────┐
-│  recall.py │  │  OpenViking API │
-│  (SQLite   │  │  (可选向量引擎)   │
-│   混合索引) │  │                 │
-└────────────┘  └─────────────────┘
-       ▲
-       │ 空闲时自动归档
-┌──────┴──────────────────────────────────────┐
-│          viking_daemon.py (守护进程)         │
-│ • 监控: Claude, Codex, OpenCode, Shell...  │
-│ • 清洗: 15+ 种隐私/密钥脱敏模式              │
-│ • 导出: 格式化 Markdown → 本地/远程存储      │
-│ • 队列: 离线时自动存入 .pending/ 等待重试     │
-└─────────────────────────────────────────────┘
-```
-
-```mermaid
-graph TD
-    A["AI 终端 / Agents<br/>(Claude Code, Codex, OpenCode...)"] -->|python3 context_cli.py| B["context_cli.py (核心网关)"]
-    subgraph "存储与索引 (Memory Core)"
-        C["recall.py (SQLite 精确索引)"]
-        D["OpenViking API (向量语义库)"]
-    end
-    B --> C
-    B --> D
-    E["viking_daemon.py (后台脱敏进程)"] -.->|自动归档| C
-    E -.->|隐私清洗 & 数据导出| E
-    F[终端历史 / Shell History] --> E
-```
-
-### GSD 集成
-
-与 [GSD 工作流](https://github.com/dunova/get-shit-done)（`discuss → plan → execute → verify`）配合使用时，每个阶段都会通过 `context_cli.py` 自动预热上下文：
-
-- **discuss 阶段**: 强制执行 recall 检索历史。
-- **plan 阶段**: 执行 recall 并可选补全语义背景。
-- **health 阶段**: 通过 `context_healthcheck.sh` 监控系统运行状态。
-
-## 模块地图
-
-### 核心运行时 (Core Runtime)
-
-| 脚本 | 用途 |
-|--------|---------|
-| `context_cli.py` | **默认 CLI 入口** — 负责搜索、语义查询、保存记忆和健康检查 |
-| `viking_daemon.py` | 后台守护进程：实时监控 → 脱敏清洗 → 自动归档 |
-| `openviking_mcp.py` | 旧版 MCP 兼容层 (保留作为参考，非默认路径) |
-| `context_healthcheck.sh` | 针对整个上下文系统栈的全面健康检查 |
-| `start_openviking.sh` | 安全启动 OpenViking 服务的脚本 (处理端口、配置、重试) |
-| `unified_context_deploy.sh` | 部署工具：同步脚本、安装 launchd/systemd、自动重载 |
-| `scf_context_prewarm.sh` | Shell 助手，用于在 GSD 动作执行前预热上下文 |
-
-### 记忆管理 (Memory Tools)
-
-| 脚本 | 用途 |
-|--------|---------|
-| `memory_index.py` | 本地记忆文件的索引、去重与元数据更新 |
-| `memory_viewer.py` | 本地记忆浏览器，用于查看和搜索已存的上下文 |
-| `memory_hit_first_regression.py` | 回归测试套件，验证检索命中的准确度 |
-| `export_memories.py` | 将本地记忆导出为可迁移格式 |
-| `import_memories.py` | 从备份导入历史记忆 |
-| `start_memory_viewer.sh` | 启动记忆浏览器 |
-
-### 上下文优先策略 (Context-First Policy)
-
-| 脚本 | 用途 |
-|--------|---------|
-| `apply_context_first_policy.sh` | 将 "询问上下文优先" 协议写入 AI 终端配置 |
-| `verify_context_first_policy.sh` | 验证各终端是否严格执行该检索协议 |
-| `e2e_quality_gate.py` | 端到端质量门禁，监控整个流水线的数据完整性 |
-| `test_context_cli.py` | `context_cli.py` 的单元测试 |
-
-### 辅助工具 (Utilities)
-
-| 脚本 | 用途 |
-|--------|---------|
-| `onecontext_maintenance.py` | OneContext (旧版) 数据维护工具 |
-| `run_onecontext_maintenance.sh` | 上述工具的 Wrapper 脚本 |
-| `patch_openviking_semantic_processor.py` | 针对 VLM 的可选静默补丁 |
-
-## 系统要求
-
-- Python 3.10+
-- (可选) [OpenViking](https://github.com/Open-Wise/OpenViking) 服务器已启动
-- macOS (launchd) 或 Linux (systemd)
-- [recall.py](https://github.com/dunova/get-shit-done) (归属于 GSD 技能生态)
-
-## 快速开始
-
-### 1. 克隆仓库
+## 10 分钟上线
 
 ```bash
 git clone https://github.com/dunova/context-mesh-foundry.git
 cd context-mesh-foundry
-```
-
-### 2. 环境配置
-
-```bash
 cp .env.example .env
-# 编辑 .env — 设置 OPENVIKING_URL、存储路径等
-```
-
-### 3a. 部署 (macOS)
-
-```bash
 bash scripts/unified_context_deploy.sh
-```
-
-### 4. 验证运行状态
-
-```bash
 python3 scripts/context_cli.py health
+python3 scripts/context_cli.py smoke
 ```
 
-### 5. 开始使用
+当前品牌名已切到 `ContextGO`，但 GitHub 仓库 slug 如未在 GitHub 后台重命名，仍会暂时保持 `context-mesh-foundry`。
+
+## 统一命令
 
 ```bash
-# 跨所有 AI 终端历史进行精确搜索
-python3 scripts/context_cli.py search "身份验证 bug" --type all --limit 20 --literal
-
-# 语义检索
-python3 scripts/context_cli.py semantic "数据库配置决策" --limit 5
-```
-
-## 守护进程工作原理
-
-1. **自动发现**: 扫描 Claude Code、Codex、OpenCode、Kilo 以及普通的 Shell 历史 (zsh/bash)。
-2. **实时增量读取**: 使用 inode 感知的游标检测文件新增行、轮转或截断。
-3. **脱敏清洗**: 自动剔除 API 密钥、Token、密码、AWS 密钥、Slack 令牌和 PEM 私钥块。
-4. **延迟自动归档**: 空闲 5 分钟后自动生成 Markdown 摘要并存入本地存储。
-5. **重试机制**: 服务器离线时自动存入 `.pending/` 等待后续补录。
-6. **自适应能效**: 智能调节扫描频率，静默期（如夜间）自动降频。
-
-## 目录结构
-
-```
-context-mesh-foundry/
-├── scripts/
-│   ├── context_cli.py                # 默认 CLI 入口
-│   ├── viking_daemon.py              # 后台守护进程
-│   ├── ...                           # 其他子工具
-├── templates/
-│   ├── launchd/                      # macOS 服务模板
-│   └── systemd-user/                 # Linux 服务模板
-├── ...
-└── .env.example                      # 环境变量模板
-```
-
-## 安全与隐私
-
-守护进程在本地通过正则表达式强行拦截并剔除 API 密钥、密码、私钥等 15 种敏感信息。数据目录默认为 `chmod 700`，生成的 Markdown 记忆文件为 `chmod 600`。
-
-## 环境变量
-
-具体配置项见 [`.env.example`](.env.example)。
-
-## 许可证
-
-[GPL-3.0](LICENSE)
-
----
-
-<a name="english"></a>
-## The Problem
-
-Modern AI-assisted development spawns many parallel sessions — Claude Code, Codex CLI, OpenCode, terminal shells… Each starts with zero context. Decisions, debugging history, and architectural constraints from one session are invisible to the next, causing AI to hallucinate or require redundant prompting.
-
-## What This Does
-
-Context Mesh Foundry (CMF) is a **local-first, MCP-free, and Zero-Docker** context persistence layer. It weaves together three subsystems into a unified memory mesh:
-
-1. **recall.py** — Hybrid search across all AI session histories (SQLite index + regex)
-2. **context_cli.py** — Lightweight CLI for search, semantic query, save, and health check — the **default entry point**
-3. **viking_daemon.py** — Background daemon that watches terminal/AI histories and exports sanitized markdown to local storage.
-
-### 🚀 Zero-Docker / Pure-Python Operation
-
-Unlike many context systems that require complex vector databases (Milvus, Chroma) running in Docker, CMF is designed to be **server-optional**:
-
-- **Default Mode**: Operates entirely as local Python scripts. It uses a local SQLite index and standard file search. No Docker, no background servers, no overhead.
-- **Advanced Mode (Optional)**: If you already have [OpenViking](https://github.com/Open-Wise/OpenViking) running, CMF can automatically sync to it for high-dimensional semantic search. But for 90% of use cases, the local-only mode is faster and sufficient.
-
-### Hit-First Retrieval Protocol
-
-Every AI session should follow this order before doing any work:
-
-```
-1. Recall exact search   (mandatory: check specific sessions or snippets)
-2. Local semantic search  (only if recall misses: check broad concepts)
-3. Codebase scan          (only as last resort: targeted local scan)
-```
-
-Blind whole-disk scans (`~/`, `/Volumes/*`) without prior recall are **forbidden**.
-
-## Architecture
-
-```text
-┌─────────────────────────────────────────────┐
-│              AI Terminals / Agents           │
-│     (Claude Code, Codex CLI, OpenCode…)     │
-└──────────────┬──────────────────────────────┘
-               │ call python3 context_cli.py
-               ▼
-┌─────────────────────────────────────────────┐
-│          context_cli.py (CLI Gateway)       │
-│ • search: recall.py → Local File Scan       │
-│ • semantic: Semantic match (OpenViking opt) │
-│ • save: Persist key decisions / constraints │
-│ • health: Full-stack health check           │
-└──────────────┬──────────────────────────────┘
-               │
-       ┌───────┴───────┐
-       ▼               ▼
-┌────────────┐  ┌─────────────────┐
-│  recall.py │  │  OpenViking API │
-│  (SQLite   │  │  (vectorized    │
-│   hybrid)  │  │   search)       │
-└────────────┘  └─────────────────┘
-       ▲
-       │  auto-export on idle
-┌──────┴──────────────────────────────────────┐
-│           viking_daemon.py (Daemon)         │
-│   • Watches: Claude, Codex, OpenCode,       │
-│     Kilo, zsh/bash, Gemini walkthroughs     │
-│   • Sanitizes: 15+ redaction patterns       │
-│   • Exports: markdown → local storage       │
-│   • Queues failures to .pending/            │
-└─────────────────────────────────────────────┘
-```
-
-```mermaid
-graph TD
-    A["AI Terminals / Agents<br/>(Claude Code, Codex, OpenCode...)"] -->|python3 context_cli.py| B["context_cli.py (CLI Gateway)"]
-    subgraph "Memory Core"
-        C["recall.py (SQLite Precise Index)"]
-        D["OpenViking API (Vector Store)"]
-    end
-    B --> C
-    B --> D
-    E["viking_daemon.py (Daemon Process)"] -.->|Auto-Archive| C
-    E -.->|Privacy Scrubbing & Export| E
-    F[Terminal History / Shell History] --> E
-```
-
-### GSD Integration
-
-When used with the [GSD workflow](https://github.com/dunova/get-shit-done) (`discuss → plan → execute → verify`), each phase auto-preheats context via `context_cli.py`:
-
-- **discuss-phase**: mandatory recall search
-- **plan-phase**: recall + optional semantic backfill
-- **health**: stack-wide diagnostics via `context_healthcheck.sh`
-
-## Module Map
-
-### Core Runtime
-
-| Script | Purpose |
-|--------|---------|
-| `context_cli.py` | **Default CLI entry point** — search, semantic, save, health |
-| `viking_daemon.py` | Background daemon: watch → sanitize → export |
-| `openviking_mcp.py` | Legacy MCP bridge (kept for reference, not the default path) |
-| `context_healthcheck.sh` | Comprehensive health checks for the whole stack |
-| `start_openviking.sh` | Start OpenViking safely (ports, config, retries) |
-| `unified_context_deploy.sh` | Deploy: sync scripts/skills, patch launchd, reload |
-| `scf_context_prewarm.sh` | Shell helper for context warmup before GSD actions |
-
-### Memory Tools
-
-| Script | Purpose |
-|--------|---------|
-| `memory_index.py` | Local memory indexing and deduplication |
-| `memory_viewer.py` | Browse and inspect stored memories |
-| `memory_hit_first_regression.py` | Regression suite for retrieval quality |
-| `export_memories.py` | Export memories to portable format |
-| `import_memories.py` | Import memories from backup |
-| `start_memory_viewer.sh` | Launch memory viewer |
-
-### Context-First Policy
-
-| Script | Purpose |
-|--------|---------|
-| `apply_context_first_policy.sh` | Apply Context-First protocol to AI tool configs |
-| `verify_context_first_policy.sh` | Verify all terminals follow the protocol |
-| `e2e_quality_gate.py` | End-to-end quality gate for context pipeline |
-| `test_context_cli.py` | Unit tests for context_cli.py |
-
-### Utilities
-
-| Script | Purpose |
-|--------|---------|
-| `onecontext_maintenance.py` | OneContext data maintenance |
-| `run_onecontext_maintenance.sh` | Wrapper for above |
-| `patch_openviking_semantic_processor.py` | Optional VLM quiet patch |
-
-## Requirements
-
-- Python 3.10+
-- (Optional) [OpenViking](https://github.com/Open-Wise/OpenViking) server
-- macOS (launchd) or Linux (systemd)
-- [recall.py](https://github.com/dunova/get-shit-done) (from GSD skills)
-
-## Quick Start
-
-### 1. Clone
-
-```bash
-git clone https://github.com/dunova/context-mesh-foundry.git
-cd context-mesh-foundry
-```
-
-### 2. Configure
-
-```bash
-cp .env.example .env
-# Edit .env — set OPENVIKING_URL, storage paths
-```
-
-### 3a. Deploy (macOS)
-
-```bash
-bash scripts/unified_context_deploy.sh
-```
-
-### 4. Verify
-
-```bash
+python3 scripts/context_cli.py search "auth root cause" --limit 10 --literal
+python3 scripts/context_cli.py semantic "数据库 schema 决策" --limit 5
+python3 scripts/context_cli.py save --title "Auth fix" --content "..." --tags auth,bug
+python3 scripts/context_cli.py export "" /tmp/contextgo-export.json --limit 1000
+python3 scripts/context_cli.py import /tmp/contextgo-export.json
+python3 scripts/context_cli.py serve --host 127.0.0.1 --port 37677
+python3 scripts/context_cli.py maintain --dry-run
 python3 scripts/context_cli.py health
+python3 scripts/context_cli.py smoke
+python3 scripts/context_cli.py native-scan --backend auto --threads 4
 ```
 
-### 5. Use
+## 部署与运行时
+
+- 默认安装目录：`~/.local/share/context-mesh-foundry`
+- 默认数据目录：`~/.unified_context_data`
+- 本地服务标签：`com.contextmesh.daemon`、`com.contextmesh.healthcheck`
+- 默认远程同步：关闭
+- 默认信任边界：本机文件系统
+
+这里刻意保留了旧目录名与服务标签，以确保现有安装态可平滑升级、可回滚。
+
+## 验证矩阵
+
+发布前推荐至少执行：
 
 ```bash
-# Search across all AI session histories
-python3 scripts/context_cli.py search "authentication bug" --type all --limit 20 --literal
-
-# Semantic search
-python3 scripts/context_cli.py semantic "database decisions" --limit 5
+bash -n scripts/*.sh
+python3 -m py_compile scripts/*.py benchmarks/*.py
+python3 -m pytest scripts/test_context_cli.py scripts/test_context_core.py scripts/test_session_index.py scripts/test_context_native.py
+python3 scripts/e2e_quality_gate.py
+python3 scripts/context_cli.py health
+python3 scripts/context_cli.py smoke
+python3 scripts/smoke_installed_runtime.py
+python3 -m benchmarks --mode both --iterations 1 --warmup 0 --query benchmark --format text
+go test ./...
 ```
 
-## How the Daemon Works
+如果你在本地启用了 Native 热路径，还应补跑：
 
-1. **Auto-Discovery**: Scans Claude, Codex CLI, OpenCode, Kilo, and Shells (zsh/bash).
-2. **Inode Tracking**: Efficiently tails files even if rotated or truncated.
-3. **Privacy Scrubbing**: Uses 15+ regex patterns to redact API keys, tokens, and passwords.
-4. **Idle Archival**: Automatically exports summaries to local storage after 5m idle.
-5. **Fail-safe Queuing**: Retries failed remote exports via `.pending/` directory.
-6. **Adaptive Polling**: Saves CPU by throttling when idle or at night.
-
-## Repository Layout
-
-```
-context-mesh-foundry/
-├── scripts/
-│   ├── context_cli.py                # Default CLI entry point
-│   ├── viking_daemon.py              # Background daemon
-│   ├── openviking_mcp.py             # Legacy MCP bridge
-│   ├── context_healthcheck.sh        # Health checks
-│   ├── unified_context_deploy.sh     # Deploy & sync
-│   ├── ...
-├── templates/
-│   ├── launchd/                      # macOS plists
-│   └── systemd-user/                 # Linux services
-├── ...
-└── .env.example                      # ENV template
+```bash
+python3 scripts/context_cli.py native-scan --backend go --threads 2 --query NotebookLM --limit 5 --json
+python3 scripts/context_cli.py native-scan --backend rust --threads 2 --query NotebookLM --limit 5 --json
 ```
 
-## Security
+## 性能与 Native 路线
 
-Scans for secrets on push and redacts sensitive data (API keys, tokens, AWS keys) before archival. Data directories use strict `chmod 700` permissions.
+ContextGO 当前的路线不是“全面重写”，而是“热点替换”：
 
-## Environment Variables
+1. 先让 Python 主链成为最稳的默认路径。
+2. 用 `benchmarks/` 明确测出瓶颈。
+3. 只把热路径抽到 Rust/Go。
+4. 对外仍然保持同一套 CLI、同一套部署脚本、同一套 smoke。
 
-See [`.env.example`](.env.example) for all configurable variables.
+当前 benchmark 已明确区分：
 
-## License
+- `python`：进程内主链成本
+- `native-wrapper`：子进程包装层成本，不等于纯 Go/Rust 核心执行时间
 
-[GPL-3.0](LICENSE)
+这让性能判断更诚实，不会再把“解释器启动成本”误写成“Native 核心变慢”。
+
+## 架构原则
+
+- 如无必要，勿增实体
+- 默认本地优先
+- 默认低 token、低 surprise
+- 统一入口优先于多模块拼接
+- 兼容保留优先于破坏式重命名
+- 任何优化都必须通过 smoke 与已安装运行时验证
+
+## 商业化交付视角
+
+ContextGO 适合作为以下场景的内部产品：
+
+- AI 编码团队的本地上下文底座
+- 研发组织的私有记忆与检索运行时
+- 需要低 token、低泄露风险的本地辅助层
+- 需要逐步替换热点而不是整体重写的过渡平台
+
+它不假设云端向量库，不假设中心化编排服务，也不要求运维额外托管一套旁路基础设施。
+
+## FAQ
+
+### 它是库还是产品？
+
+首先是产品，其次才是代码仓库。
+
+### 它是否依赖 MCP？
+
+默认不依赖。当前主链是 MCP-free。
+
+### 它是否必须接远程服务？
+
+不需要。默认完全本地。
+
+### 它是否必须接向量数据库或向量 API？
+
+当前默认不需要。精确索引、结构化 snippet、SQLite 回退和本地记忆已经覆盖主需求。只有当你要处理超长文本块、跨语义弱匹配、跨知识域召回时，才值得评估可选向量层。
+
+### 为什么还保留 `context-mesh-foundry` 路径和 `contextmesh` 服务名？
+
+为了升级平滑和可回滚。品牌可以切到 `ContextGO`，运行时兼容路径不必在同一天全部打断。
+
+## 版本
+
+- 当前发布版本：`0.6.1`
+- 本轮发布说明：[`docs/RELEASE_NOTES_0.6.1.md`](/Volumes/AI/GitHub/context-mesh-foundry/docs/RELEASE_NOTES_0.6.1.md)
+- 历史变更：[`CHANGELOG.md`](/Volumes/AI/GitHub/context-mesh-foundry/CHANGELOG.md)
+
+## English Snapshot
+
+ContextGO is a local-first context runtime for multi-agent engineering teams.
+It ships as a commercializable monolith: unified CLI, local indexing, memory storage, smoke checks, deployment scripts, and gradual Rust/Go hot-path migration without changing operator workflows.
