@@ -12,6 +12,7 @@ import threading
 from typing import Any
 
 import httpx
+import context_core
 
 
 def _stderr(msg: str) -> None:
@@ -187,15 +188,8 @@ QUERY_STOPWORDS = {
 
 
 def _resolve_recall_script() -> str:
-    candidates = [
-        os.path.expanduser("~/.agents/skills/recall/scripts/recall.py"),
-        os.path.expanduser("~/.codex/skills/recall/scripts/recall.py"),
-        os.path.expanduser("~/.claude/skills/recall/scripts/recall.py"),
-    ]
-    for script in candidates:
-        if os.path.exists(script):
-            return script
-    return ""
+    path = context_core.resolve_recall_script()
+    return str(path) if path else ""
 
 
 RECALL_SCRIPT_PATH = _resolve_recall_script()
@@ -395,28 +389,11 @@ def _build_query_variants(query: str) -> list[str]:
 
 
 def _normalize_tags(tags: list[str] | str | None) -> list[str]:
-    if tags is None:
-        return []
-    if isinstance(tags, list):
-        return [str(t).strip() for t in tags if str(t).strip()]
-    if isinstance(tags, str):
-        raw = tags.strip()
-        if not raw:
-            return []
-        try:
-            parsed = json.loads(raw)
-            if isinstance(parsed, list):
-                return [str(t).strip() for t in parsed if str(t).strip()]
-        except Exception:
-            pass
-        return [part.strip() for part in raw.split(",") if part.strip()]
-    return [str(tags).strip()]
+    return context_core.normalize_tags(tags)
 
 
 def _safe_filename(value: str) -> str:
-    s = re.sub(r"[^a-zA-Z0-9._-]+", "_", (value or "").strip().lower())
-    s = s.strip("._-")
-    return (s or "memory")[:120]
+    return context_core.safe_filename(value)
 
 
 def _secure_write_text(path: str, text: str) -> None:
@@ -426,10 +403,7 @@ def _secure_write_text(path: str, text: str) -> None:
 
 
 def _safe_mtime(path: str) -> float:
-    try:
-        return os.path.getmtime(path)
-    except Exception:
-        return 0.0
+    return context_core.safe_mtime(path)
 
 
 def _list_shared_files_cached(root: str) -> list[str]:
@@ -479,43 +453,15 @@ def _local_exact_resource_matches(query: str, limit: int = 3) -> list[dict[str, 
     if not files:
         return []
 
-    matches: list[dict[str, Any]] = []
-    ql = query.lower()
-
-    for path in files:
-        hit_in = None
-        snippet = ""
-        rel_path = os.path.relpath(path, root)
-        if ql in rel_path.lower():
-            hit_in = "path"
-            snippet = rel_path
-        else:
-            try:
-                with open(path, "r", encoding="utf-8", errors="ignore") as f:
-                    text = f.read(OPENVIKING_LOCAL_SCAN_READ_BYTES)
-            except Exception:
-                continue
-            idx = text.lower().find(ql)
-            if idx >= 0:
-                hit_in = "content"
-                start = max(0, idx - 120)
-                end = min(len(text), idx + len(query) + 120)
-                snippet = re.sub(r"\s+", " ", text[start:end]).strip()
-
-        if hit_in:
-            matches.append(
-                {
-                    "uri_hint": f"viking://resources/{rel_path.replace(os.sep, '/')}",
-                    "file_path": path,
-                    "matched_in": hit_in,
-                    "mtime": datetime.fromtimestamp(os.path.getmtime(path)).isoformat(),
-                    "snippet": snippet,
-                }
-            )
-        if len(matches) >= limit:
-            break
-
-    return matches
+    return context_core.local_memory_matches(
+        query,
+        shared_root=root,
+        limit=limit,
+        max_files=OPENVIKING_LOCAL_SCAN_MAX_FILES,
+        read_bytes=OPENVIKING_LOCAL_SCAN_READ_BYTES,
+        uri_prefix="viking://resources/",
+        files=files,
+    )
 
 
 def _build_snippet(text: str, query: str, use_regex: bool, radius: int = 80) -> str:
@@ -844,15 +790,15 @@ def save_conversation_memory(title: str, content: str, tags: list[str] | str | N
     uri = f"viking://resources/shared/conversations/{timestamp}_{filename_title}.md"
 
     local_path = os.path.join(LOCAL_STORAGE_ROOT, "resources", "shared", "conversations")
-    os.makedirs(local_path, exist_ok=True)
-    try:
-        os.chmod(local_path, 0o700)
-    except OSError:
-        pass
-    file_path = os.path.join(local_path, f"{timestamp}_{filename_title}.md")
-
-    formatted_content = f"# {title}\n\nTags: {', '.join(tags)}\nDate: {datetime.now().isoformat()}\n\n{content}\n"
-    _secure_write_text(file_path, formatted_content)
+    file_path = str(
+        context_core.write_memory_markdown(
+            title,
+            content,
+            tags,
+            conversations_root=local_path,
+            timestamp=timestamp,
+        )
+    )
     with _CACHE_LOCK:
         _LOCAL_SCAN_CACHE["expires_at"] = 0.0
         _LOCAL_SCAN_CACHE["files"] = []

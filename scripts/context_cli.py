@@ -6,11 +6,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
-import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
+
+import context_core
 
 
 HOME = Path.home()
@@ -44,17 +44,11 @@ OPENVIKING_URL = os.environ.get("OPENVIKING_URL", "http://127.0.0.1:8090/api/v1"
 
 
 def _safe_mtime(path: Path) -> float:
-    try:
-        return path.stat().st_mtime
-    except Exception:
-        return 0.0
+    return context_core.safe_mtime(path)
 
 
 def _resolve_recall_script() -> Path | None:
-    for candidate in RECALL_CANDIDATES:
-        if candidate.exists():
-            return candidate
-    return None
+    return context_core.resolve_recall_script(RECALL_CANDIDATES)
 
 
 def _run_recall(
@@ -65,134 +59,50 @@ def _run_recall(
     literal: bool = False,
     health: bool = False,
 ) -> tuple[int, str, str]:
-    recall_script = _resolve_recall_script()
-    if not recall_script:
-        return 1, "", "recall.py not found"
-
-    cmd = [sys.executable, str(recall_script)]
-    if health:
-        cmd.append("--health")
-    else:
-        cmd.extend(
-            [
-                query or "",
-                "--backend",
-                "hybrid",
-                "--type",
-                search_type,
-                "--limit",
-                str(limit),
-            ]
-        )
-        if literal:
-            cmd.append("--no-regex")
-
-    proc = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        timeout=RECALL_TIMEOUT_SEC,
+    return context_core.run_recall(
+        query=query,
+        search_type=search_type,
+        limit=limit,
+        literal=literal,
+        health=health,
+        timeout_sec=RECALL_TIMEOUT_SEC,
+        recall_candidates=RECALL_CANDIDATES,
     )
-    return proc.returncode, proc.stdout or "", proc.stderr or ""
 
 
 def _parse_health_payload(raw: str) -> dict:
-    text = (raw or "").strip()
-    if not text:
-        return {}
-    start = text.find("{")
-    end = text.rfind("}")
-    if start < 0 or end < start:
-        return {}
-    try:
-        return json.loads(text[start : end + 1])
-    except Exception:
-        return {}
+    return context_core.parse_health_payload(raw)
 
 
 def _iter_local_shared_files() -> list[Path]:
-    if not LOCAL_SHARED_ROOT.is_dir():
-        return []
-    files: list[Path] = []
-    for path in LOCAL_SHARED_ROOT.rglob("*"):
-        if not path.is_file():
-            continue
-        if path.name.startswith("."):
-            continue
-        if path.suffix.lower() not in {".md", ".txt", ".json", ".jsonl", ".log"}:
-            continue
-        files.append(path)
-    files.sort(key=_safe_mtime, reverse=True)
-    return files[:LOCAL_SCAN_MAX_FILES]
+    return context_core.iter_shared_files(LOCAL_SHARED_ROOT, LOCAL_SCAN_MAX_FILES)
 
 
 def _compact_text(text: str) -> str:
-    return re.sub(r"\s+", " ", text or "").strip()
+    return context_core.compact_text(text)
 
 
 def _local_memory_matches(query: str, limit: int = 3) -> list[dict]:
-    q = (query or "").strip()
-    if not q:
-        return []
-
-    ql = q.lower()
-    matches: list[dict] = []
-    for path in _iter_local_shared_files():
-        rel = path.relative_to(LOCAL_SHARED_ROOT).as_posix()
-        matched_in = None
-        snippet = ""
-        if ql in rel.lower():
-            matched_in = "path"
-            snippet = rel
-        else:
-            try:
-                text = path.read_text(encoding="utf-8", errors="ignore")[:LOCAL_SCAN_READ_BYTES]
-            except Exception:
-                continue
-            idx = text.lower().find(ql)
-            if idx >= 0:
-                matched_in = "content"
-                start = max(0, idx - 120)
-                end = min(len(text), idx + len(q) + 120)
-                snippet = _compact_text(text[start:end])
-
-        if matched_in:
-            matches.append(
-                {
-                    "uri_hint": f"local://{rel}",
-                    "file_path": str(path),
-                    "matched_in": matched_in,
-                    "mtime": datetime.fromtimestamp(_safe_mtime(path)).isoformat(),
-                    "snippet": snippet,
-                }
-            )
-        if len(matches) >= limit:
-            break
-    return matches
+    return context_core.local_memory_matches(
+        query,
+        shared_root=LOCAL_SHARED_ROOT,
+        limit=limit,
+        max_files=LOCAL_SCAN_MAX_FILES,
+        read_bytes=LOCAL_SCAN_READ_BYTES,
+        uri_prefix="local://",
+    )
 
 
 def _save_local_memory(title: str, content: str, tags: list[str]) -> str:
-    title = (title or "").strip()
-    content = (content or "").strip()
-    if not title:
-        return "Failed to save memory: title cannot be empty."
-    if not content:
-        return "Failed to save memory: content cannot be empty."
-
-    LOCAL_CONVERSATIONS_ROOT.mkdir(parents=True, exist_ok=True)
     try:
-        os.chmod(LOCAL_CONVERSATIONS_ROOT, 0o700)
-    except OSError:
-        pass
-
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = re.sub(r"[^a-zA-Z0-9._-]+", "_", title.lower()).strip("._-") or "memory"
-    filename = filename[:120]
-    path = LOCAL_CONVERSATIONS_ROOT / f"{timestamp}_{filename}.md"
-    body = f"# {title}\n\nTags: {', '.join(tags)}\nDate: {datetime.now().isoformat()}\n\n{content}\n"
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        handle.write(body)
+        path = context_core.write_memory_markdown(
+            title,
+            content,
+            tags,
+            conversations_root=LOCAL_CONVERSATIONS_ROOT,
+        )
+    except ValueError as exc:
+        return f"Failed to save memory: {exc}."
 
     if ENABLE_OPENVIKING_HTTP:
         try:
@@ -203,7 +113,7 @@ def _save_local_memory(title: str, content: str, tags: list[str]) -> str:
                     "path": str(path),
                     "target": "viking://resources/shared/conversations",
                     "reason": "save_conversation",
-                    "instruction": f"Index global conversation memory: {title}",
+                    "instruction": f"Index global conversation memory: {(title or '').strip()}",
                 }
             ).encode("utf-8")
             req = urllib.request.Request(
