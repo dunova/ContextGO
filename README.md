@@ -71,7 +71,7 @@ python3 scripts/context_cli.py smoke
 
 ## 部署与运维
 
-- 默认安装目录：`~/.local/share/contextmesh`。
+- 默认安装目录：`~/.local/share/context-mesh-foundry`。
 - 本地服务：`com.contextmesh.daemon`、`com.contextmesh.healthcheck`。
 - `CONTEXT_MESH_*` 系列变量统一配置：`STORAGE_ROOT`、`REMOTE_URL`、`ENABLE_REMOTE_SYNC`、`VIEWER_HOST`、`VIEWER_PORT`、`SESSION_INDEX_DB_PATH`。
 - 旧桥接（`recall-lite`、`openviking`、`aline`）可清理，部署流程仅需 `bash scripts/unified_context_deploy.sh`。

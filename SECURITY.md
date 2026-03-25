@@ -14,7 +14,7 @@
 - 配置最小化：不读取全局环境变量除非在 `scripts/context_cli.py` 中明确声明；新增环境变量要同步更新文档并在 smoke/benchmark 中验证。任何对 `CONTEXT_MESH_STORAGE_ROOT` / `UNIFIED_CONTEXT_STORAGE_ROOT` 的调整必须确保 `scripts/context_config.storage_root()` 仍指向当前用户可访问的 `~/.unified_context_data`（或显式设置的路径），并通过 `bash scripts/context_healthcheck.sh`（可附 `--deep` 探测）确认权限与运行环境。
 - 运行时日志、索引结果文件的默认权限为 `0600`，避免意外泄露。  
 - 所有写入历史/记忆的路径必须通过脱敏流程（`context_daemon` 中的 `<private>` 过滤）处理。  
-- smoke/benchmark 覆盖：变更后需运行 `python3 scripts/context_smoke.py`、`python3 scripts/smoke_installed_runtime.py`、`python3 -m benchmarks --iterations 1 --warmup 0 --query benchmark`，验证默认 `context_cli`/`context_daemon`/`context_server` 健康。Smoke 会在确认 `scripts/context_config.storage_root()` 可写之后，从 `INSTALL_ROOT=~/.local/share/contextmesh/scripts` 调用 `context_cli.py` 与 `e2e_quality_gate.py`；发布产物应在该 INSTALL_ROOT 同时保留 `context_healthcheck.sh`、`benchmarks/run.py` 等运维入口，避免健康检查与 benchmark 流程断裂。
+- smoke/benchmark 覆盖：变更后需运行 `python3 scripts/context_smoke.py`、`python3 scripts/smoke_installed_runtime.py`、`python3 -m benchmarks --iterations 1 --warmup 0 --query benchmark`，验证默认 `context_cli`/`context_daemon`/`context_server` 健康。Smoke 会在确认 `scripts/context_config.storage_root()` 可写之后，从 `INSTALL_ROOT=~/.local/share/context-mesh-foundry/scripts` 调用 `context_cli.py` 与 `e2e_quality_gate.py`；发布产物应在该 INSTALL_ROOT 同时保留 `context_healthcheck.sh`、`benchmarks/run.py` 等运维入口，避免健康检查与 benchmark 流程断裂。
 
 ## 贡献者守则
 - 禁止在提交中包含 secrets（API key、token、密码）或机器/用户专属路径，必要时替换为 `XXX` 并在 PR 描述中说明。  
