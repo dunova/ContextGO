@@ -108,12 +108,15 @@ check_stale_claude_hooks() {
 }
 
 check_logs_and_pending() {
-    local daemon_log health_log pending_dir pending_count
-    daemon_log="$LOG_DIR/viking_daemon.log"
+    local daemon_log legacy_daemon_log health_log pending_dir pending_count
+    daemon_log="$LOG_DIR/context_daemon.log"
+    legacy_daemon_log="$LOG_DIR/viking_daemon.log"
     health_log="$LOG_DIR/healthcheck.log"
 
     if [ -f "$daemon_log" ]; then
         report_ok "daemon 日志大小：$(( $(file_size_bytes "$daemon_log") / 1048576 ))MB"
+    elif [ -f "$legacy_daemon_log" ]; then
+        report_warn "检测到旧 daemon 日志名：$legacy_daemon_log"
     else
         report_warn "daemon 日志不存在（如未启动可忽略）"
     fi

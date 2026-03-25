@@ -10,6 +10,8 @@
 
 ```bash
 python -m benchmarks.run [--iterations 3] [--warmup 1] [--query benchmark]
+# 或
+python -m benchmarks [--iterations 3] [--warmup 1] [--query benchmark]
 ```
 
 脚本会在一次临时的 `HOME` 环境下生成样本 `.codex`、`.claude`、`.zsh_history` 等数据，从而避免依赖实际用户目录。输出会包含每个用例的平均/最小时延以及示例 JSON/文本。

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-OpenViking Real-time Context Sync Daemon (Hardened v4.0)
+Context Mesh real-time sync daemon.
 
 Goals:
 - Global terminal coverage on one machine (CLI tools + shell history)
@@ -74,11 +74,6 @@ NIGHT_POLL_END_HOUR = env_int("CONTEXT_MESH_NIGHT_POLL_END_HOUR", "VIKING_NIGHT_
 NIGHT_POLL_INTERVAL_SEC = env_int("CONTEXT_MESH_NIGHT_POLL_INTERVAL_SEC", "VIKING_NIGHT_POLL_INTERVAL_SEC", default=600, minimum=1)
 
 
-def _env_flag(name: str, default: str = "1") -> bool:
-    val = str(os.environ.get(name, default)).strip().lower()
-    return val in {"1", "true", "yes", "on"}
-
-
 ENABLE_SHELL_MONITOR = env_bool("CONTEXT_MESH_ENABLE_SHELL_MONITOR", "VIKING_ENABLE_SHELL_MONITOR", default=True)
 ENABLE_CLAUDE_HISTORY_MONITOR = env_bool("CONTEXT_MESH_ENABLE_CLAUDE_HISTORY_MONITOR", "VIKING_ENABLE_CLAUDE_HISTORY_MONITOR", default=True)
 ENABLE_CODEX_HISTORY_MONITOR = env_bool("CONTEXT_MESH_ENABLE_CODEX_HISTORY_MONITOR", "VIKING_ENABLE_CODEX_HISTORY_MONITOR", default=True)
@@ -105,28 +100,36 @@ MAX_MESSAGES_PER_SESSION = env_int("CONTEXT_MESH_MAX_MESSAGES_PER_SESSION", "VIK
 EXPORT_HTTP_TIMEOUT_SEC = env_int("CONTEXT_MESH_EXPORT_HTTP_TIMEOUT_SEC", "VIKING_EXPORT_HTTP_TIMEOUT_SEC", default=30, minimum=5)
 PENDING_HTTP_TIMEOUT_SEC = env_int("CONTEXT_MESH_PENDING_HTTP_TIMEOUT_SEC", "VIKING_PENDING_HTTP_TIMEOUT_SEC", default=15, minimum=5)
 MAX_CLAUDE_TRANSCRIPT_FILES_PER_POLL = max(
-    50, int(os.environ.get("VIKING_MAX_CLAUDE_TRANSCRIPT_FILES_PER_POLL", "500"))
+    50,
+    env_int(
+        "CONTEXT_MESH_MAX_CLAUDE_TRANSCRIPT_FILES_PER_POLL",
+        "VIKING_MAX_CLAUDE_TRANSCRIPT_FILES_PER_POLL",
+        default=500,
+    ),
 )
-MAX_PENDING_FILES = max(200, int(os.environ.get("VIKING_MAX_PENDING_FILES", "5000")))
-MAX_ANTIGRAVITY_SESSIONS = max(100, int(os.environ.get("VIKING_MAX_ANTIGRAVITY_SESSIONS", "500")))
-CODEX_SESSION_SCAN_INTERVAL_SEC = max(10, int(os.environ.get("VIKING_CODEX_SESSION_SCAN_INTERVAL_SEC", "90")))
+MAX_PENDING_FILES = max(200, env_int("CONTEXT_MESH_MAX_PENDING_FILES", "VIKING_MAX_PENDING_FILES", default=5000))
+MAX_ANTIGRAVITY_SESSIONS = max(100, env_int("CONTEXT_MESH_MAX_ANTIGRAVITY_SESSIONS", "VIKING_MAX_ANTIGRAVITY_SESSIONS", default=500))
+CODEX_SESSION_SCAN_INTERVAL_SEC = max(10, env_int("CONTEXT_MESH_CODEX_SESSION_SCAN_INTERVAL_SEC", "VIKING_CODEX_SESSION_SCAN_INTERVAL_SEC", default=90))
 CLAUDE_TRANSCRIPT_SCAN_INTERVAL_SEC = max(
-    30, int(os.environ.get("VIKING_CLAUDE_TRANSCRIPT_SCAN_INTERVAL_SEC", "180"))
+    30,
+    env_int("CONTEXT_MESH_CLAUDE_TRANSCRIPT_SCAN_INTERVAL_SEC", "VIKING_CLAUDE_TRANSCRIPT_SCAN_INTERVAL_SEC", default=180),
 )
-ANTIGRAVITY_SCAN_INTERVAL_SEC = max(15, int(os.environ.get("VIKING_ANTIGRAVITY_SCAN_INTERVAL_SEC", "120")))
+ANTIGRAVITY_SCAN_INTERVAL_SEC = max(15, env_int("CONTEXT_MESH_ANTIGRAVITY_SCAN_INTERVAL_SEC", "VIKING_ANTIGRAVITY_SCAN_INTERVAL_SEC", default=120))
 MAX_CODEX_SESSION_FILES_PER_SCAN = max(
-    100, int(os.environ.get("VIKING_MAX_CODEX_SESSION_FILES_PER_SCAN", "1200"))
+    100,
+    env_int("CONTEXT_MESH_MAX_CODEX_SESSION_FILES_PER_SCAN", "VIKING_MAX_CODEX_SESSION_FILES_PER_SCAN", default=1200),
 )
 MAX_ANTIGRAVITY_DIRS_PER_SCAN = max(
-    50, int(os.environ.get("VIKING_MAX_ANTIGRAVITY_DIRS_PER_SCAN", "400"))
+    50,
+    env_int("CONTEXT_MESH_MAX_ANTIGRAVITY_DIRS_PER_SCAN", "VIKING_MAX_ANTIGRAVITY_DIRS_PER_SCAN", default=400),
 )
-SUSPEND_ANTIGRAVITY_WHEN_BUSY = os.environ.get("VIKING_SUSPEND_ANTIGRAVITY_WHEN_BUSY", "1") == "1"
-ANTIGRAVITY_BUSY_LS_THRESHOLD = max(2, int(os.environ.get("VIKING_ANTIGRAVITY_BUSY_LS_THRESHOLD", "3")))
-ANTIGRAVITY_INGEST_MODE = os.environ.get("VIKING_ANTIGRAVITY_INGEST_MODE", "final_only").strip().lower()
+SUSPEND_ANTIGRAVITY_WHEN_BUSY = env_bool("CONTEXT_MESH_SUSPEND_ANTIGRAVITY_WHEN_BUSY", "VIKING_SUSPEND_ANTIGRAVITY_WHEN_BUSY", default=True)
+ANTIGRAVITY_BUSY_LS_THRESHOLD = max(2, env_int("CONTEXT_MESH_ANTIGRAVITY_BUSY_LS_THRESHOLD", "VIKING_ANTIGRAVITY_BUSY_LS_THRESHOLD", default=3))
+ANTIGRAVITY_INGEST_MODE = env_str("CONTEXT_MESH_ANTIGRAVITY_INGEST_MODE", "VIKING_ANTIGRAVITY_INGEST_MODE", default="final_only").strip().lower()
 if ANTIGRAVITY_INGEST_MODE not in {"final_only", "live"}:
     ANTIGRAVITY_INGEST_MODE = "final_only"
-ANTIGRAVITY_QUIET_SEC = max(30, int(os.environ.get("VIKING_ANTIGRAVITY_QUIET_SEC", "180")))
-ANTIGRAVITY_MIN_DOC_BYTES = max(120, int(os.environ.get("VIKING_ANTIGRAVITY_MIN_DOC_BYTES", "400")))
+ANTIGRAVITY_QUIET_SEC = max(30, env_int("CONTEXT_MESH_ANTIGRAVITY_QUIET_SEC", "VIKING_ANTIGRAVITY_QUIET_SEC", default=180))
+ANTIGRAVITY_MIN_DOC_BYTES = max(120, env_int("CONTEXT_MESH_ANTIGRAVITY_MIN_DOC_BYTES", "VIKING_ANTIGRAVITY_MIN_DOC_BYTES", default=400))
 
 JSONL_SOURCES: dict[str, list[dict[str, Any]]] = {
     "claude_code": [
@@ -225,9 +228,9 @@ try:
     os.chmod(LOG_DIR, 0o700)
 except OSError:
     pass
-log_file = LOG_DIR / "viking_daemon.log"
+log_file = LOG_DIR / "context_daemon.log"
 
-logger = logging.getLogger("viking_daemon")
+logger = logging.getLogger("context_daemon")
 logger.setLevel(logging.INFO)
 
 _rfh = logging.handlers.RotatingFileHandler(
@@ -241,7 +244,7 @@ _sh.setLevel(logging.WARNING)
 _sh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
 logger.addHandler(_sh)
 
-LOCK_FILE = LOG_DIR / "viking_daemon.lock"
+LOCK_FILE = LOG_DIR / "context_daemon.lock"
 _LOCK_FD = None
 
 # ---------------------------------------------------------------------------
@@ -311,7 +314,7 @@ def _acquire_single_instance_lock() -> bool:
             except Exception:
                 pid = 0
             if pid > 0 and _pid_alive(pid):
-                logger.error("Another viking_daemon instance is running (pid=%s), exiting.", pid)
+                logger.error("Another context_daemon instance is running (pid=%s), exiting.", pid)
                 return False
             try:
                 LOCK_FILE.unlink()
@@ -1320,9 +1323,9 @@ def main():
     os.umask(0o077)
     if not _acquire_single_instance_lock():
         raise SystemExit(1)
-    logger.info("Starting OpenViking Hardened Daemon v4.0")
+    logger.info("Starting Context Mesh daemon")
     logger.info("Remote sync: %s", "on" if ENABLE_REMOTE_SYNC else "off")
-    logger.info("OpenViking URL: %s", OPENVIKING_URL)
+    logger.info("Remote URL: %s", OPENVIKING_URL)
     logger.info("Codex sessions path: %s", CODEX_SESSIONS)
     logger.info("Antigravity brain path: %s", ANTIGRAVITY_BRAIN)
     logger.info(
