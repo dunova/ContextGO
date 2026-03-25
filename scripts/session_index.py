@@ -12,8 +12,12 @@ import re
 import sqlite3
 from typing import Any, Iterable
 
-from context_config import env_int
-from memory_index import get_storage_root
+try:
+    from context_config import env_int
+    from memory_index import get_storage_root
+except ImportError:  # pragma: no cover
+    from .context_config import env_int  # type: ignore[import-not-found]
+    from .memory_index import get_storage_root  # type: ignore[import-not-found]
 
 
 SESSION_DB_PATH_ENV = "SESSION_INDEX_DB_PATH"

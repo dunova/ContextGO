@@ -31,9 +31,10 @@ from pathlib import Path
 from typing import Any
 try:
     from memory_index import strip_private_blocks, sync_index_from_storage
+    from context_config import env_bool, env_float, env_int, env_str, storage_root
 except Exception:  # pragma: no cover - module import path compatibility
     from .memory_index import strip_private_blocks, sync_index_from_storage  # type: ignore[import-not-found]
-from context_config import env_bool, env_float, env_int, env_str, storage_root
+    from .context_config import env_bool, env_float, env_int, env_str, storage_root  # type: ignore[import-not-found]
 
 # ---------------------------------------------------------------------------
 # Configuration

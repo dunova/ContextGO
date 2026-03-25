@@ -1,23 +1,15 @@
 #!/usr/bin/env python3
 """Legacy wrapper for archived OpenViking semantic patch helper."""
 
-from importlib.util import module_from_spec, spec_from_file_location
-from pathlib import Path
-import sys
-
-
-LEGACY_PATH = Path(__file__).resolve().parent / "legacy" / "patch_openviking_semantic_processor.py"
+try:
+    import legacy.patch_openviking_semantic_processor as _legacy
+except ImportError:  # pragma: no cover
+    from .legacy import patch_openviking_semantic_processor as _legacy  # type: ignore[import-not-found]
 
 
 def main() -> int:
-    spec = spec_from_file_location("legacy_patch_openviking_semantic_processor", LEGACY_PATH)
-    if spec is None or spec.loader is None:
-        print(f"Cannot load legacy helper: {LEGACY_PATH}", file=sys.stderr)
-        return 1
-    module = module_from_spec(spec)
-    spec.loader.exec_module(module)
-    if hasattr(module, "main"):
-        return int(module.main())
+    if hasattr(_legacy, "main"):
+        return int(_legacy.main())
     return 0
 
 

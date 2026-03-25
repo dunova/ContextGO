@@ -7,13 +7,19 @@ import argparse
 import importlib
 import json
 import os
+import subprocess
 from datetime import datetime
 from pathlib import Path
 
-from context_config import env_bool, env_int, env_str, storage_root
-import context_core
-from memory_index import export_observations_payload, import_observations_payload
-import session_index
+try:
+    from context_config import env_bool, env_int, env_str, storage_root
+    import context_core
+    from memory_index import export_observations_payload, import_observations_payload
+    import session_index
+except ImportError:  # pragma: no cover
+    from .context_config import env_bool, env_int, env_str, storage_root  # type: ignore[import-not-found]
+    from . import context_core, session_index  # type: ignore[import-not-found]
+    from .memory_index import export_observations_payload, import_observations_payload  # type: ignore[import-not-found]
 
 
 HOME = Path.home()
