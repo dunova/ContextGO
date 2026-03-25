@@ -29,6 +29,7 @@ SYNC_MIN_INTERVAL_SEC = env_int("CONTEXTGO_SESSION_SYNC_MIN_INTERVAL_SEC", defau
 SOURCE_CACHE_TTL_SEC = env_int("CONTEXTGO_SOURCE_CACHE_TTL_SEC", default=10, minimum=0)
 EXPERIMENTAL_SEARCH_BACKEND = os.environ.get("CONTEXTGO_EXPERIMENTAL_SEARCH_BACKEND", "").strip().lower()
 EXPERIMENTAL_SYNC_BACKEND = os.environ.get("CONTEXTGO_EXPERIMENTAL_SYNC_BACKEND", "").strip().lower()
+SESSION_INDEX_SCHEMA_VERSION = "2026-03-26-search-noise-v4"
 STOPWORDS = {
     "the", "and", "for", "with", "that", "this", "from", "into", "what", "when", "where",
     "which", "who", "how", "please", "search", "session", "history", "continue", "find",
@@ -82,6 +83,14 @@ SEARCH_NOISE_MARKERS = (
     "self.assert",
     "python3 scripts/context_cli.py native-scan",
     "build_query_terms",
+    "改动文件：",
+    "核心变化：",
+    "建议验证命令：",
+    "diff --git",
+    "@@",
+    "```bash",
+    "```python",
+    "launchctl list | egrep",
 )
 
 
@@ -100,14 +109,6 @@ def _is_noise_text(text: str) -> bool:
         "### Available skills",
         "You are Codex",
         "You are Claude",
-        "Base directory for this skill:",
-        "Hit-First Query Rules",
-        "Default mode is `hybrid`",
-        "Search past Claude/Codex sessions",
-        "query_viking_memory",
-        "onecontext search",
-        "name: openviking-memory-sync",
-        "name: recall",
         "file: /Users/dunova/.codex/skills/",
         "file: /Users/dunova/.agents/skills/",
         "file: /Users/dunova/.claude/skills/",
@@ -116,6 +117,14 @@ def _is_noise_text(text: str) -> bool:
     if any(marker in compact for marker in noise_markers):
         return True
     if compact.count("SKILL.md") >= 3:
+        return True
+    if "you are an expert prompt engineer and agent skill optimizer" in compact.lower():
+        return True
+    if "the following is the codex agent history whose request action you are assessing" in compact.lower():
+        return True
+    if "你负责索引与基准" in compact or "写集仅限" in compact:
+        return True
+    if "改动文件：" in compact or "核心变化：" in compact or "建议验证命令：" in compact:
         return True
     return False
 
@@ -231,7 +240,7 @@ def _parse_codex_session(path: Path) -> SessionDocument | None:
                     payload = obj.get("payload") or {}
                     if payload.get("type") == "user_message":
                         message = str(payload.get("message") or "").strip()
-                        if message:
+                        if message and not _is_noise_text(message):
                             pieces.append(message)
                 elif kind == "response_item":
                     payload = obj.get("payload") or {}
@@ -522,6 +531,11 @@ def sync_session_index(force: bool = False) -> dict[str, int]:
     now_epoch = int(datetime.now().timestamp())
     seen_paths: set[str] = set()
     try:
+        current_version = _meta_get(conn, "schema_version")
+        if current_version != SESSION_INDEX_SCHEMA_VERSION:
+            conn.execute("DELETE FROM session_documents")
+            _meta_set(conn, "schema_version", SESSION_INDEX_SCHEMA_VERSION)
+            force = True
         last_sync_raw = _meta_get(conn, "last_sync_epoch")
         last_sync_epoch = int(last_sync_raw or "0")
         if not force and last_sync_epoch and (now_epoch - last_sync_epoch) < SYNC_MIN_INTERVAL_SEC:
