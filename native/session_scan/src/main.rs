@@ -454,6 +454,9 @@ fn process_file(item: &WorkItem, query: &str) -> Result<SessionSummary> {
         }
         lines += 1;
         if let Ok(json) = serde_json::from_str::<Value>(&line) {
+            if should_skip_record_type(&json) {
+                continue;
+            }
             if let Some(id) = extract_session_id(&json) {
                 session_id = id;
             }
@@ -632,6 +635,34 @@ fn should_skip_meta_text(
             || trimmed.contains("session_index")
             || trimmed.contains("索引"));
     looks_like_meta && normalized_session_cwd == current_workdir
+}
+
+fn should_skip_record_type(value: &Value) -> bool {
+    let top_level = value.get("type").and_then(|v| v.as_str()).unwrap_or("");
+    if matches!(top_level, "turn_context" | "custom_tool_call") {
+        return true;
+    }
+    if top_level == "response_item" {
+        let payload_type = value
+            .get("payload")
+            .and_then(|v| v.get("type"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if matches!(payload_type, "function_call_output" | "function_call" | "reasoning") {
+            return true;
+        }
+    }
+    if top_level == "event_msg" {
+        let payload_type = value
+            .get("payload")
+            .and_then(|v| v.get("type"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if matches!(payload_type, "token_count" | "task_started") {
+            return true;
+        }
+    }
+    false
 }
 
 fn should_skip_meta_candidate(text: &str) -> bool {

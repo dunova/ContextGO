@@ -140,6 +140,9 @@ func (s *SessionScanner) ProcessFile(item WorkItem, query string) (SessionSummar
 		var payload map[string]any
 		if err := json.Unmarshal([]byte(line), &payload); err == nil {
 			parsedJSON = true
+			if shouldSkipRecordType(payload) {
+				continue
+			}
 			if sid := extractSessionID(payload); sid != "" {
 				summary.SessionID = sid
 			}
@@ -161,6 +164,30 @@ func (s *SessionScanner) ProcessFile(item WorkItem, query string) (SessionSummar
 		}
 	}
 	return summary, matchFound
+}
+
+func shouldSkipRecordType(payload map[string]any) bool {
+	topLevelType, _ := payload["type"].(string)
+	if topLevelType == "turn_context" || topLevelType == "custom_tool_call" {
+		return true
+	}
+	if topLevelType == "response_item" {
+		if nested, ok := payload["payload"].(map[string]any); ok {
+			payloadType, _ := nested["type"].(string)
+			if payloadType == "function_call_output" || payloadType == "function_call" || payloadType == "reasoning" {
+				return true
+			}
+		}
+	}
+	if topLevelType == "event_msg" {
+		if nested, ok := payload["payload"].(map[string]any); ok {
+			payloadType, _ := nested["type"].(string)
+			if payloadType == "token_count" || payloadType == "task_started" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 type NoiseFilter struct {
