@@ -775,11 +775,26 @@ def _build_snippet(text: str, terms: list[str], radius: int = 100) -> str:
     lower = compact.lower()
     idx = -1
     matched = ""
+    best_score = None
+    conclusion_markers = ("最终", "结论", "交付", "已完成", "核心")
     for term in terms:
-        pos = lower.find(term.lower())
-        if pos >= 0 and (idx < 0 or pos < idx):
-            idx = pos
-            matched = term
+        term_lower = term.lower()
+        start = 0
+        while True:
+            pos = lower.find(term_lower, start)
+            if pos < 0:
+                break
+            window = compact[max(0, pos - 120) : min(len(compact), pos + len(term) + 120)]
+            score = pos
+            if any(marker in window for marker in conclusion_markers):
+                score -= 5000
+            if pos > len(compact) // 2:
+                score -= 500
+            if best_score is None or score < best_score:
+                best_score = score
+                idx = pos
+                matched = term
+            start = pos + len(term_lower)
     if idx < 0:
         return compact[: radius * 2]
     start = max(0, idx - radius)

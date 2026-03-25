@@ -375,6 +375,15 @@ class SessionIndexTests(unittest.TestCase):
                 )
             )
 
+    def test_build_snippet_prefers_conclusion_window(self) -> None:
+        text = (
+            "NotebookLM 过程说明，先做预热。"
+            " 这里还是过程段。"
+            " 最终交付：NotebookLM 的真实结论已经确认，并已完成验证。"
+        )
+        snippet = session_index._build_snippet(text, ["NotebookLM"])
+        self.assertIn("最终交付", snippet)
+
 
 if __name__ == "__main__":
     unittest.main()

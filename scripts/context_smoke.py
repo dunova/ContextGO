@@ -139,10 +139,143 @@ def test_viewer(cli_path: Path) -> dict:
             proc.kill()
 
 
+def _available_native_backends(cli_path: Path) -> list[str]:
+    rc, out, err = run_cmd([sys.executable, str(cli_path), "health"])
+    text = (out or err).strip()
+    if rc != 0 or not text:
+        return []
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return []
+    native = payload.get("native_backends") or {}
+    backends = native.get("available_backends") or []
+    return [str(item) for item in backends if str(item) in {"rust", "go"}]
+
+
+def _write_native_fixture(root: Path, marker: str) -> tuple[Path, Path]:
+    codex_root = root / "codex"
+    claude_root = root / "claude"
+    target = codex_root / "2026" / "03" / "26"
+    target.mkdir(parents=True, exist_ok=True)
+    claude_root.mkdir(parents=True, exist_ok=True)
+    session_file = target / "native-fixture.jsonl"
+    lines = [
+        {
+            "type": "session_meta",
+            "payload": {
+                "id": "native-fixture-session",
+                "cwd": "/tmp/contextgo-native-fixture",
+                "timestamp": "2026-03-26T00:00:00Z",
+            },
+        },
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "function_call_output",
+                "output": f"# AGENTS.md instructions for /tmp {marker}",
+            },
+        },
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "output_text",
+                        "text": f"最终交付：ContextGO native smoke marker {marker} 已验证。",
+                    }
+                ],
+            },
+        },
+    ]
+    session_file.write_text("\n".join(json.dumps(item, ensure_ascii=False) for item in lines), encoding="utf-8")
+    return codex_root, claude_root
+
+
+def test_native_scan_contract(cli_path: Path) -> dict:
+    backends = _available_native_backends(cli_path)
+    if not backends:
+        return {
+            "name": "native_scan",
+            "rc": 0,
+            "ok": True,
+            "detail": {"skipped": True, "reason": "no native backend available"},
+        }
+
+    marker = f"smoke-native-{int(time.time())}"
+    backend_results: list[dict] = []
+    with tempfile.TemporaryDirectory(prefix="contextgo-native-smoke-") as tmpdir:
+        codex_root, claude_root = _write_native_fixture(Path(tmpdir), marker)
+        for backend in backends:
+            rc, out, err = run_cmd(
+                [
+                    sys.executable,
+                    str(cli_path),
+                    "native-scan",
+                    "--backend",
+                    backend,
+                    "--codex-root",
+                    str(codex_root),
+                    "--claude-root",
+                    str(claude_root),
+                    "--query",
+                    marker,
+                    "--limit",
+                    "3",
+                    "--json",
+                ],
+                timeout=120,
+            )
+            text = (out or err).strip()
+            try:
+                payload = json.loads(text)
+            except json.JSONDecodeError as exc:
+                backend_results.append(
+                    {
+                        "backend": backend,
+                        "rc": rc,
+                        "ok": False,
+                        "error": f"invalid json: {exc}",
+                        "raw": text[:400],
+                    }
+                )
+                continue
+            matches = payload.get("matches") or []
+            first = matches[0] if matches else {}
+            snippet = str(first.get("snippet") or "")
+            ok = (
+                rc == 0
+                and bool(matches)
+                and marker in snippet
+                and "# AGENTS.md instructions" not in snippet
+                and first.get("session_id") == "native-fixture-session"
+            )
+            backend_results.append(
+                {
+                    "backend": backend,
+                    "rc": rc,
+                    "ok": ok,
+                    "match_count": len(matches),
+                    "session_id": first.get("session_id"),
+                    "snippet_head": snippet[:160],
+                }
+            )
+    ok = all(item.get("ok") for item in backend_results)
+    return {
+        "name": "native_scan",
+        "rc": 0 if ok else 1,
+        "ok": ok,
+        "detail": {"backends": backend_results},
+    }
+
+
 def run_smoke(cli_path: Path, quality_gate_path: Path) -> dict:
     healthcheck_path = cli_path.with_name("context_healthcheck.sh")
     results = [
         test_health(cli_path),
+        test_native_scan_contract(cli_path),
         test_healthcheck(healthcheck_path),
         test_quality_gate(quality_gate_path),
         test_rw_cycle(cli_path),
