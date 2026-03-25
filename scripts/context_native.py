@@ -192,7 +192,9 @@ def _build_rust_cmd(
             cmd.extend(["--limit", str(max(1, limit))])
         if json_output:
             cmd.append("--json")
-        return cmd, REPO_ROOT, os.environ.copy()
+        env = os.environ.copy()
+        env.setdefault("CONTEXTGO_ACTIVE_WORKDIR", str(Path.cwd()))
+        return cmd, REPO_ROOT, env
 
     cmd = ["cargo", "run"]
     if release:
@@ -211,6 +213,7 @@ def _build_rust_cmd(
         cmd.append("--json")
     env = os.environ.copy()
     env.setdefault("CARGO_TARGET_DIR", DEFAULT_TARGET_DIR)
+    env.setdefault("CONTEXTGO_ACTIVE_WORKDIR", str(Path.cwd()))
     return cmd, REPO_ROOT, env
 
 

@@ -10,6 +10,9 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use walkdir::WalkDir;
 
+const SKIPPED_QUERY_MISS: &str = "query not matched";
+const SKIPPED_CURRENT_WORKDIR: &str = "skip current workdir session";
+
 const NOISE_MARKERS: &[&str] = &[
     "# agents.md instructions",
     "### available skills",
@@ -242,6 +245,16 @@ impl Scanner {
             .collect()
     }
 
+    fn root_labels(&self) -> Vec<&'static str> {
+        let mut labels = Vec::new();
+        for root in &self.roots {
+            if !labels.contains(&root.label) {
+                labels.push(root.label);
+            }
+        }
+        labels
+    }
+
     fn scan(
         &self,
         work_items: &[WorkItem],
@@ -256,7 +269,11 @@ impl Scanner {
         for result in results {
             match result {
                 Ok(summary) => summaries.push(summary),
-                Err(err) => errors.push(err),
+                Err(err) => {
+                    if should_report_error(&err) {
+                        errors.push(err);
+                    }
+                }
             }
         }
         (summaries, errors)
@@ -270,8 +287,8 @@ impl ScannerReport {
             self.total_files, self.duration
         );
         let aggregates = summarize_by_source(&self.summaries);
-        for root in &scanner.roots {
-            match aggregates.get(root.label) {
+        for label in scanner.root_labels() {
+            match aggregates.get(label) {
                 Some(aggregate) => {
                     println!(
                         "  {} -> {} sessions, 总行数 {}, 占用 {} 字节",
@@ -292,7 +309,7 @@ impl ScannerReport {
                     }
                 }
                 None => {
-                    println!("  {} -> 0 sessions", root.label);
+                    println!("  {} -> 0 sessions", label);
                 }
             }
         }
@@ -308,12 +325,12 @@ impl ScannerReport {
     fn json_payload(&self, scanner: &Scanner, query: &str) -> JsonReport {
         let aggregates = summarize_by_source(&self.summaries);
         let roots = scanner
-            .roots
-            .iter()
-            .map(|root| {
-                aggregates.get(root.label).map_or_else(
+            .root_labels()
+            .into_iter()
+            .map(|label| {
+                aggregates.get(label).map_or_else(
                     || JsonRootAggregate {
-                        label: root.label.to_string(),
+                        label: label.to_string(),
                         session_count: 0,
                         total_lines: 0,
                         total_bytes: 0,
@@ -387,6 +404,11 @@ fn should_skip_path(lower_path: &str) -> bool {
     lower_path.contains("/skills/") || lower_path.contains("skills-repo")
 }
 
+fn should_report_error(err: &anyhow::Error) -> bool {
+    let text = err.to_string();
+    text != SKIPPED_QUERY_MISS && text != SKIPPED_CURRENT_WORKDIR
+}
+
 fn main() -> Result<()> {
     let args = Args::parse();
     rayon::ThreadPoolBuilder::new()
@@ -454,10 +476,7 @@ fn process_file(item: &WorkItem, query: &str) -> Result<SessionSummary> {
     let query_lower = query.trim().to_lowercase();
     let mut matched = query_lower.is_empty();
     let mut best_match: Option<(i32, String, String)> = None;
-    let current_workdir = std::env::current_dir()
-        .ok()
-        .and_then(|path| path.canonicalize().ok().or(Some(path)))
-        .map(|path| path.to_string_lossy().to_string());
+    let current_workdir = active_workdir();
     let reader = BufReader::new(file);
     for line in reader.lines() {
         let line = match line {
@@ -490,7 +509,7 @@ fn process_file(item: &WorkItem, query: &str) -> Result<SessionSummary> {
                             .map(|path| path.to_string_lossy().to_string())
                             .unwrap_or(cwd);
                         if normalized_session_cwd == current_workdir {
-                            anyhow::bail!("skip current workdir session");
+                            anyhow::bail!(SKIPPED_CURRENT_WORKDIR);
                         }
                     }
                 }
@@ -552,7 +571,7 @@ fn process_file(item: &WorkItem, query: &str) -> Result<SessionSummary> {
     }
 
     if !matched {
-        anyhow::bail!("query not matched")
+        anyhow::bail!(SKIPPED_QUERY_MISS)
     }
 
     Ok(SessionSummary {
@@ -804,6 +823,23 @@ fn extract_cwd(value: &Value) -> Option<String> {
         .map(|s| s.to_string())
 }
 
+fn active_workdir() -> Option<String> {
+    if let Ok(explicit) = std::env::var("CONTEXTGO_ACTIVE_WORKDIR") {
+        let trimmed = explicit.trim();
+        if !trimmed.is_empty() {
+            return std::path::Path::new(trimmed)
+                .canonicalize()
+                .ok()
+                .map(|path| path.to_string_lossy().to_string())
+                .or_else(|| Some(trimmed.to_string()));
+        }
+    }
+    std::env::current_dir()
+        .ok()
+        .and_then(|path| path.canonicalize().ok().or(Some(path)))
+        .map(|path| path.to_string_lossy().to_string())
+}
+
 fn nested_str<'a>(value: &'a Value, keys: &[&str]) -> Option<&'a str> {
     let mut current = value;
     for key in keys {
@@ -952,6 +988,26 @@ mod tests {
             "notebooklm",
         );
         assert!(content_score > prompt_score);
+    }
+
+    #[test]
+    fn active_workdir_prefers_explicit_env() {
+        let previous = std::env::var("CONTEXTGO_ACTIVE_WORKDIR").ok();
+        std::env::set_var("CONTEXTGO_ACTIVE_WORKDIR", "/tmp/contextgo-explicit");
+        let cwd = active_workdir().unwrap();
+        assert!(cwd.ends_with("/tmp/contextgo-explicit"));
+        if let Some(value) = previous {
+            std::env::set_var("CONTEXTGO_ACTIVE_WORKDIR", value);
+        } else {
+            std::env::remove_var("CONTEXTGO_ACTIVE_WORKDIR");
+        }
+    }
+
+    #[test]
+    fn should_report_error_suppresses_expected_skips() {
+        assert!(!should_report_error(&anyhow::anyhow!(SKIPPED_QUERY_MISS)));
+        assert!(!should_report_error(&anyhow::anyhow!(SKIPPED_CURRENT_WORKDIR)));
+        assert!(should_report_error(&anyhow::anyhow!("real parse failure")));
     }
 }
 

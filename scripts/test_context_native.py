@@ -58,6 +58,32 @@ class ContextNativeTests(unittest.TestCase):
         self.assertEqual(payload, cached)
         mock_run.assert_not_called()
 
+    def test_build_commands_export_active_workdir(self) -> None:
+        with mock.patch("pathlib.Path.cwd", return_value=Path("/tmp/contextgo-active")):
+            rust_cmd, rust_cwd, rust_env = context_native._build_rust_cmd(
+                codex_root=None,
+                claude_root=None,
+                threads=2,
+                release=False,
+                query="NotebookLM",
+                json_output=True,
+                limit=3,
+            )
+            go_cmd, go_cwd, go_env = context_native._build_go_cmd(
+                codex_root=None,
+                claude_root=None,
+                threads=2,
+                query="NotebookLM",
+                json_output=True,
+                limit=3,
+            )
+        self.assertIn("CONTEXTGO_ACTIVE_WORKDIR", rust_env)
+        self.assertEqual(rust_env["CONTEXTGO_ACTIVE_WORKDIR"], "/tmp/contextgo-active")
+        self.assertIn("CONTEXTGO_ACTIVE_WORKDIR", go_env)
+        self.assertEqual(go_env["CONTEXTGO_ACTIVE_WORKDIR"], "/tmp/contextgo-active")
+        self.assertIn("--query", rust_cmd)
+        self.assertIn("--query", go_cmd)
+
 
 if __name__ == "__main__":
     unittest.main()
