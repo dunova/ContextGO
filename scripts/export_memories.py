@@ -8,7 +8,7 @@ import context_cli
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Export Context Mesh memories.")
+    parser = argparse.ArgumentParser(description="Export ContextGO memories.")
     parser.add_argument("query", help="Search query. Use empty string for all.", nargs="?", default="")
     parser.add_argument("output", help="Output JSON path.")
     parser.add_argument("--limit", type=int, default=5000, help="Max observations to export.")

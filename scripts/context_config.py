@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Shared configuration helpers for Context Mesh."""
+"""Shared configuration helpers for ContextGO."""
 
 from __future__ import annotations
 
@@ -42,13 +42,12 @@ def env_bool(*names: str, default: bool = False) -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
-def storage_root(default_home_name: str = ".unified_context_data") -> Path:
+def storage_root(default_home_name: str = ".contextgo") -> Path:
     return Path(
         os.path.expanduser(
             env_str(
-                "CONTEXT_MESH_STORAGE_ROOT",
+                "CONTEXTGO_STORAGE_ROOT",
                 "UNIFIED_CONTEXT_STORAGE_ROOT",
-                "OPENVIKING_STORAGE_ROOT",
                 default=str(Path.home() / default_home_name),
             )
         )

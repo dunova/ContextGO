@@ -1,1 +1,1 @@
-"""Context Mesh runtime modules."""
+"""ContextGO runtime modules."""

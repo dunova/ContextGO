@@ -31,10 +31,10 @@ LOCAL_STORAGE_ROOT = Path(
 )
 LOCAL_SHARED_ROOT = LOCAL_STORAGE_ROOT / "resources" / "shared"
 LOCAL_CONVERSATIONS_ROOT = LOCAL_SHARED_ROOT / "conversations"
-LOCAL_SCAN_MAX_FILES = env_int("CONTEXT_CLI_LOCAL_SCAN_MAX_FILES", "CONTEXT_MESH_LOCAL_SCAN_MAX_FILES", default=300, minimum=50)
-LOCAL_SCAN_READ_BYTES = env_int("CONTEXT_CLI_LOCAL_SCAN_READ_BYTES", "CONTEXT_MESH_LOCAL_SCAN_READ_BYTES", default=120000, minimum=4096)
-ENABLE_OPENVIKING_HTTP = env_bool("CONTEXT_MESH_ENABLE_REMOTE_MEMORY_HTTP", "CONTEXT_CLI_ENABLE_OPENVIKING_HTTP", default=False)
-OPENVIKING_URL = env_str("CONTEXT_MESH_REMOTE_URL", "OPENVIKING_URL", default="http://127.0.0.1:8090/api/v1")
+LOCAL_SCAN_MAX_FILES = env_int("CONTEXT_CLI_LOCAL_SCAN_MAX_FILES", "CONTEXTGO_LOCAL_SCAN_MAX_FILES", default=300, minimum=50)
+LOCAL_SCAN_READ_BYTES = env_int("CONTEXT_CLI_LOCAL_SCAN_READ_BYTES", "CONTEXTGO_LOCAL_SCAN_READ_BYTES", default=120000, minimum=4096)
+ENABLE_REMOTE_MEMORY_HTTP = env_bool("CONTEXTGO_ENABLE_REMOTE_MEMORY_HTTP", "CONTEXT_CLI_ENABLE_REMOTE_MEMORY_HTTP", default=False)
+REMOTE_MEMORY_URL = env_str("CONTEXTGO_REMOTE_URL", default="http://127.0.0.1:8090/api/v1")
 def _local_memory_matches(query: str, limit: int = 3) -> list[dict]:
     return context_core.local_memory_matches(
         query,
@@ -57,20 +57,20 @@ def _save_local_memory(title: str, content: str, tags: list[str]) -> str:
     except ValueError as exc:
         return f"Failed to save memory: {exc}."
 
-    if ENABLE_OPENVIKING_HTTP:
+    if ENABLE_REMOTE_MEMORY_HTTP:
         try:
             import urllib.request
 
             payload = json.dumps(
                 {
                     "path": str(path),
-                    "target": "viking://resources/shared/conversations",
+                    "target": "contextgo://resources/shared/conversations",
                     "reason": "save_conversation",
                     "instruction": f"Index global conversation memory: {(title or '').strip()}",
                 }
             ).encode("utf-8")
             req = urllib.request.Request(
-                f"{OPENVIKING_URL}/resources",
+                f"{REMOTE_MEMORY_URL}/resources",
                 data=payload,
                 headers={"Content-Type": "application/json"},
                 method="POST",
@@ -137,10 +137,10 @@ def _source_freshness() -> dict:
     return payload
 
 
-def _legacy_bridge_process_count() -> int:
+def _archived_bridge_process_count() -> int:
     try:
         proc = subprocess.run(
-            ["pgrep", "-f", "openviking_mcp.py"],
+            ["pgrep", "-f", "contextgo-remote"],
             capture_output=True,
             text=True,
             timeout=3,
@@ -182,11 +182,11 @@ def build_parser() -> argparse.ArgumentParser:
     import_cmd.add_argument("--no-sync", action="store_true")
 
     serve = sub.add_parser("serve", help="Start local memory viewer")
-    serve.add_argument("--host", default=env_str("CONTEXT_VIEWER_HOST", "CONTEXT_MESH_VIEWER_HOST", default="127.0.0.1"))
-    serve.add_argument("--port", type=int, default=env_int("CONTEXT_VIEWER_PORT", "CONTEXT_MESH_VIEWER_PORT", default=37677, minimum=1))
-    serve.add_argument("--token", default=env_str("CONTEXT_VIEWER_TOKEN", "CONTEXT_MESH_VIEWER_TOKEN", default=""))
+    serve.add_argument("--host", default=env_str("CONTEXT_VIEWER_HOST", "CONTEXTGO_VIEWER_HOST", default="127.0.0.1"))
+    serve.add_argument("--port", type=int, default=env_int("CONTEXT_VIEWER_PORT", "CONTEXTGO_VIEWER_PORT", default=37677, minimum=1))
+    serve.add_argument("--token", default=env_str("CONTEXT_VIEWER_TOKEN", "CONTEXTGO_VIEWER_TOKEN", default=""))
 
-    maintain = sub.add_parser("maintain", aliases=["onecontext-maintain"], help="Run local maintenance workflow")
+    maintain = sub.add_parser("maintain", help="Run local maintenance workflow")
     maintain.add_argument("--db", default="~/.aline/db/aline.db")
     maintain.add_argument("--codex-root", default="~/.codex/sessions")
     maintain.add_argument("--claude-root", default="~/.claude/projects")
@@ -283,7 +283,7 @@ def run(args: argparse.Namespace) -> int:
         viewer_module.main()
         return 0
 
-    if args.command in {"maintain", "onecontext-maintain"}:
+    if args.command == "maintain":
         maintenance_module = _load_context_maintenance()
         forwarded = [
             "--db",
@@ -346,9 +346,9 @@ def run(args: argparse.Namespace) -> int:
                 "path": str(LOCAL_SHARED_ROOT),
             },
             "remote_sync_policy": {
-                "enabled": ENABLE_OPENVIKING_HTTP,
-                "mode": "optional-http" if ENABLE_OPENVIKING_HTTP else "disabled-by-policy",
-                "legacy_bridge_processes": _legacy_bridge_process_count(),
+                "enabled": ENABLE_REMOTE_MEMORY_HTTP,
+                "mode": "optional-http" if ENABLE_REMOTE_MEMORY_HTTP else "disabled-by-policy",
+                "archived_bridge_processes": _archived_bridge_process_count(),
             },
             "native_backends": context_native.health_payload(),
             "all_ok": bool(recall_payload.get("session_index_db_exists")),

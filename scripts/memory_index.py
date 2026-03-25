@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Unified local memory index for Context Mesh Foundry."""
+"""Unified local memory index for ContextGO."""
 
 from __future__ import annotations
 

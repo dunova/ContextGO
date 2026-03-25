@@ -6,9 +6,9 @@
 - **原因**：`session_index.py` 扫描本机历史并建立 SQLite 索引需要完整数据。
 - **解决**：
   - 完成一次 `context_cli.py health` 后再发起 search，索引会在后台追加。
-  - 确认 storage root（默认 `~/.unified_context_data`）下存在 `index/session_index.db` 和 `index/memory_index.db`。
+  - 确认 storage root（默认 `~/.contextgo`）下存在 `index/session_index.db` 和 `index/memory_index.db`。
   - 运行 `python3 -m benchmarks --iterations 1 --warmup 0 --query benchmark` 获取基准并排查是否受限于 IO 或 CPU。
-  - 若依赖 `CONTEXT_MESH_STORAGE_ROOT` 等自定义目录，先在上下文脚本里 `print(storage_root())` 确认路径，再重建索引。
+  - 若依赖 `CONTEXTGO_STORAGE_ROOT` 等自定义目录，先在上下文脚本里 `print(storage_root())` 确认路径，再重建索引。
 
 ## 2. viewer 无法访问
 
@@ -17,14 +17,14 @@
 - **解决**：
   - 先用 `python3 scripts/context_cli.py health` 验证 CLI 健康，确认 `context_smoke.py`（包含 serve + viewer health 查询）通过。
   - 确认没有旧服务占用端口：`lsof -iTCP:38880` / `ps` 后 kill 再重启。
-  - 若是已安装运行时（`~/.local/share/context-mesh-foundry`），执行 `python3 scripts/smoke_installed_runtime.py`，观察 viewer 访问与 quality gate 结果。
+  - 若是已安装运行时（`~/.local/share/contextgo`），执行 `python3 scripts/smoke_installed_runtime.py`，观察 viewer 访问与 quality gate 结果。
 
 ## 3. 搜索结果为空
 
 - **现象**：`context_cli search ...` 没有命中最近会话。
 - **原因**：`context_daemon` 尚未写入、新历史落在未索引目录、`session_index` 未刷新，或 clin_path 指向非默认 storage。
 - **解决**：
-  - 确认 `~/.unified_context_data`（或 `CONTEXT_MESH_STORAGE_ROOT` 覆盖路径）下的 `raw/`、`index/` 有更新文件。
+  - 确认 `~/.contextgo`（或 `CONTEXTGO_STORAGE_ROOT` 覆盖路径）下的 `raw/`、`index/` 有更新文件。
   - 检查常见来源（如 `~/.codex/sessions/`、`~/.claude/projects/`、`~/.zsh_history`、`~/.bash_history`）是否出现在 `context_daemon` 抓取目录。
   - 运行 `python3 scripts/context_cli.py health` + `python3 scripts/context_smoke.py` 验证写入/semantic pipeline。
   - 用 `python3 scripts/e2e_quality_gate.py` 或 `python3 -m benchmarks --iterations 1 --warmup 0 --query benchmark` 检查 index/CLI 的整体可用性。
@@ -33,9 +33,9 @@
 
 - **现象**：访问本地索引/记忆目录时出现权限错误。
 - **解决**：
-  - 确认目录位于 `scripts/context_config.py` 计算的 storage root（默认 `~/.unified_context_data`）下，`ls -ld $(storage_root)` 验证拥有者。
+  - 确认目录位于 `scripts/context_config.py` 计算的 storage root（默认 `~/.contextgo`）下，`ls -ld $(storage_root)` 验证拥有者。
   - `stat` 输出确认 `index/`、`raw/` 的权限与当前用户一致。
-  - 若路径被移动或清空，先用 `bash scripts/context_healthcheck.sh`（可附 `--deep` 探测）定位缺失目录或权限问题，必要时清理并恢复 `scripts/context_config.storage_root()`（默认 `~/.unified_context_data`，可由 `CONTEXT_MESH_STORAGE_ROOT`/`UNIFIED_CONTEXT_STORAGE_ROOT` 覆盖）指向的路径，再运行 `python3 scripts/context_smoke.py` 验证默认 storage root 上的 smoke 链路恢复正常。
+  - 若路径被移动或清空，先用 `bash scripts/context_healthcheck.sh`（可附 `--deep` 探测）定位缺失目录或权限问题，必要时清理并恢复 `scripts/context_config.storage_root()`（默认 `~/.contextgo`，可由 `CONTEXTGO_STORAGE_ROOT`/`UNIFIED_CONTEXT_STORAGE_ROOT` 覆盖）指向的路径，再运行 `python3 scripts/context_smoke.py` 验证默认 storage root 上的 smoke 链路恢复正常。
 
 ## 5. 发布前检查
 
@@ -52,4 +52,4 @@ python3 scripts/smoke_installed_runtime.py
 bash scripts/context_healthcheck.sh
 ```
 
-上述命令依赖 `scripts/context_config.storage_root()`（默认 `~/.unified_context_data`），请确认当前用户可以读写该目录，并在 `CONTEXT_MESH_STORAGE_ROOT` / `UNIFIED_CONTEXT_STORAGE_ROOT` 替换被启用时同步更新。安装态 `scripts/smoke_installed_runtime.py` 会从 `~/.local/share/context-mesh-foundry/scripts` 调用 `context_cli.py` 与 `e2e_quality_gate.py`；发布前务必确认这两个入口存在，并额外保留 `benchmarks/run.py` 与 `context_healthcheck.sh` 供运维排障使用。
+上述命令依赖 `scripts/context_config.storage_root()`（默认 `~/.contextgo`），请确认当前用户可以读写该目录，并在 `CONTEXTGO_STORAGE_ROOT` / `UNIFIED_CONTEXT_STORAGE_ROOT` 替换被启用时同步更新。安装态 `scripts/smoke_installed_runtime.py` 会从 `~/.local/share/contextgo/scripts` 调用 `context_cli.py` 与 `e2e_quality_gate.py`；发布前务必确认这两个入口存在，并额外保留 `benchmarks/run.py` 与 `context_healthcheck.sh` 供运维排障使用。

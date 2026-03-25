@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Shared runtime helpers for Context Mesh Foundry."""
+"""Shared runtime helpers for ContextGO."""
 
 from __future__ import annotations
 

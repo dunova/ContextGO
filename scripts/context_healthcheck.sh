@@ -2,15 +2,15 @@
 # =============================================================================
 # ContextGO Health Check (standalone local index)
 # Default mode is non-intrusive and low-overhead.
-# --deep enables optional legacy/remote probes.
+# --deep enables optional remote probes.
 # =============================================================================
 
 set -u
 
 LOG_DIR="$HOME/.context_system/logs"
 HEALTHCHECK_LOG="$LOG_DIR/healthcheck.log"
-UNIFIED_CONTEXT_STORAGE_ROOT="${UNIFIED_CONTEXT_STORAGE_ROOT:-${CONTEXT_MESH_STORAGE_ROOT:-${OPENVIKING_STORAGE_ROOT:-$HOME/.unified_context_data}}}"
-REMOTE_SYNC_BASE_URL="${CONTEXT_MESH_REMOTE_URL:-${OPENVIKING_URL:-http://127.0.0.1:8090/api/v1}}"
+UNIFIED_CONTEXT_STORAGE_ROOT="${UNIFIED_CONTEXT_STORAGE_ROOT:-${CONTEXTGO_STORAGE_ROOT:-$HOME/.contextgo}}"
+REMOTE_SYNC_BASE_URL="${CONTEXTGO_REMOTE_URL:-http://127.0.0.1:8090/api/v1}"
 REMOTE_SYNC_HEALTH_URL="${REMOTE_SYNC_HEALTH_URL:-${REMOTE_SYNC_BASE_URL%/}/health}"
 
 mkdir -p "$LOG_DIR"
@@ -56,20 +56,20 @@ check_launchd_runtime() {
         return 0
     fi
 
-    state=$(launchctl print "gui/${uid_num}/com.contextmesh.daemon" 2>/dev/null | awk -F'= ' '/^[[:space:]]*state = / {print $2; exit}')
+    state=$(launchctl print "gui/${uid_num}/com.contextgo.daemon" 2>/dev/null | awk -F'= ' '/^[[:space:]]*state = / {print $2; exit}')
     if [ -z "$state" ]; then
-        report_warn "launchd com.contextmesh.daemon 未加载"
+        report_warn "launchd com.contextgo.daemon 未加载"
         summary="daemon 未加载"
         record_check_result "core.launchd_runtime" "$status" "$summary"
         return 0
     fi
 
     if [ "$state" = "running" ] || [ "$state" = "spawn scheduled" ] || [ "$state" = "not running" ]; then
-        report_ok "launchd com.contextmesh.daemon 已加载（state=${state}）"
+        report_ok "launchd com.contextgo.daemon 已加载（state=${state}）"
         summary="state=${state}"
         status="ok"
     else
-        report_warn "launchd com.contextmesh.daemon state=$state"
+        report_warn "launchd com.contextgo.daemon state=$state"
         summary="state=${state}"
     fi
 
@@ -144,10 +144,9 @@ check_stale_claude_hooks() {
 }
 
 check_logs_and_pending() {
-    local daemon_log legacy_daemon_log very_legacy_daemon_log health_log pending_dir pending_count
+    local daemon_log previous_daemon_log health_log pending_dir pending_count
     daemon_log="$LOG_DIR/context_mesh_daemon.log"
-    legacy_daemon_log="$LOG_DIR/context_daemon.log"
-    very_legacy_daemon_log="$LOG_DIR/viking_daemon.log"
+    previous_daemon_log="$LOG_DIR/context_daemon.log"
     health_log="$LOG_DIR/healthcheck.log"
     local status="ok"
     local daemon_status="missing"
@@ -156,13 +155,9 @@ check_logs_and_pending() {
     if [ -f "$daemon_log" ]; then
         report_ok "ContextGO daemon 日志大小：$(( $(file_size_bytes "${daemon_log}") / 1048576 ))MB"
         daemon_status="present"
-    elif [ -f "$legacy_daemon_log" ]; then
-        report_warn "检测到旧 ContextGO daemon 日志：${legacy_daemon_log}（旧 context_daemon.log）"
-        daemon_status="legacy"
-        status="warn"
-    elif [ -f "$very_legacy_daemon_log" ]; then
-        report_warn "检测到遗留 Viking daemon 日志：${very_legacy_daemon_log}（旧 viking_daemon.log）"
-        daemon_status="viking"
+    elif [ -f "$previous_daemon_log" ]; then
+        report_warn "检测到上一代 ContextGO daemon 日志：${previous_daemon_log}（旧 context_daemon.log）"
+        daemon_status="previous"
         status="warn"
     else
         report_warn "ContextGO daemon 日志不存在（如未启动可忽略）"
@@ -192,21 +187,21 @@ check_logs_and_pending() {
     record_check_result "storage.logs_pending" "$status" "$summary"
 }
 
-check_legacy_remote_processes() {
+check_remote_processes() {
     local pids
-    pids="$(pgrep -f 'context_daemon.py|viking_daemon.py|openviking_mcp.py|openviking-server' 2>/dev/null || true)"
+    pids="$(pgrep -f 'context_daemon.py|contextgo-remote' 2>/dev/null || true)"
     local summary status
     if [ -n "$pids" ]; then
-        report_warn "检测到遗留 ContextGO 远程同步进程（OpenViking/MCP）：$(echo "$pids" | tr '\n' ' ' | sed 's/  */ /g')"
+        report_warn "检测到可选远程同步进程：$(echo "$pids" | tr '\n' ' ' | sed 's/  */ /g')"
         summary="pids=${pids}"
         status="warn"
     else
-        report_ok "未检测到遗留 ContextGO 远程同步进程（OpenViking/MCP）"
+        report_ok "未检测到可选远程同步进程"
         summary="none"
         status="ok"
     fi
 
-    record_check_result "optional.legacy_remote" "$status" "$summary"
+    record_check_result "optional.remote_processes" "$status" "$summary"
 }
 
 REPORT+="[$TS] ContextGO Health Check\n"
@@ -222,7 +217,7 @@ check_logs_and_pending
 if [ "$DEEP_PROBE" = "1" ]; then
     REPORT+="\nOptional Deep Checks:\n"
     check_remote_sync_probe
-    check_legacy_remote_processes
+    check_remote_processes
 fi
 
 SUMMARY_TOTAL=${#CHECK_SUMMARY[@]}

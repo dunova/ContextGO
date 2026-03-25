@@ -10,7 +10,7 @@ import context_cli
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Import Context Mesh memories.")
+    parser = argparse.ArgumentParser(description="Import ContextGO memories.")
     parser.add_argument("input", help="Input JSON path exported by export_memories.py")
     parser.add_argument("--no-sync", action="store_true", help="Skip sync_index_from_storage after import.")
     args = parser.parse_args(argv)

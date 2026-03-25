@@ -181,17 +181,16 @@ def case_local_search(env: dict[str, str]) -> CaseResult:
 def main() -> int:
     with tempfile.TemporaryDirectory(prefix="contextgo-gate-") as tmpdir:
         fake_home = Path(tmpdir)
-        storage_root = fake_home / ".unified_context_data"
+        storage_root = fake_home / ".contextgo"
         prepare_fixture_home(fake_home)
         env = os.environ.copy()
         env.update(
             {
                 "HOME": str(fake_home),
                 "UNIFIED_CONTEXT_STORAGE_ROOT": str(storage_root),
-                "CONTEXT_MESH_STORAGE_ROOT": str(storage_root),
-                "OPENVIKING_STORAGE_ROOT": str(storage_root),
+                "CONTEXTGO_STORAGE_ROOT": str(storage_root),
                 "CMF_SESSION_SYNC_MIN_INTERVAL_SEC": "0",
-                "CONTEXT_MESH_SOURCE_CACHE_TTL_SEC": "0",
+                "CONTEXTGO_SOURCE_CACHE_TTL_SEC": "0",
             }
         )
         cases = [

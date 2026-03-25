@@ -14,9 +14,9 @@ read -r -d '' POLICY_BLOCK <<'EOF' || true
 
 执行顺序（硬约束）：
 1. 先跑本仓库内置精确检索（至少一次）：
-- `python3 /path/to/context-mesh-foundry/scripts/context_cli.py search "<query>" --limit 20 --literal`
+- `python3 /path/to/ContextGO/scripts/context_cli.py search "<query>" --limit 20 --literal`
 2. 未命中再补本地语义检索（可选）：
-- `python3 /path/to/context-mesh-foundry/scripts/context_cli.py semantic "<query>" --limit 5`
+- `python3 /path/to/ContextGO/scripts/context_cli.py semantic "<query>" --limit 5`
 3. 基于命中结果缩小范围后，才允许 `ls`/`rg` 扫描代码目录。
 4. 禁止模式：未预热就直接穷举 `~/`、`/Volumes/*`、或其他大目录。
 

@@ -14,7 +14,7 @@
 ## What Shipped
 
 - 重写了 README，统一商业叙事、安装路径、命令矩阵与 FAQ。
-- 保留兼容运行时目录 `~/.local/share/context-mesh-foundry` 和 `com.contextmesh.*` 服务标签，避免破坏升级。
+- 默认运行时目录切换到 `~/.local/share/contextgo`，服务标签切换到 `com.contextgo.*`。
 - 重新梳理了 Go scanner 的 query 窗口与噪声规则，减少 direct native-scan 的空结果。
 - 给 `context_native.py` 增加了 native health probe 缓存，避免 `health` 被重复 probe 拉慢。
 - benchmark 里把原“native”重新定义为 `native-wrapper`，明确它测的是子进程包装层成本，而不是纯 Go/Rust 核心执行时间。
@@ -56,9 +56,9 @@ go test ./...
 
 品牌已改为 `ContextGO`，但为了平滑升级，以下兼容项暂时保留：
 
-- 安装目录：`~/.local/share/context-mesh-foundry`
-- systemd/launchd 标签：`com.contextmesh.daemon` / `com.contextmesh.healthcheck`
-- 环境变量前缀：`CONTEXT_MESH_*`
+- 安装目录：`~/.local/share/contextgo`
+- systemd/launchd 标签：`com.contextgo.daemon` / `com.contextgo.healthcheck`
+- 环境变量前缀：`CONTEXTGO_*`
 
 这样可以确保旧安装态不必一次性重做，也方便出现问题时快速回滚。
 

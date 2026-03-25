@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Smoke-test the installed Context Mesh runtime."""
+"""Smoke-test the installed ContextGO runtime."""
 
 from __future__ import annotations
 
@@ -10,16 +10,13 @@ from pathlib import Path
 
 
 def resolve_install_root() -> Path:
-    explicit = os.environ.get("CONTEXT_MESH_INSTALL_ROOT") or os.environ.get("CMF_INSTALL_ROOT")
+    explicit = os.environ.get("CONTEXTGO_INSTALL_ROOT") or os.environ.get("CGO_INSTALL_ROOT")
     if explicit:
         base = Path(explicit).expanduser()
         return base if base.name == "scripts" else base / "scripts"
 
-    primary_root = Path.home() / ".local" / "share" / "context-mesh-foundry" / "scripts"
-    fallback_root = Path.home() / ".local" / "share" / "contextmesh" / "scripts"
-    if (primary_root / "context_cli.py").exists() or not fallback_root.exists():
-        return primary_root
-    return fallback_root
+    primary_root = Path.home() / ".local" / "share" / "contextgo" / "scripts"
+    return primary_root
 
 
 INSTALL_ROOT = resolve_install_root()

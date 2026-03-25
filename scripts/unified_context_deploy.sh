@@ -5,8 +5,8 @@ umask 077
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 HOME_DIR="${HOME:-$(cd ~ && pwd)}"
-INSTALL_ROOT="${CONTEXT_MESH_INSTALL_ROOT:-${CMF_INSTALL_ROOT:-$HOME_DIR/.local/share/context-mesh-foundry}}"
-UNIFIED_CONTEXT_STORAGE_ROOT="${UNIFIED_CONTEXT_STORAGE_ROOT:-${CONTEXT_MESH_STORAGE_ROOT:-${OPENVIKING_STORAGE_ROOT:-$HOME_DIR/.unified_context_data}}}"
+INSTALL_ROOT="${CONTEXTGO_INSTALL_ROOT:-${CGO_INSTALL_ROOT:-$HOME_DIR/.local/share/contextgo}}"
+UNIFIED_CONTEXT_STORAGE_ROOT="${UNIFIED_CONTEXT_STORAGE_ROOT:-${CONTEXTGO_STORAGE_ROOT:-$HOME_DIR/.contextgo}}"
 PATCH_LAUNCHD="${PATCH_LAUNCHD:-1}"
 RELOAD_LAUNCHD="${RELOAD_LAUNCHD:-1}"
 APPLY_CONTEXT_POLICY="${APPLY_CONTEXT_POLICY:-1}"
@@ -54,8 +54,8 @@ if [ "$APPLY_CONTEXT_POLICY" = "1" ] && [ -f "$REPO_ROOT/scripts/apply_context_f
 fi
 
 if [ "$PATCH_LAUNCHD" = "1" ] && command -v launchctl >/dev/null 2>&1; then
-export CMF_INSTALL_ROOT="$INSTALL_ROOT"
-export CONTEXT_MESH_INSTALL_ROOT="$INSTALL_ROOT"
+export CGO_INSTALL_ROOT="$INSTALL_ROOT"
+export CONTEXTGO_INSTALL_ROOT="$INSTALL_ROOT"
 export UNIFIED_CONTEXT_STORAGE_ROOT
 python3 - <<'PY'
 import plistlib
@@ -66,7 +66,7 @@ import shutil
 
 home = Path.home()
 launch = home / 'Library' / 'LaunchAgents'
-install_root = Path(os.environ['CMF_INSTALL_ROOT'])
+install_root = Path(os.environ['CGO_INSTALL_ROOT'])
 script_dir = install_root / 'scripts'
 template_dir = install_root / 'templates' / 'launchd'
 launch.mkdir(parents=True, exist_ok=True)
@@ -87,40 +87,40 @@ else:
 
 patches = [
     (
-        template_dir / 'com.contextmesh.daemon.plist',
-        launch / 'com.contextmesh.daemon.plist',
+        template_dir / 'com.contextgo.daemon.plist',
+        launch / 'com.contextgo.daemon.plist',
         _daemon_program_args,
         str(script_dir),
         {
             'PATH': '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin',
-            'CONTEXT_MESH_ENABLE_SHELL_MONITOR': '0',
-            'CONTEXT_MESH_ENABLE_OPENCODE_MONITOR': '0',
-            'CONTEXT_MESH_ENABLE_KILO_MONITOR': '0',
-            'CONTEXT_MESH_ENABLE_REMOTE_SYNC': '0',
-            'CONTEXT_MESH_POLL_INTERVAL_SEC': '180',
-            'CONTEXT_MESH_FAST_POLL_INTERVAL_SEC': '20',
-            'CONTEXT_MESH_IDLE_SLEEP_CAP_SEC': '600',
-            'CONTEXT_MESH_CODEX_SESSION_SCAN_INTERVAL_SEC': '300',
-            'CONTEXT_MESH_CLAUDE_TRANSCRIPT_SCAN_INTERVAL_SEC': '300',
-            'CONTEXT_MESH_ANTIGRAVITY_SCAN_INTERVAL_SEC': '300',
-            'CONTEXT_MESH_SUSPEND_ANTIGRAVITY_WHEN_BUSY': '1',
-            'CONTEXT_MESH_ANTIGRAVITY_BUSY_LS_THRESHOLD': '2',
-            'CONTEXT_MESH_ANTIGRAVITY_INGEST_MODE': 'final_only',
-            'CONTEXT_MESH_ANTIGRAVITY_QUIET_SEC': '240',
-            'CONTEXT_MESH_ANTIGRAVITY_MIN_DOC_BYTES': '500',
-            'CONTEXT_MESH_CYCLE_BUDGET_SEC': '8',
-            'CONTEXT_MESH_INDEX_SYNC_MIN_INTERVAL_SEC': '20',
-            'CONTEXT_MESH_ERROR_BACKOFF_MAX_SEC': '30',
-            'CONTEXT_MESH_LOOP_JITTER_SEC': '0.7',
+            'CONTEXTGO_ENABLE_SHELL_MONITOR': '0',
+            'CONTEXTGO_ENABLE_OPENCODE_MONITOR': '0',
+            'CONTEXTGO_ENABLE_KILO_MONITOR': '0',
+            'CONTEXTGO_ENABLE_REMOTE_SYNC': '0',
+            'CONTEXTGO_POLL_INTERVAL_SEC': '180',
+            'CONTEXTGO_FAST_POLL_INTERVAL_SEC': '20',
+            'CONTEXTGO_IDLE_SLEEP_CAP_SEC': '600',
+            'CONTEXTGO_CODEX_SESSION_SCAN_INTERVAL_SEC': '300',
+            'CONTEXTGO_CLAUDE_TRANSCRIPT_SCAN_INTERVAL_SEC': '300',
+            'CONTEXTGO_ANTIGRAVITY_SCAN_INTERVAL_SEC': '300',
+            'CONTEXTGO_SUSPEND_ANTIGRAVITY_WHEN_BUSY': '1',
+            'CONTEXTGO_ANTIGRAVITY_BUSY_LS_THRESHOLD': '2',
+            'CONTEXTGO_ANTIGRAVITY_INGEST_MODE': 'final_only',
+            'CONTEXTGO_ANTIGRAVITY_QUIET_SEC': '240',
+            'CONTEXTGO_ANTIGRAVITY_MIN_DOC_BYTES': '500',
+            'CONTEXTGO_CYCLE_BUDGET_SEC': '8',
+            'CONTEXTGO_INDEX_SYNC_MIN_INTERVAL_SEC': '20',
+            'CONTEXTGO_ERROR_BACKOFF_MAX_SEC': '30',
+            'CONTEXTGO_LOOP_JITTER_SEC': '0.7',
         },
     ),
     (
-        template_dir / 'com.contextmesh.healthcheck.plist',
-        launch / 'com.contextmesh.healthcheck.plist',
+        template_dir / 'com.contextgo.healthcheck.plist',
+        launch / 'com.contextgo.healthcheck.plist',
         ['/bin/bash', str(script_dir / 'context_healthcheck.sh'), '--quiet'],
         None,
         {
-            'UNIFIED_CONTEXT_STORAGE_ROOT': os.environ.get('UNIFIED_CONTEXT_STORAGE_ROOT', str(home / '.unified_context_data')),
+            'UNIFIED_CONTEXT_STORAGE_ROOT': os.environ.get('UNIFIED_CONTEXT_STORAGE_ROOT', str(home / '.contextgo')),
         },
     ),
 ]
@@ -156,7 +156,7 @@ import subprocess, time, urllib.request
 from pathlib import Path
 home = Path.home()
 uid_num = "${UID_NUM}"
-labels = ["com.contextmesh.daemon", "com.contextmesh.healthcheck"]
+labels = ["com.contextgo.daemon", "com.contextgo.healthcheck"]
 
 
 def run(cmd, timeout=8):
@@ -199,7 +199,7 @@ for label in labels:
         raise SystemExit(1)
     run(['launchctl', 'kickstart', f'gui/{uid_num}/{label}'], timeout=5)
     print(f'[deploy] reloaded launchd: {label}')
-    if label == 'com.contextmesh.daemon' and not wait_process('context_daemon.py|viking_daemon.py'):
+    if label == 'com.contextgo.daemon' and not wait_process('context_daemon.py'):
         print('[deploy] ERROR: context daemon not detected after reload')
         raise SystemExit(1)
 PY

@@ -36,15 +36,13 @@ ContextGO 解决的是四个直接问题：
 ## 10 分钟上线
 
 ```bash
-git clone https://github.com/dunova/context-mesh-foundry.git
-cd context-mesh-foundry
+git clone https://github.com/dunova/ContextGO.git
+cd ContextGO
 cp .env.example .env
 bash scripts/unified_context_deploy.sh
 python3 scripts/context_cli.py health
 python3 scripts/context_cli.py smoke
 ```
-
-当前品牌名已切到 `ContextGO`，但 GitHub 仓库 slug 如未在 GitHub 后台重命名，仍会暂时保持 `context-mesh-foundry`。
 
 ## 统一命令
 
@@ -63,13 +61,13 @@ python3 scripts/context_cli.py native-scan --backend auto --threads 4
 
 ## 部署与运行时
 
-- 默认安装目录：`~/.local/share/context-mesh-foundry`
-- 默认数据目录：`~/.unified_context_data`
-- 本地服务标签：`com.contextmesh.daemon`、`com.contextmesh.healthcheck`
+- 默认安装目录：`~/.local/share/contextgo`
+- 默认数据目录：`~/.contextgo`
+- 本地服务标签：`com.contextgo.daemon`、`com.contextgo.healthcheck`
 - 默认远程同步：关闭
 - 默认信任边界：本机文件系统
 
-这里刻意保留了旧目录名与服务标签，以确保现有安装态可平滑升级、可回滚。
+默认主链现已统一到 `ContextGO` 目录、标签与命令。
 
 ## 验证矩阵
 
@@ -148,15 +146,15 @@ ContextGO 适合作为以下场景的内部产品：
 
 当前默认不需要。精确索引、结构化 snippet、SQLite 回退和本地记忆已经覆盖主需求。只有当你要处理超长文本块、跨语义弱匹配、跨知识域召回时，才值得评估可选向量层。
 
-### 为什么还保留 `context-mesh-foundry` 路径和 `contextmesh` 服务名？
+### 为什么现在只应该看到 ContextGO？
 
-为了升级平滑和可回滚。品牌可以切到 `ContextGO`，运行时兼容路径不必在同一天全部打断。
+因为主链已经开始全面切换到 `ContextGO`，后续会继续移除剩余兼容命名与旧桥接痕迹。
 
 ## 版本
 
 - 当前发布版本：`0.6.1`
-- 本轮发布说明：[`docs/RELEASE_NOTES_0.6.1.md`](/Volumes/AI/GitHub/context-mesh-foundry/docs/RELEASE_NOTES_0.6.1.md)
-- 历史变更：[`CHANGELOG.md`](/Volumes/AI/GitHub/context-mesh-foundry/CHANGELOG.md)
+- 本轮发布说明：[`docs/RELEASE_NOTES_0.6.1.md`](/Volumes/AI/GitHub/ContextGO/docs/RELEASE_NOTES_0.6.1.md)
+- 历史变更：[`CHANGELOG.md`](/Volumes/AI/GitHub/ContextGO/CHANGELOG.md)
 
 ## English Snapshot
 

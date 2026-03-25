@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Helpers for invoking native Context Mesh prototypes."""
+"""Helpers for invoking ContextGO native prototypes."""
 
 from __future__ import annotations
 
@@ -23,8 +23,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 NATIVE_ROOT = REPO_ROOT / "native"
 RUST_PROJECT = NATIVE_ROOT / "session_scan"
 GO_PROJECT = NATIVE_ROOT / "session_scan_go"
-DEFAULT_TARGET_DIR = env_str("CONTEXT_MESH_NATIVE_TARGET_DIR", default="/tmp/context_mesh_target")
-NATIVE_HEALTH_CACHE_TTL_SEC = env_int("CONTEXT_MESH_NATIVE_HEALTH_CACHE_TTL_SEC", default=30, minimum=0)
+DEFAULT_TARGET_DIR = env_str("CONTEXTGO_NATIVE_TARGET_DIR", default="/tmp/contextgo_target")
+NATIVE_HEALTH_CACHE_TTL_SEC = env_int("CONTEXTGO_NATIVE_HEALTH_CACHE_TTL_SEC", default=30, minimum=0)
 NATIVE_HEALTH_CACHE_PATH = Path(DEFAULT_TARGET_DIR) / "native_health_cache.json"
 
 
