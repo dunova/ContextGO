@@ -76,3 +76,18 @@ func TestSummarize(t *testing.T) {
 		}
 	}
 }
+
+func TestShouldSkipRecordType(t *testing.T) {
+	if !shouldSkipRecordType(map[string]any{
+		"type": "response_item",
+		"payload": map[string]any{"type": "function_call_output"},
+	}) {
+		t.Fatalf("expected function_call_output record to be skipped")
+	}
+	if shouldSkipRecordType(map[string]any{
+		"type": "response_item",
+		"payload": map[string]any{"type": "message"},
+	}) {
+		t.Fatalf("did not expect normal message record to be skipped")
+	}
+}
