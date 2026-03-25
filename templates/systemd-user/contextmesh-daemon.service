@@ -5,7 +5,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=%h/.local/share/context-mesh-foundry/scripts
-Environment=VIKING_ENABLE_REMOTE_SYNC=0
+Environment=CONTEXT_MESH_ENABLE_REMOTE_SYNC=0
 ExecStart=/usr/bin/env python3 %h/.local/share/context-mesh-foundry/scripts/context_daemon.py
 Restart=always
 RestartSec=3
