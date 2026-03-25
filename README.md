@@ -14,7 +14,7 @@
 Context Mesh Foundry (CMF) 是一个**本地优先、无 MCP 依赖、零 Docker 运行**的上下文持久层。它将三个子系统缝合成统一的记忆网格：
 
 1. **recall.py** — 跨所有 AI 会话历史的混合搜索（SQLite 索引 + 正则）
-2. **context_cli.py** — 轻量 CLI，支持 search / semantic / save / health — **默认入口**
+2. **context_cli.py** — 轻量统一 CLI，支持 `search / semantic / save / export / import / serve / onecontext-maintain / health` — **默认入口**
 3. **viking_daemon.py** — 后台守护进程，监控终端/AI 历史并将清洗后的内容导出到本地存储。
 
 ### 🚀 零 Docker / 纯 Python 协议
@@ -47,10 +47,9 @@ Context Mesh Foundry (CMF) 是一个**本地优先、无 MCP 依赖、零 Docker
                ▼
 ┌─────────────────────────────────────────────┐
 │          context_cli.py (CLI 入口)           │
-│ • search: recall.py → 本地文件扫描           │
-│ • semantic: 语义匹配 (可选对接 OpenViking)   │
-│ • save: 持久化保存关键决策与约束             │
-│ • health: 全栈健康自检                       │
+│ • search / semantic / save / export / import│
+│ • serve / onecontext-maintain / health      │
+│ • 统一入口，legacy wrapper 仅作兼容          │
 └──────────────┬──────────────────────────────┘
                │
        ┌───────┴───────┐
@@ -99,9 +98,9 @@ graph TD
 
 | 脚本 | 用途 |
 |--------|---------|
-| `context_cli.py` | **默认 CLI 入口** — 负责搜索、语义查询、保存记忆和健康检查 |
+| `context_cli.py` | **默认统一入口** — 搜索、语义查询、保存、导入导出、viewer、maintenance、健康检查 |
 | `viking_daemon.py` | 后台守护进程：实时监控 → 脱敏清洗 → 自动归档 |
-| `openviking_mcp.py` | 旧版 MCP 兼容层 (保留作为参考，非默认路径) |
+| `openviking_mcp.py` | 可选 legacy MCP 兼容层，核心逻辑已复用共享运行时 |
 | `context_healthcheck.sh` | 针对整个上下文系统栈的全面健康检查 |
 | `start_openviking.sh` | 安全启动 OpenViking 服务的脚本 (处理端口、配置、重试) |
 | `unified_context_deploy.sh` | 部署工具：同步脚本、安装 launchd/systemd、自动重载 |
@@ -112,11 +111,11 @@ graph TD
 | 脚本 | 用途 |
 |--------|---------|
 | `memory_index.py` | 本地记忆文件的索引、去重与元数据更新 |
-| `memory_viewer.py` | 本地记忆浏览器，用于查看和搜索已存的上下文 |
+| `memory_viewer.py` | viewer 实现模块；推荐通过 `context_cli.py serve` 启动 |
 | `memory_hit_first_regression.py` | 回归测试套件，验证检索命中的准确度 |
-| `export_memories.py` | 将本地记忆导出为可迁移格式 |
-| `import_memories.py` | 从备份导入历史记忆 |
-| `start_memory_viewer.sh` | 启动记忆浏览器 |
+| `export_memories.py` | legacy wrapper；推荐使用 `context_cli.py export` |
+| `import_memories.py` | legacy wrapper；推荐使用 `context_cli.py import` |
+| `start_memory_viewer.sh` | legacy wrapper；推荐使用 `context_cli.py serve` |
 
 ### 上下文优先策略 (Context-First Policy)
 
@@ -131,8 +130,8 @@ graph TD
 
 | 脚本 | 用途 |
 |--------|---------|
-| `onecontext_maintenance.py` | OneContext (旧版) 数据维护工具 |
-| `run_onecontext_maintenance.sh` | 上述工具的 Wrapper 脚本 |
+| `onecontext_maintenance.py` | OneContext 维护实现；推荐通过 `context_cli.py onecontext-maintain` 调用 |
+| `run_onecontext_maintenance.sh` | legacy wrapper；转发到统一 CLI |
 | `patch_openviking_semantic_processor.py` | 针对 VLM 的可选静默补丁 |
 
 ## 系统要求
@@ -178,6 +177,13 @@ python3 scripts/context_cli.py search "身份验证 bug" --type all --limit 20 -
 
 # 语义检索
 python3 scripts/context_cli.py semantic "数据库配置决策" --limit 5
+
+# 导出 / 导入索引记忆
+python3 scripts/context_cli.py export "" /tmp/cmf-export.json --limit 1000
+python3 scripts/context_cli.py import /tmp/cmf-export.json
+
+# 启动本地 viewer
+python3 scripts/context_cli.py serve --host 127.0.0.1 --port 37677
 ```
 
 ## 守护进程工作原理
@@ -228,7 +234,7 @@ Modern AI-assisted development spawns many parallel sessions — Claude Code, Co
 Context Mesh Foundry (CMF) is a **local-first, MCP-free, and Zero-Docker** context persistence layer. It weaves together three subsystems into a unified memory mesh:
 
 1. **recall.py** — Hybrid search across all AI session histories (SQLite index + regex)
-2. **context_cli.py** — Lightweight CLI for search, semantic query, save, and health check — the **default entry point**
+2. **context_cli.py** — Lightweight unified CLI for `search / semantic / save / export / import / serve / onecontext-maintain / health` — the **default entry point**
 3. **viking_daemon.py** — Background daemon that watches terminal/AI histories and exports sanitized markdown to local storage.
 
 ### 🚀 Zero-Docker / Pure-Python Operation
@@ -261,10 +267,9 @@ Blind whole-disk scans (`~/`, `/Volumes/*`) without prior recall are **forbidden
                ▼
 ┌─────────────────────────────────────────────┐
 │          context_cli.py (CLI Gateway)       │
-│ • search: recall.py → Local File Scan       │
-│ • semantic: Semantic match (OpenViking opt) │
-│ • save: Persist key decisions / constraints │
-│ • health: Full-stack health check           │
+│ • search / semantic / save / export / import│
+│ • serve / onecontext-maintain / health      │
+│ • Unified entry; legacy wrappers stay thin  │
 └──────────────┬──────────────────────────────┘
                │
        ┌───────┴───────┐
@@ -314,9 +319,9 @@ When used with the [GSD workflow](https://github.com/dunova/get-shit-done) (`dis
 
 | Script | Purpose |
 |--------|---------|
-| `context_cli.py` | **Default CLI entry point** — search, semantic, save, health |
+| `context_cli.py` | **Default unified entry point** — search, semantic, save, import/export, viewer, maintenance, health |
 | `viking_daemon.py` | Background daemon: watch → sanitize → export |
-| `openviking_mcp.py` | Legacy MCP bridge (kept for reference, not the default path) |
+| `openviking_mcp.py` | Optional legacy MCP bridge; core logic now reuses shared runtime helpers |
 | `context_healthcheck.sh` | Comprehensive health checks for the whole stack |
 | `start_openviking.sh` | Start OpenViking safely (ports, config, retries) |
 | `unified_context_deploy.sh` | Deploy: sync scripts/skills, patch launchd, reload |
@@ -327,11 +332,11 @@ When used with the [GSD workflow](https://github.com/dunova/get-shit-done) (`dis
 | Script | Purpose |
 |--------|---------|
 | `memory_index.py` | Local memory indexing and deduplication |
-| `memory_viewer.py` | Browse and inspect stored memories |
+| `memory_viewer.py` | Viewer implementation; prefer `context_cli.py serve` |
 | `memory_hit_first_regression.py` | Regression suite for retrieval quality |
-| `export_memories.py` | Export memories to portable format |
-| `import_memories.py` | Import memories from backup |
-| `start_memory_viewer.sh` | Launch memory viewer |
+| `export_memories.py` | Legacy wrapper; prefer `context_cli.py export` |
+| `import_memories.py` | Legacy wrapper; prefer `context_cli.py import` |
+| `start_memory_viewer.sh` | Legacy wrapper; prefer `context_cli.py serve` |
 
 ### Context-First Policy
 
@@ -346,8 +351,8 @@ When used with the [GSD workflow](https://github.com/dunova/get-shit-done) (`dis
 
 | Script | Purpose |
 |--------|---------|
-| `onecontext_maintenance.py` | OneContext data maintenance |
-| `run_onecontext_maintenance.sh` | Wrapper for above |
+| `onecontext_maintenance.py` | OneContext maintenance implementation; prefer `context_cli.py onecontext-maintain` |
+| `run_onecontext_maintenance.sh` | Legacy wrapper forwarding to unified CLI |
 | `patch_openviking_semantic_processor.py` | Optional VLM quiet patch |
 
 ## Requirements

@@ -11,11 +11,12 @@
 • 统一输出 ID、时序、详情，支撑三层检索。  
 
 3. 检索层。  
-• `openviking_mcp.py` 暴露 MCP 工具。  
-• recall-first 走精确检索，OpenViking 走语义检索，legacy shim 只做回退。  
+• `context_cli.py` 作为统一入口，承接搜索、导入导出、viewer、maintenance。  
+• `openviking_mcp.py` 仅保留为 optional legacy 兼容层。  
+• recall-first 走精确检索，OpenViking 走语义检索。  
 
 4. 交互层。  
-• `memory_viewer.py` 提供 `search/timeline/batch` API。  
+• `memory_viewer.py` 提供 `search/timeline/batch` API，但默认由 `context_cli.py serve` 拉起。  
 • SSE 事件流可实时看索引状态。  
 
 5. 运维层。  
@@ -27,8 +28,8 @@
 1. 会话输入 -> `viking_daemon.py`。  
 2. 脱敏/私密过滤 -> 历史文件落盘。  
 3. `memory_index.py` 同步索引。  
-4. MCP 调用 `search -> timeline -> get_observations`。  
-5. 必要时并行调用 `search_onecontext_history` + `query_viking_memory`。  
+4. `context_cli.py` 或 legacy wrapper 调用索引/检索能力。  
+5. 必要时再走 MCP 兼容层或 OpenViking 语义检索。  
 
 ## 设计要点
 
