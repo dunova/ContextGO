@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Unit tests for context_native module."""
+
 from __future__ import annotations
 
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
-import sys
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:

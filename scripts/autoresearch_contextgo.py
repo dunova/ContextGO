@@ -4,12 +4,11 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime
 import json
-from pathlib import Path
 import subprocess
 import sys
-
+from datetime import datetime
+from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ARTIFACT_ROOT = REPO_ROOT / "artifacts" / "autoresearch"
@@ -98,9 +97,7 @@ def _native_text_eval(backend: str, query: str) -> dict:
 
 def _smoke_eval() -> tuple[int, dict, int]:
     for _ in range(2):
-        rc, out, err = run_cmd(
-            [sys.executable, str(REPO_ROOT / "scripts" / "context_cli.py"), "smoke"]
-        )
+        rc, out, err = run_cmd([sys.executable, str(REPO_ROOT / "scripts" / "context_cli.py"), "smoke"])
         payload = _json_from_text(out or err)
         summary = payload.get("summary") or {}
         if rc == 0 and summary.get("status") == "pass":
@@ -246,9 +243,7 @@ def append_log(round_no: int, payload: dict, decision: str, note: str) -> None:
             existing_metrics = []
     current_round = payload.get("round", round_no)
     existing_metrics = [
-        item
-        for item in existing_metrics
-        if item.get("round") != current_round and item.get("health_bytes") is not None
+        item for item in existing_metrics if item.get("round") != current_round and item.get("health_bytes") is not None
     ]
     existing_metrics.extend(metrics)
     existing_metrics.sort(key=lambda item: item.get("round", 0))
@@ -256,6 +251,7 @@ def append_log(round_no: int, payload: dict, decision: str, note: str) -> None:
         existing_metrics = existing_metrics[-MAX_METRIC_HISTORY:]
     METRICS_PATH.write_text(json.dumps(existing_metrics, ensure_ascii=False, indent=2), encoding="utf-8")
     if existing_metrics:
+
         def _metric_value(item: dict, key: str, default: int) -> int:
             value = item.get(key)
             return default if value is None else int(value)

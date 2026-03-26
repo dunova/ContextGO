@@ -298,3 +298,48 @@ func TestCollectFilesFindsJsonlFiles(t *testing.T) {
 		t.Fatalf("unexpected source %q", items[0].Source)
 	}
 }
+
+// ── Benchmarks ────────────────────────────────────────────────────────────────
+
+func BenchmarkProcessFile(b *testing.B) {
+	// Create a temp file with realistic content.
+	tmp, err := os.CreateTemp(b.TempDir(), "bench*.jsonl")
+	if err != nil {
+		b.Fatalf("create temp file: %v", err)
+	}
+	defer tmp.Close()
+
+	line, err := json.Marshal(map[string]any{
+		"type": "event_msg",
+		"payload": map[string]any{
+			"type":    "agent_message",
+			"message": "The session_scan_go tool performs high-performance parallel scanning of JSONL session files.",
+		},
+	})
+	if err != nil {
+		b.Fatalf("marshal line: %v", err)
+	}
+	for i := 0; i < 100; i++ {
+		if _, err := tmp.Write(append(line, '\n')); err != nil {
+			b.Fatalf("write temp file: %v", err)
+		}
+	}
+	if err := tmp.Sync(); err != nil {
+		b.Fatalf("sync temp file: %v", err)
+	}
+
+	sc := NewSessionScanner(NewNoiseFilter(DefaultNoiseMarkers), defaultSnippetLimit)
+	item := WorkItem{Source: "bench", Path: tmp.Name()}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		sc.ProcessFile(item, "session_scan_go")
+	}
+}
+
+func BenchmarkClipSnippet(b *testing.B) {
+	text := "some long string with mixed English and 中文内容 for testing snippet extraction"
+	for i := 0; i < b.N; i++ {
+		clipSnippet(text, 30, 50, 50)
+	}
+}

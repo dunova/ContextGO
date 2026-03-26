@@ -10,7 +10,6 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-
 CLI_PATH = Path(__file__).resolve().parent / "context_cli.py"
 
 
@@ -36,7 +35,11 @@ def check_cli_fixed_cases() -> list[Check]:
     fixed_inputs = [
         ("cli-health", ["health"], '"all_ok": true'),
         ("cli-keyword", ["search", "NotebookLM", "--limit", "5", "--literal"], "notebooklm"),
-        ("cli-long-query", ["search", "继续搜索 GitHub 和 X 研究 notebookLM 的终端调用方案", "--limit", "5"], "notebooklm"),
+        (
+            "cli-long-query",
+            ["search", "继续搜索 GitHub 和 X 研究 notebookLM 的终端调用方案", "--limit", "5"],
+            "notebooklm",
+        ),
         ("cli-date", ["search", "2026-03-06", "--limit", "5"], "2026-03-06"),
     ]
     for name, args, marker in fixed_inputs:
@@ -55,23 +58,25 @@ def main() -> int:
     passed = sum(1 for item in checks if item.passed)
     failed = len(checks) - passed
 
-    print(json.dumps(
-        {
-            "passed": passed,
-            "failed": failed,
-            "checks": [
-                {
-                    "name": item.name,
-                    "passed": item.passed,
-                    "detail": item.detail,
-                    "elapsed_sec": round(item.elapsed_sec, 3),
-                }
-                for item in checks
-            ],
-        },
-        ensure_ascii=False,
-        indent=2,
-    ))
+    print(
+        json.dumps(
+            {
+                "passed": passed,
+                "failed": failed,
+                "checks": [
+                    {
+                        "name": item.name,
+                        "passed": item.passed,
+                        "detail": item.detail,
+                        "elapsed_sec": round(item.elapsed_sec, 3),
+                    }
+                    for item in checks
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
     return 0 if failed == 0 else 1
 
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Unit tests for session_index module."""
+
 from __future__ import annotations
 
 import json
@@ -97,9 +98,7 @@ class SessionIndexTests(unittest.TestCase):
                                 "payload": {
                                     "type": "message",
                                     "role": "assistant",
-                                    "content": [
-                                        {"type": "output_text", "text": "NotebookLM 的真实历史结论已经确认。"}
-                                    ],
+                                    "content": [{"type": "output_text", "text": "NotebookLM 的真实历史结论已经确认。"}],
                                 },
                             }
                         ),
@@ -148,7 +147,9 @@ class SessionIndexTests(unittest.TestCase):
             missing_path = root / "missing.jsonl"
             with mock.patch.object(session_index, "_home", return_value=root):
                 with mock.patch.dict(os.environ, {session_index.SESSION_DB_PATH_ENV: str(db_path)}, clear=False):
-                    with mock.patch.object(session_index, "_iter_sources", return_value=[("codex_session", missing_path)]):
+                    with mock.patch.object(
+                        session_index, "_iter_sources", return_value=[("codex_session", missing_path)]
+                    ):
                         stats = session_index.sync_session_index(force=True)
                         self.assertGreaterEqual(stats["scanned"], 1)
                         self.assertEqual(stats["added"], 0)
@@ -156,25 +157,23 @@ class SessionIndexTests(unittest.TestCase):
     def test_native_search_rows_when_enabled(self) -> None:
         mock_result = mock.Mock()
         mock_result.returncode = 0
-        with mock.patch.object(session_index, "EXPERIMENTAL_SEARCH_BACKEND", "go"):
-            with mock.patch.object(
-                session_index.context_native,
-                "run_native_scan",
-                return_value=mock_result,
-            ) as mock_run:
-                with mock.patch.object(
-                    session_index.context_native,
-                    "extract_matches",
-                    return_value=[
-                        {
-                            "source": "codex_session",
-                            "session_id": "abc",
-                            "path": "/tmp/a.jsonl",
-                            "snippet": "NotebookLM match",
-                        }
-                    ],
-                ):
-                    rows = session_index._native_search_rows("NotebookLM", limit=5)
+        with mock.patch.object(session_index, "EXPERIMENTAL_SEARCH_BACKEND", "go"), mock.patch.object(
+            session_index.context_native,
+            "run_native_scan",
+            return_value=mock_result,
+        ) as mock_run, mock.patch.object(
+            session_index.context_native,
+            "extract_matches",
+            return_value=[
+                {
+                    "source": "codex_session",
+                    "session_id": "abc",
+                    "path": "/tmp/a.jsonl",
+                    "snippet": "NotebookLM match",
+                }
+            ],
+        ):
+            rows = session_index._native_search_rows("NotebookLM", limit=5)
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["session_id"], "abc")
         mock_run.assert_called_once()
@@ -208,14 +207,14 @@ class SessionIndexTests(unittest.TestCase):
     def test_iter_sources_can_use_native_inventory(self) -> None:
         mock_result = mock.Mock()
         mock_result.returncode = 0
-        with mock.patch.object(session_index, "EXPERIMENTAL_SYNC_BACKEND", "go"):
-            with mock.patch.object(session_index.context_native, "run_native_scan", return_value=mock_result) as mock_run:
-                with mock.patch.object(
-                    session_index.context_native,
-                    "inventory_items",
-                    return_value=[("codex_session", Path("/tmp/native.jsonl"))],
-                ):
-                    items = session_index._iter_sources()
+        with mock.patch.object(session_index, "EXPERIMENTAL_SYNC_BACKEND", "go"), mock.patch.object(
+            session_index.context_native, "run_native_scan", return_value=mock_result
+        ) as mock_run, mock.patch.object(
+            session_index.context_native,
+            "inventory_items",
+            return_value=[("codex_session", Path("/tmp/native.jsonl"))],
+        ):
+            items = session_index._iter_sources()
         self.assertEqual(items, [("codex_session", Path("/tmp/native.jsonl"))])
         mock_run.assert_called_once()
 
@@ -249,9 +248,7 @@ class SessionIndexTests(unittest.TestCase):
                     )
                     conn.commit()
                     conn.row_factory = sqlite3.Row
-                    docs = session_index._fetch_session_docs_by_paths(
-                        conn, ["/tmp/dedup.jsonl", "/tmp/dedup.jsonl"]
-                    )
+                    docs = session_index._fetch_session_docs_by_paths(conn, ["/tmp/dedup.jsonl", "/tmp/dedup.jsonl"])
                     self.assertIn(canonical, docs)
                     self.assertEqual(docs[canonical]["session_id"], "dedup")
                 finally:
@@ -287,9 +284,7 @@ class SessionIndexTests(unittest.TestCase):
                     )
                     conn.commit()
                     conn.row_factory = sqlite3.Row
-                    rows = [
-                        {"file_path": canonical, "snippet": "fallback snippet", "source_type": "native_session"}
-                    ]
+                    rows = [{"file_path": canonical, "snippet": "fallback snippet", "source_type": "native_session"}]
                     enriched = session_index._enrich_native_rows(rows, conn, ["NotebookLM"], limit=5)
                     self.assertEqual(enriched[0]["session_id"], "native-sample")
                     self.assertIn("NotebookLM", enriched[0]["snippet"])
@@ -394,20 +389,13 @@ class SessionIndexTests(unittest.TestCase):
 
     def test_build_snippet_prefers_conclusion_window(self) -> None:
         text = (
-            "NotebookLM 过程说明，先做预热。"
-            " 这里还是过程段。"
-            " 最终交付：NotebookLM 的真实结论已经确认，并已完成验证。"
+            "NotebookLM 过程说明，先做预热。 这里还是过程段。 最终交付：NotebookLM 的真实结论已经确认，并已完成验证。"
         )
         snippet = session_index._build_snippet(text, ["NotebookLM"])
         self.assertIn("最终交付", snippet)
 
     def test_build_snippet_prefers_summary_marker_without_term_hit(self) -> None:
-        text = (
-            "/workspace/ContextGO "
-            "一些过程说明。 "
-            "变更概览：统一默认安装目录与服务标签。 "
-            "后面还有更多细节。"
-        )
+        text = "/workspace/ContextGO 一些过程说明。 变更概览：统一默认安装目录与服务标签。 后面还有更多细节。"
         snippet = session_index._build_snippet(text, ["2026-03-25"])
         self.assertIn("变更概览", snippet)
 

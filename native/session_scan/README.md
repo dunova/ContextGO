@@ -103,6 +103,13 @@ CARGO_INCREMENTAL=0 cargo test
 
 `CARGO_INCREMENTAL=0` avoids lock-file issues on network file systems.
 
+## Benchmarks
+
+```bash
+cargo bench  # if benches exist
+cargo test -- --nocapture  # run tests with output
+```
+
 ## Performance notes
 
 - The scanner allocates one `BufReader` per file and processes lines

@@ -14,11 +14,10 @@ import statistics
 import subprocess
 import sys
 import tempfile
-import textwrap
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS_DIR = REPO_ROOT / "scripts"
@@ -145,9 +144,7 @@ def _prepare_fake_home(home: Path, query: str) -> None:
     )
     claude_history = home / ".claude" / "history.jsonl"
     claude_history.parent.mkdir(parents=True, exist_ok=True)
-    claude_history.write_text(
-        json.dumps({"text": f"{query} claude history"}, ensure_ascii=False), encoding="utf-8"
-    )
+    claude_history.write_text(json.dumps({"text": f"{query} claude history"}, ensure_ascii=False), encoding="utf-8")
     (home / ".local" / "state" / "opencode").mkdir(parents=True, exist_ok=True)
     (home / ".local" / "state" / "opencode" / "prompt-history.jsonl").write_text(
         json.dumps([{"prompt": f"{query} OpenCode"}], ensure_ascii=False), encoding="utf-8"
@@ -286,9 +283,7 @@ def _execute_mode(mode: str, args: argparse.Namespace) -> list[BenchmarkStats]:
     else:
         subprocess_env = os.environ.copy()
         pythonpath = subprocess_env.get("PYTHONPATH", "")
-        subprocess_env["PYTHONPATH"] = (
-            f"{SCRIPTS_DIR}{os.pathsep}{pythonpath}" if pythonpath else str(SCRIPTS_DIR)
-        )
+        subprocess_env["PYTHONPATH"] = f"{SCRIPTS_DIR}{os.pathsep}{pythonpath}" if pythonpath else str(SCRIPTS_DIR)
         _run_native_command([sys.executable, "-c", SYNC_ACTION_CODE], subprocess_env)
         cases = _build_native_cases(subprocess_env, args.query, args.search_limit)
 
@@ -355,14 +350,7 @@ def _print_comparison_text(comparisons: list[dict[str, float | None]]) -> None:
     if not comparisons:
         return
     print("\nBenchmark Comparison (python vs native-wrapper)")
-    header = (
-        "  "
-        + "name".ljust(32)
-        + "python".rjust(10)
-        + "native".rjust(10)
-        + "diff".rjust(10)
-        + "ratio".rjust(10)
-    )
+    header = "  " + "name".ljust(32) + "python".rjust(10) + "native".rjust(10) + "diff".rjust(10) + "ratio".rjust(10)
     print(header)
     for entry in comparisons:
         ratio = entry["mean_ratio"]
@@ -499,18 +487,13 @@ def main(argv: list[str] | None = None) -> int:
             }
             if args.mode == "both" and len(results_by_mode) == 2:
                 benchmark_payload = {
-                    mode: [stats.to_dict() for stats in stats_list]
-                    for mode, stats_list in results_by_mode
+                    mode: [stats.to_dict() for stats in stats_list] for mode, stats_list in results_by_mode
                 }
-                comparison = _build_comparison_summary(
-                    results_by_mode[0][1], results_by_mode[1][1]
-                )
+                comparison = _build_comparison_summary(results_by_mode[0][1], results_by_mode[1][1])
                 base_payload["benchmarks"] = benchmark_payload
                 base_payload["comparison"] = comparison
             else:
-                base_payload["benchmarks"] = [
-                    stats.to_dict() for stats in results_by_mode[0][1]
-                ]
+                base_payload["benchmarks"] = [stats.to_dict() for stats in results_by_mode[0][1]]
             print(json.dumps(base_payload, ensure_ascii=False, indent=2))
         else:
             for index, (mode, stats_list) in enumerate(results_by_mode):
@@ -521,10 +504,10 @@ def main(argv: list[str] | None = None) -> int:
                 for stats in stats_list:
                     _print_sample(f"{display_mode} · {stats.name}", stats.sample)
             if args.mode == "both" and len(results_by_mode) == 2:
-                print("\nNote: `native-wrapper` measures subprocess CLI/native-wrapper overhead, not pure Go/Rust core execution.")
-                comparisons = _build_comparison_summary(
-                    results_by_mode[0][1], results_by_mode[1][1]
+                print(
+                    "\nNote: `native-wrapper` measures subprocess CLI/native-wrapper overhead, not pure Go/Rust core execution."
                 )
+                comparisons = _build_comparison_summary(results_by_mode[0][1], results_by_mode[1][1])
                 _print_comparison_text(comparisons)
 
     return 0

@@ -4,13 +4,13 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import time
 import urllib.request
 import uuid
+from pathlib import Path
 
 
 def run_cmd(args: list[str], timeout: int = 60) -> tuple[int, str, str]:
@@ -65,11 +65,17 @@ def test_rw_cycle(cli_path: Path) -> dict:
         tmpdir = Path(tmpdir)
         export_path = tmpdir / "export.json"
         marker = f"smoke-{uuid.uuid4().hex[:12]}"
-        r1 = run_cmd([sys.executable, str(cli_path), "save", "--title", "smoke", "--content", marker, "--tags", "smoke"])
+        r1 = run_cmd(
+            [sys.executable, str(cli_path), "save", "--title", "smoke", "--content", marker, "--tags", "smoke"]
+        )
         r2 = run_cmd([sys.executable, str(cli_path), "semantic", marker, "--limit", "3"])
         r3 = run_cmd([sys.executable, str(cli_path), "export", marker, str(export_path), "--limit", "10"])
         export_payload = json.loads(export_path.read_text()) if export_path.exists() else {}
-        r4 = run_cmd([sys.executable, str(cli_path), "import", str(export_path), "--no-sync"]) if export_path.exists() else (1, "", "no export")
+        r4 = (
+            run_cmd([sys.executable, str(cli_path), "import", str(export_path), "--no-sync"])
+            if export_path.exists()
+            else (1, "", "no export")
+        )
         ok = (
             r1[0] == 0
             and r2[0] == 0

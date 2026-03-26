@@ -34,11 +34,11 @@ except ImportError:
     _resource_mod = None  # type: ignore[assignment]
 
 try:
-    from memory_index import strip_private_blocks, sync_index_from_storage
     from context_config import env_bool, env_float, env_int, env_str, storage_root
+    from memory_index import strip_private_blocks, sync_index_from_storage
 except ImportError:  # pragma: no cover - module import path compatibility
-    from .memory_index import strip_private_blocks, sync_index_from_storage  # type: ignore[import-not-found]
     from .context_config import env_bool, env_float, env_int, env_str, storage_root  # type: ignore[import-not-found]
+    from .memory_index import strip_private_blocks, sync_index_from_storage  # type: ignore[import-not-found]
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -47,6 +47,7 @@ except ImportError:  # pragma: no cover - module import path compatibility
 REMOTE_SYNC_URL = env_str("CONTEXTGO_REMOTE_URL", default="http://127.0.0.1:8090/api/v1")
 REMOTE_RESOURCE_ENDPOINT = f"{REMOTE_SYNC_URL.rstrip('/')}/resources"
 REMOTE_HISTORY_TARGET = "contextgo://resources/shared/history"
+
 
 def _mesh_env_names(name: str) -> tuple[str]:
     return (f"CONTEXTGO_{name}",)
@@ -66,6 +67,7 @@ def mesh_env_float(name: str, default: float, **kwargs: Any) -> float:
 
 def mesh_env_str(name: str, default: str) -> str:
     return env_str(*_mesh_env_names(name), default=default)
+
 
 # Security: require HTTPS for non-localhost URLs to prevent MITM
 _ov_host = REMOTE_SYNC_URL.split("://", 1)[-1].split("/", 1)[0].split(":")[0]
@@ -237,7 +239,10 @@ SECRET_REPLACEMENTS = [
     # AWS access keys
     (re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{12,}\b"), "AKIA***"),
     # PEM private key blocks
-    (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----"), "***PEM_KEY_REDACTED***"),
+    (
+        re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----"),
+        "***PEM_KEY_REDACTED***",
+    ),
 ]
 
 IGNORE_SHELL_CMD_PREFIXES = (
@@ -257,9 +262,7 @@ log_file = LOG_DIR / DAEMON_LOG_NAME
 logger = logging.getLogger(LOGGER_NAME)
 logger.setLevel(logging.INFO)
 
-_rfh = logging.handlers.RotatingFileHandler(
-    str(log_file), maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
-)
+_rfh = logging.handlers.RotatingFileHandler(str(log_file), maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8")
 _rfh.setFormatter(logging.Formatter(LOG_FORMAT))
 logger.addHandler(_rfh)
 
@@ -528,7 +531,7 @@ class SessionTracker:
             return
 
         try:
-            with open(path, "r", encoding="utf-8", errors="replace") as f:
+            with open(path, encoding="utf-8", errors="replace") as f:
                 f.seek(last)
                 for line in f:
                     line = line.strip()
@@ -572,7 +575,7 @@ class SessionTracker:
                 continue
 
             try:
-                with open(path, "r", encoding="utf-8", errors="replace") as f:
+                with open(path, encoding="utf-8", errors="replace") as f:
                     f.seek(last)
                     for line in f:
                         parsed = self._parse_shell_line(source_name, line)
@@ -633,7 +636,7 @@ class SessionTracker:
                 continue
 
             try:
-                with open(path, "r", encoding="utf-8", errors="replace") as f:
+                with open(path, encoding="utf-8", errors="replace") as f:
                     f.seek(last)
                     for line in f:
                         line = line.strip()
@@ -651,9 +654,7 @@ class SessionTracker:
                         text = ""
                         if ptype == "message":
                             texts = [
-                                c.get("text", "")
-                                for c in payload.get("content", [])
-                                if c.get("type") == "output_text"
+                                c.get("text", "") for c in payload.get("content", []) if c.get("type") == "output_text"
                             ]
                             text = "\n".join(t for t in texts if t)
                         elif ptype == "reasoning":
@@ -691,9 +692,7 @@ class SessionTracker:
             or not self._cached_claude_transcript_files
         ):
             try:
-                session_files = glob.glob(
-                    os.path.join(CLAUDE_TRANSCRIPTS_DIR, "**", "ses_*.jsonl"), recursive=True
-                )
+                session_files = glob.glob(os.path.join(CLAUDE_TRANSCRIPTS_DIR, "**", "ses_*.jsonl"), recursive=True)
                 if len(session_files) > MAX_CLAUDE_TRANSCRIPT_FILES_PER_POLL:
                     session_files = sorted(
                         session_files,
@@ -748,7 +747,7 @@ class SessionTracker:
 
             messages_added = 0
             try:
-                with open(path, "r", encoding="utf-8", errors="replace") as f:
+                with open(path, encoding="utf-8", errors="replace") as f:
                     f.seek(last)
                     for raw in f:
                         raw = raw.strip()
@@ -906,7 +905,7 @@ class SessionTracker:
                     continue
 
             try:
-                with open(wt, "r", encoding="utf-8", errors="replace") as f:
+                with open(wt, encoding="utf-8", errors="replace") as f:
                     content = f.read(50_000)
                 content = self._sanitize_text(content)
                 if content:
@@ -923,9 +922,7 @@ class SessionTracker:
 
         if len(self.antigravity_sessions) > MAX_ANTIGRAVITY_SESSIONS:
             stale = [
-                (sid, meta.get("mtime", 0.0))
-                for sid, meta in self.antigravity_sessions.items()
-                if sid not in seen_sids
+                (sid, meta.get("mtime", 0.0)) for sid, meta in self.antigravity_sessions.items() if sid not in seen_sids
             ]
             stale.sort(key=lambda x: x[1])
             remove_n = len(self.antigravity_sessions) - MAX_ANTIGRAVITY_SESSIONS
@@ -1246,18 +1243,12 @@ class SessionTracker:
         current_hour = datetime.now().hour
         start_hour = NIGHT_POLL_START_HOUR % 24
         end_hour = NIGHT_POLL_END_HOUR % 24
-        is_night = (
-            start_hour > end_hour
-            and (current_hour >= start_hour or current_hour < end_hour)
-        ) or (
-            start_hour <= end_hour
-            and start_hour <= current_hour < end_hour
+        is_night = (start_hour > end_hour and (current_hour >= start_hour or current_hour < end_hour)) or (
+            start_hour <= end_hour and start_hour <= current_hour < end_hour
         )
 
         # Night mode: only throttle if no sessions are actively pending export
-        has_pending_sessions = any(
-            not v.get("exported") for v in self.sessions.values()
-        )
+        has_pending_sessions = any(not v.get("exported") for v in self.sessions.values())
         try:
             has_pending_files = PENDING_DIR.exists() and any(PENDING_DIR.glob("*.md"))
         except Exception:

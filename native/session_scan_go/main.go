@@ -1,12 +1,12 @@
-// Package main implements a high-performance scanner for Codex/Claude session
-// files.  It walks .json and .jsonl session directories in parallel, extracts
-// structured metadata (timestamps, session IDs, text snippets), suppresses
-// noise, and emits either a human-readable summary or a machine-readable JSON
-// report consumed by the Python layer of ContextGO.
+// Package main implements session_scan_go, a high-performance parallel scanner
+// for AI coding session files (JSONL format). It discovers, filters, and indexes
+// session content from Codex, Claude, and shell history sources.
 //
 // Usage:
 //
-//	session_scan_go --query "agent" --limit 20 --json
+//	session_scan_go [flags]
+//
+// See README.md for full documentation.
 package main
 
 import (

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Unit tests for context_core module."""
+
 from __future__ import annotations
 
 import tempfile
@@ -28,6 +29,7 @@ class ContextCoreTests(unittest.TestCase):
             )
             self.assertEqual(len(matches), 1)
             self.assertEqual(matches[0]["matched_in"], "content")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -3,25 +3,30 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime
 import json
 import os
-from pathlib import Path
 import re
 import sqlite3
 import time
-from typing import Any, Iterable
+from collections.abc import Iterable
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+from typing import Any
 
 try:
+    import context_native
     from context_config import env_int
     from memory_index import get_storage_root
-    import context_native
 except ImportError:  # pragma: no cover
+    from . import context_native  # type: ignore[import-not-found]
     from .context_config import env_int  # type: ignore[import-not-found]
     from .memory_index import get_storage_root  # type: ignore[import-not-found]
-    from . import context_native  # type: ignore[import-not-found]
 
+
+# ═══════════════════════════════════════════════════════════════
+# Section: Configuration
+# ═══════════════════════════════════════════════════════════════
 
 SESSION_DB_PATH_ENV = "CONTEXTGO_SESSION_INDEX_DB_PATH"
 MAX_CONTENT_CHARS = env_int("CONTEXTGO_SESSION_MAX_CONTENT_CHARS", default=24000, minimum=4000)
@@ -30,10 +35,60 @@ SOURCE_CACHE_TTL_SEC = env_int("CONTEXTGO_SOURCE_CACHE_TTL_SEC", default=10, min
 EXPERIMENTAL_SEARCH_BACKEND = os.environ.get("CONTEXTGO_EXPERIMENTAL_SEARCH_BACKEND", "").strip().lower()
 EXPERIMENTAL_SYNC_BACKEND = os.environ.get("CONTEXTGO_EXPERIMENTAL_SYNC_BACKEND", "").strip().lower()
 SESSION_INDEX_SCHEMA_VERSION = "2026-03-26-search-noise-v5"
+
+
+def _load_noise_config() -> dict:
+    """Load noise filter tables from config/noise_markers.json.
+
+    Falls back to empty lists when the config file is absent so the module
+    remains importable without the repository root present.
+    """
+    config_path = Path(__file__).parent.parent / "config" / "noise_markers.json"
+    if config_path.exists():
+        with open(config_path) as f:
+            return json.load(f)
+    return {
+        "search_noise_markers": [],
+        "native_noise_markers": [],
+        "text_noise_markers": [],
+        "text_noise_lower_markers": [],
+        "noise_prefixes": [],
+    }
+
+
+_NOISE_CONFIG = _load_noise_config()
+
 STOPWORDS = {
-    "the", "and", "for", "with", "that", "this", "from", "into", "what", "when", "where",
-    "which", "who", "how", "please", "search", "session", "history", "continue", "find",
-    "继续", "搜索", "终端", "方案", "项目", "历史", "会话", "相关", "那个", "这个",
+    "the",
+    "and",
+    "for",
+    "with",
+    "that",
+    "this",
+    "from",
+    "into",
+    "what",
+    "when",
+    "where",
+    "which",
+    "who",
+    "how",
+    "please",
+    "search",
+    "session",
+    "history",
+    "continue",
+    "find",
+    "继续",
+    "搜索",
+    "终端",
+    "方案",
+    "项目",
+    "历史",
+    "会话",
+    "相关",
+    "那个",
+    "这个",
 }
 SOURCE_WEIGHT = {
     "codex_session": 40,
@@ -45,97 +100,18 @@ SOURCE_WEIGHT = {
     "shell_bash": 2,
 }
 _SOURCE_CACHE: dict[str, Any] = {"expires_at": 0.0, "items": [], "home": None}
-NATIVE_NOISE_MARKERS = (
-    "# agents.md instructions",
-    "### available skills",
-    "prompt engineer and agent skill optimizer",
-    "current skill name:",
-    "current description:",
-    "base directory for this skill:",
-    "hit-first query rules",
-    "default mode is `hybrid`",
-    "search past claude/codex sessions",
-    "query_viking_memory",
-    "onecontext search",
-    "name: openviking-memory-sync",
-    "name: recall",
-    "use when explicit /notebooklm",
-    "activates on explicit /notebooklm",
-    "automate google notebooklm",
-    "the user explicitly asks for this skill",
-    "query and upload to google notebooklm",
-    "python -m pytest",
-    "benchmarks/run.py",
-    "function_call_output",
-    "queue-operation",
-    "chunk id:",
-    "<instructions>",
-    "skill.md",
-)
+# Auto-generated from config/noise_markers.json — do not edit manually.
+# Run scripts/check_noise_sync.py to verify sync with Rust/Go backends.
+NATIVE_NOISE_MARKERS: tuple[str, ...] = tuple(_NOISE_CONFIG.get("native_noise_markers", []))
 
-SEARCH_NOISE_MARKERS = (
-    "hit-first query rules",
-    "current skill name:",
-    "current description:",
-    "base directory for this skill:",
-    "search past claude/codex sessions",
-    "query_viking_memory",
-    "onecontext search",
-    "name: openviking-memory-sync",
-    "name: recall",
-    "use when explicit /notebooklm",
-    "activates on explicit /notebooklm",
-    "automate google notebooklm",
-    "self.assert",
-    "python3 scripts/context_cli.py native-scan",
-    "build_query_terms",
-    "改动文件：",
-    "核心变化：",
-    "建议验证命令：",
-    "diff --git",
-    "@@",
-    "```bash",
-    "```python",
-    "launchctl list | egrep",
-    "继续完成了，但这轮我做了一个重要判断",
-    "实验性 native 热路径已经接上",
-    "命中优先级（从高到低）",
-    "首发查询用短关键词",
-    "returns noisy snippets from benchmark/test/skill text",
-    "native 搜索结果质量还不够好",
-    "刚才那个 session / 上个终端 / 某次调研",
-    "随后我又把本地安装态重新部署到",
-    "通过了 `python3 scripts/context_cli.py smoke`",
-    "go test ./...",
-    "python3 -m benchmarks --mode both",
-    "已预热",
-    "样本定位",
-    "不要改文件。输出",
-    "只读。审查",
-    "只读。定位为什么",
-    "远端对齐确认",
-    "未纳入本次提交",
-    "已查看并收口当前子 agent",
-    "状态汇总：",
-    "已关闭且有有效产出",
-    "我先按仓库要求做上下文预热",
-    "我先做“全局一致性同步”检查",
-    "主链不再是瓶颈",
-    "现在真正该优化的是",
-    "native 搜索结果质量",
-    "不是再融合，而是",
-    "我继续的话，就沿这条质量线往下打",
-    "把 rust `native-scan` 结果里的",
-    "我继续直接提主链结果质量",
-    "我先复跑主链",
-    "再决定要不要进一步做字段级过滤",
-    "现在不是“能不能跑”的问题",
-    "让它质量更好，能替代旧逻辑",
-    "我继续。",
-    "我现在直接复跑主链",
-    "我再强制重建一次索引",
-    )
+# Auto-generated from config/noise_markers.json — do not edit manually.
+# Run scripts/check_noise_sync.py to verify sync with Rust/Go backends.
+SEARCH_NOISE_MARKERS: tuple[str, ...] = tuple(_NOISE_CONFIG.get("search_noise_markers", []))
 
+
+# ═══════════════════════════════════════════════════════════════
+# Section: Noise Filtering
+# ═══════════════════════════════════════════════════════════════
 
 def _normalize_file_path(path: Path) -> str:
     try:
@@ -144,32 +120,10 @@ def _normalize_file_path(path: Path) -> str:
         return str(path)
 
 
-_NOISE_TEXT_MARKERS = (
-    "### Available skills",
-    "You are Codex",
-    "You are Claude",
-    "<environment_context>",
-    "你负责索引与基准",
-    "写集仅限",
-    "改动文件：",
-    "核心变化：",
-    "建议验证命令：",
-    "继续完成了，但这轮我做了一个重要判断",
-    "native 搜索结果质量还不够好",
-    "随后我又把本地安装态重新部署到",
-    "已查看并收口当前子 agent",
-    "我继续的话，就沿这条质量线往下打",
-    "我继续直接提主链结果质量",
-    "我先复跑主链",
-    "我现在直接复跑主链",
-    "我再强制重建一次索引",
-    "让它质量更好，能替代旧逻辑",
-)
-_NOISE_TEXT_LOWER_MARKERS = (
-    "you are an expert prompt engineer and agent skill optimizer",
-    "the following is the codex agent history whose request action you are assessing",
-    "file: /users/",  # catches any hardcoded user path under /users/
-)
+# Auto-generated from config/noise_markers.json — do not edit manually.
+# Run scripts/check_noise_sync.py to verify sync with Rust/Go backends.
+_NOISE_TEXT_MARKERS: tuple[str, ...] = tuple(_NOISE_CONFIG.get("text_noise_markers", []))
+_NOISE_TEXT_LOWER_MARKERS: tuple[str, ...] = tuple(_NOISE_CONFIG.get("text_noise_lower_markers", []))
 _WHITESPACE_RE_SI = re.compile(r"\s+")
 
 
@@ -206,8 +160,7 @@ def _search_noise_penalty(*parts: str) -> int:
         penalty += 120
     lines = [line.strip() for line in haystack.splitlines() if line.strip()]
     short_token_lines = sum(
-        1 for line in lines
-        if len(line) <= 40 and " " not in line and line.count("/") < 2 and line.count("-") <= 3
+        1 for line in lines if len(line) <= 40 and " " not in line and line.count("/") < 2 and line.count("-") <= 3
     )
     if short_token_lines >= 8:
         penalty += 200
@@ -216,9 +169,7 @@ def _search_noise_penalty(*parts: str) -> int:
     meta_terms = ("notebooklm", "search", "session_index", "native-scan")
     if all(term in haystack for term in meta_terms):
         penalty += 240
-    if ("我先" in haystack or "我继续" in haystack) and (
-        "native-scan" in haystack or "session_index" in haystack
-    ):
+    if ("我先" in haystack or "我继续" in haystack) and ("native-scan" in haystack or "session_index" in haystack):
         penalty += 240
     return penalty
 
@@ -330,6 +281,10 @@ def _truncate(texts: Iterable[str], max_chars: int = MAX_CONTENT_CHARS) -> str:
         total += len(clean) + 1
     return "\n".join(parts)
 
+
+# ═══════════════════════════════════════════════════════════════
+# Section: Document Processing
+# ═══════════════════════════════════════════════════════════════
 
 def _parse_codex_session(path: Path) -> SessionDocument | None:
     session_id = path.stem
@@ -509,6 +464,10 @@ def _parse_shell_history(path: Path, source_type: str) -> SessionDocument | None
     )
 
 
+# ═══════════════════════════════════════════════════════════════
+# Section: Source Discovery
+# ═══════════════════════════════════════════════════════════════
+
 def _iter_sources() -> list[tuple[str, Path]]:
     now = time.monotonic()
     cached_items = _SOURCE_CACHE.get("items") or []
@@ -586,6 +545,10 @@ def _parse_source(source_type: str, path: Path) -> SessionDocument | None:
     return None
 
 
+# ═══════════════════════════════════════════════════════════════
+# Section: Database Schema and Initialization
+# ═══════════════════════════════════════════════════════════════
+
 def ensure_session_db() -> Path:
     db_path = get_session_db_path()
     db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -608,7 +571,9 @@ def ensure_session_db() -> Path:
             """
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_session_created ON session_documents(created_at_epoch DESC)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_session_source ON session_documents(source_type, created_at_epoch DESC)")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_session_source ON session_documents(source_type, created_at_epoch DESC)"
+        )
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS session_index_meta (
@@ -638,6 +603,10 @@ def _meta_set(conn: sqlite3.Connection, key: str, value: str) -> None:
         (key, value),
     )
 
+
+# ═══════════════════════════════════════════════════════════════
+# Section: Index Management
+# ═══════════════════════════════════════════════════════════════
 
 def sync_session_index(force: bool = False) -> dict[str, int]:
     db_path = ensure_session_db()
@@ -714,7 +683,7 @@ def sync_session_index(force: bool = False) -> dict[str, int]:
                     doc.file_mtime,
                     doc.file_size,
                     now_epoch,
-                )
+                ),
             )
             if row:
                 updated += 1
@@ -739,6 +708,10 @@ def sync_session_index(force: bool = False) -> dict[str, int]:
         "last_sync_epoch": now_epoch,
     }
 
+
+# ═══════════════════════════════════════════════════════════════
+# Section: Search/Query
+# ═══════════════════════════════════════════════════════════════
 
 def build_query_terms(query: str) -> list[str]:
     raw = (query or "").strip()
@@ -912,7 +885,9 @@ def _fetch_session_docs_by_paths(conn: sqlite3.Connection, file_paths: Iterable[
     return docs
 
 
-def _enrich_native_rows(rows: list[dict[str, Any]], conn: sqlite3.Connection, terms: list[str], limit: int) -> list[dict[str, Any]]:
+def _enrich_native_rows(
+    rows: list[dict[str, Any]], conn: sqlite3.Connection, terms: list[str], limit: int
+) -> list[dict[str, Any]]:
     max_results = max(1, min(limit, 100))
     docs = _fetch_session_docs_by_paths(conn, (row.get("file_path") for row in rows if row.get("file_path")))
     enriched: list[dict[str, Any]] = []
@@ -1037,6 +1012,10 @@ def _search_rows(query: str, limit: int = 10, literal: bool = False) -> list[dic
     finally:
         conn.close()
 
+
+# ═══════════════════════════════════════════════════════════════
+# Section: Utilities
+# ═══════════════════════════════════════════════════════════════
 
 _SNIPPET_MAX_CHARS = 120
 

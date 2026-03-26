@@ -12,7 +12,6 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONTEXT_CLI = REPO_ROOT / "scripts" / "context_cli.py"
 

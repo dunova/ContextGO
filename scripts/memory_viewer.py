@@ -3,12 +3,12 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 import hmac
 import json
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import threading
 import time
+from datetime import datetime
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 try:
@@ -303,9 +303,7 @@ class Handler(BaseHTTPRequestHandler):
             source_type = (qs.get("source_type", ["all"])[0] or "all").strip()
             try:
                 sync = _maybe_sync_index()
-                rows = search_index(
-                    query=query, limit=limit, offset=offset, source_type=source_type
-                )
+                rows = search_index(query=query, limit=limit, offset=offset, source_type=source_type)
             except Exception as exc:
                 self._send_json(500, {"ok": False, "error": "search failed", "detail": str(exc)})
                 return
@@ -319,17 +317,11 @@ class Handler(BaseHTTPRequestHandler):
             after = self._parse_int(qs.get("depth_after", ["3"])[0] or "3", 3, 0, 20)
             try:
                 sync = _maybe_sync_index()
-                rows = (
-                    timeline_index(anchor_id=anchor, depth_before=before, depth_after=after)
-                    if anchor > 0
-                    else []
-                )
+                rows = timeline_index(anchor_id=anchor, depth_before=before, depth_after=after) if anchor > 0 else []
             except Exception as exc:
                 self._send_json(500, {"ok": False, "error": "timeline failed", "detail": str(exc)})
                 return
-            self._send_json(
-                200, {"ok": True, "sync": sync, "count": len(rows), "timeline": rows}
-            )
+            self._send_json(200, {"ok": True, "sync": sync, "count": len(rows), "timeline": rows})
             return
 
         if parsed.path == "/api/events":
@@ -348,9 +340,7 @@ class Handler(BaseHTTPRequestHandler):
                         "sync": sync,
                         **index_stats(),
                     }
-                    chunk = (
-                        f"data: {json.dumps(data, ensure_ascii=False)}\n\n".encode("utf-8")
-                    )
+                    chunk = f"data: {json.dumps(data, ensure_ascii=False)}\n\n".encode()
                     self.wfile.write(chunk)
                     self.wfile.flush()
                     time.sleep(SSE_INTERVAL_SEC)
@@ -428,16 +418,12 @@ class Handler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             self._send_json(400, {"ok": False, "error": "invalid JSON body"})
         except Exception as exc:
-            self._send_json(
-                500, {"ok": False, "error": "internal error", "detail": str(exc)}
-            )
+            self._send_json(500, {"ok": False, "error": "internal error", "detail": str(exc)})
 
 
 def main() -> None:
     if HOST not in LOOPBACK_HOSTS and not VIEWER_TOKEN:
-        raise SystemExit(
-            "CONTEXTGO_VIEWER_TOKEN must be set when binding a non-loopback host."
-        )
+        raise SystemExit("CONTEXTGO_VIEWER_TOKEN must be set when binding a non-loopback host.")
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     print(f"ContextGO Viewer listening on http://{HOST}:{PORT}")
     try:

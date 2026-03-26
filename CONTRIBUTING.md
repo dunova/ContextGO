@@ -21,15 +21,28 @@ Thank you for considering a contribution to ContextGO. This guide covers the dev
 git clone https://github.com/dunova/ContextGO.git
 cd ContextGO
 
-# Install Python dependencies
-pip install pytest
+# Install Python dependencies (including dev tools: pytest, ruff)
+pip install -e ".[dev]"
 
 # Run the deploy script to initialize the local environment
 bash scripts/unified_context_deploy.sh
 
 # Verify the setup
 python3 scripts/context_cli.py health
-python3 scripts/context_smoke.py
+python3 scripts/context_cli.py smoke
+```
+
+A `Makefile` is provided for common operations:
+
+```bash
+make install   # pip install -e ".[dev]"
+make test      # run the full pytest suite
+make lint      # ruff check + format check
+make format    # ruff format + auto-fix
+make smoke     # contextgo smoke via context_cli.py
+make health    # contextgo health via context_cli.py
+make bench     # run the benchmark harness
+make clean     # remove __pycache__ and .pyc files
 ```
 
 The storage root defaults to `~/.contextgo`. This can be overridden with the `CONTEXTGO_STORAGE_ROOT` environment variable. See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for all configuration options.
@@ -76,7 +89,7 @@ go build .
 - Prefer the standard library. When a third-party package is required, add it to `requirements.txt` and ensure it passes CI.
 - Use type hints for new functions and public interfaces.
 - Write comments only to explain non-obvious runtime or operational logic. Let the code be self-explanatory where possible.
-- Format with a consistent style (the project currently uses no auto-formatter; match the surrounding code style).
+- **ruff** is the enforced formatter and linter. Run `make format` before committing and `make lint` to check. CI will fail on ruff violations.
 
 ### Rust and Go
 
@@ -95,25 +108,40 @@ go build .
 
 Run the following before submitting a pull request. All steps must pass.
 
+The Makefile shortcuts cover the most common checks:
+
+```bash
+make test    # full pytest suite
+make lint    # ruff check + format check
+make smoke   # contextgo smoke
+make health  # contextgo health
+make bench   # benchmark baseline
+```
+
+Full manual sequence for pre-PR validation:
+
 ```bash
 # Syntax checks
 bash -n scripts/*.sh
 python3 -m py_compile scripts/*.py
 
 # Unit and integration tests
-python3 -m pytest scripts/test_context_cli.py scripts/test_context_core.py scripts/test_session_index.py scripts/test_context_native.py scripts/test_context_smoke.py scripts/test_autoresearch_contextgo.py
+python3 -m pytest scripts/test_context_cli.py scripts/test_context_core.py \
+    scripts/test_session_index.py scripts/test_context_native.py \
+    scripts/test_context_smoke.py scripts/test_autoresearch_contextgo.py -v
 
 # End-to-end quality gate
 python3 scripts/e2e_quality_gate.py
 
 # Performance baseline
-python3 -m benchmarks --iterations 1 --warmup 0 --query benchmark
+python3 -m benchmarks --mode both --iterations 1 --warmup 0 --query benchmark --format text
 
-# Smoke tests
-python3 scripts/context_smoke.py
+# Smoke and health via the contextgo CLI
+python3 scripts/context_cli.py smoke
+python3 scripts/context_cli.py health
 python3 scripts/smoke_installed_runtime.py
 
-# Health check
+# Shell health check
 bash scripts/context_healthcheck.sh
 ```
 

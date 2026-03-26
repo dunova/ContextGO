@@ -1,0 +1,12 @@
+# Core Python runtime
+/scripts/ @dunova
+
+# Native hot paths
+/native/ @dunova
+
+# CI/CD
+/.github/ @dunova
+
+# Documentation
+/docs/ @dunova
+/README.md @dunova

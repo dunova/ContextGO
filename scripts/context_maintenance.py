@@ -29,7 +29,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def collect_local_session_files(codex_root: Path, claude_root: Path, include_subagents: bool) -> list[tuple[str, Path, str]]:
+def collect_local_session_files(
+    codex_root: Path, claude_root: Path, include_subagents: bool
+) -> list[tuple[str, Path, str]]:
     items: list[tuple[str, Path, str]] = []
     if codex_root.is_dir():
         for p in codex_root.rglob("*.jsonl"):
@@ -53,9 +55,13 @@ def print_snapshot(cur: sqlite3.Cursor, local_total: int, missing_codex: int, mi
     turn_content = cur.execute("SELECT count(*) FROM turn_content").fetchone()[0]
     events = cur.execute("SELECT count(*) FROM events").fetchone()[0]
     queued_sp = cur.execute("SELECT count(*) FROM jobs WHERE kind='session_process' AND status='queued'").fetchone()[0]
-    processing_sp = cur.execute("SELECT count(*) FROM jobs WHERE kind='session_process' AND status='processing'").fetchone()[0]
+    processing_sp = cur.execute(
+        "SELECT count(*) FROM jobs WHERE kind='session_process' AND status='processing'"
+    ).fetchone()[0]
     done_sp = cur.execute("SELECT count(*) FROM jobs WHERE kind='session_process' AND status='done'").fetchone()[0]
-    llm_err_sessions = cur.execute("SELECT count(*) FROM sessions WHERE session_title LIKE '⚠ LLM API Error%'").fetchone()[0]
+    llm_err_sessions = cur.execute(
+        "SELECT count(*) FROM sessions WHERE session_title LIKE '⚠ LLM API Error%'"
+    ).fetchone()[0]
     print("=== Snapshot ===")
     print(f"sessions={sessions} turns={turns} turn_content={turn_content} events={events}")
     print(f"session_process jobs: queued={queued_sp} processing={processing_sp} done={done_sp}")
@@ -95,7 +101,9 @@ def repair_queue(cur: sqlite3.Cursor, stale_minutes: int, dry_run: bool) -> int:
     return cur.rowcount
 
 
-def enqueue_missing(cur: sqlite3.Cursor, missing: list[tuple[str, Path, str]], max_enqueue: int, dry_run: bool) -> tuple[int, int]:
+def enqueue_missing(
+    cur: sqlite3.Cursor, missing: list[tuple[str, Path, str]], max_enqueue: int, dry_run: bool
+) -> tuple[int, int]:
     inserted = 0
     revived = 0
     for stype, path, sid in missing[: max(0, max_enqueue)]:

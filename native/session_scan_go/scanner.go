@@ -8,10 +8,13 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode/utf8"
 )
 
 // DefaultNoiseMarkers is the set of substrings that identify a text fragment
 // as noise.  Each entry is compared case-insensitively against the candidate.
+// Auto-generated from config/noise_markers.json — do not edit manually.
+// Run scripts/check_noise_sync.py to verify sync with Python/Rust backends.
 var DefaultNoiseMarkers = []string{
 	"# agents.md instructions",
 	"### available skills",
@@ -58,7 +61,7 @@ var DefaultNoiseMarkers = []string{
 	"状态汇总：",
 	"已关闭且有有效产出",
 	"我先按仓库要求做上下文预热",
-	"我先做"全局一致性同步"检查",
+	"我先做\"全局一致性同步\"检查",
 	"主链不再是瓶颈",
 	"现在真正该优化的是",
 	"native 结果质量现状",
@@ -70,7 +73,7 @@ var DefaultNoiseMarkers = []string{
 	"我继续直接提主链结果质量",
 	"我先复跑主链",
 	"再决定要不要进一步做字段级过滤",
-	"现在不是"能不能跑"的问题",
+	"现在不是\"能不能跑\"的问题",
 	"让它质量更好，能替代旧逻辑",
 	"我继续。",
 	"我现在直接复跑主链",
@@ -88,6 +91,7 @@ var DefaultNoiseMarkers = []string{
 
 // DefaultNoisePrefixes contains line prefixes that identify a fragment as
 // noise.  Each entry is compared case-insensitively against the candidate.
+// Auto-generated from config/noise_markers.json — do not edit manually.
 var DefaultNoisePrefixes = []string{
 	"##",
 	"```",
@@ -402,31 +406,40 @@ func candidateScore(field, text, queryLower string) int {
 	return fieldPriority(field) + hits*25
 }
 
-// clipSnippet returns a substring of text of at most limit bytes, centred on
-// the match at index.  It operates on bytes, not runes, which is sufficient
-// because the index originates from strings.Index.
+// clipSnippet returns a substring of text of at most limit runes, centred on
+// the match at byte position index.  It operates on rune boundaries to avoid
+// splitting multi-byte UTF-8 characters.
 func clipSnippet(text string, index, queryLen, limit int) string {
-	if limit <= 0 || len(text) <= limit {
+	runes := []rune(text)
+	if limit <= 0 || utf8.RuneCountInString(text) <= limit {
 		return text
 	}
 	if queryLen < 0 {
 		queryLen = 0
 	}
+	// Find the rune index closest to byte position 'index'.
+	runeIdx := 0
+	for i := range text {
+		if i >= index {
+			break
+		}
+		runeIdx++
+	}
 	radius := limit / 2
-	start := index - radius
+	start := runeIdx - radius
 	if start < 0 {
 		start = 0
 	}
 	end := start + limit
-	if end > len(text) {
-		end = len(text)
+	if end > len(runes) {
+		end = len(runes)
 		if end-limit > 0 {
 			start = end - limit
 		} else {
 			start = 0
 		}
 	}
-	return text[start:end]
+	return string(runes[start:end])
 }
 
 // extractTextCandidates returns all non-empty text fields from a parsed JSON

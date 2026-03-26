@@ -88,36 +88,54 @@ flowchart LR
 
 ```text
 ContextGO/
-├── docs/                  # product, release, troubleshooting docs
-├── scripts/               # unified control plane: CLI / daemon / smoke / deploy
-├── native/                # Rust and Go hot paths
-├── benchmarks/            # Python vs native-wrapper performance truth
-├── integrations/gsd/      # workflow integration
-├── artifacts/             # autoresearch outputs, testsets, QA reports
-├── templates/             # launchd / systemd-user templates
-├── examples/              # configuration examples
-└── patches/               # compatibility notes
+├── docs/                      # architecture, release, troubleshooting, and commercial delivery docs
+├── scripts/                   # unified monolith mainline: CLI / daemon / server / smoke / health / deploy
+│   ├── context_cli.py         # single canonical entry point for search, semantic, memory, viewer, smoke
+│   ├── context_daemon.py      # session capture and sanitized write-through
+│   ├── session_index.py       # session index and ranked retrieval
+│   ├── memory_index.py        # memory / observation index
+│   ├── context_server.py      # viewer service entry point
+│   ├── context_maintenance.py # cleanup, repair, and maintenance operations
+│   ├── context_smoke.py       # working-copy smoke tests
+│   ├── context_healthcheck.sh # shell health check
+│   └── unified_context_deploy.sh
+├── native/
+│   ├── session_scan/          # Rust hot path
+│   └── session_scan_go/       # Go hot path
+├── benchmarks/                # Python / native-wrapper performance baselines
+├── integrations/gsd/          # GSD / gstack workflow integration
+├── artifacts/                 # autoresearch outputs, test sets, QA reports
+├── templates/                 # launchd / systemd-user service templates
+├── examples/                  # configuration templates
+└── patches/                   # compatibility patch notes
 ```
 
-### Component Summary
+### Component Overview
 
-1. `context_daemon.py` captures and sanitizes histories  
-2. `session_index.py` and `memory_index.py` build the local retrieval layer  
-3. `context_cli.py` is the single operator-facing entry point  
-4. `context_server.py` exposes the local viewer API  
-5. `context_smoke.py`, `context_healthcheck.sh`, and `benchmarks/run.py` form the validation chain  
+1. **Capture layer**
+   `scripts/context_daemon.py` collects terminal sessions and shell history, applying `<private>` redaction before writing to disk.
+
+2. **Index layer**
+   `scripts/session_index.py` and `scripts/memory_index.py` maintain local SQLite and file-based indexes used for all retrieval operations.
+
+3. **Retrieval and service layer**
+   `scripts/context_cli.py` is the single canonical CLI, exposing `health`, `search`, `semantic`, `save`, `export`, `import`, `serve`, and `maintain` subcommands.
+
+4. **Operational validation layer**
+   `scripts/context_healthcheck.sh`, `scripts/context_smoke.py`, `scripts/smoke_installed_runtime.py`, and `benchmarks/run.py` form the unified delivery validation chain.
 
 ### Data Flow
 
-1. histories are captured and sanitized locally  
-2. data is written into the local storage root  
-3. indexes are built on top of SQLite and files  
-4. the CLI executes retrieval, export/import, health, smoke, and native commands  
-5. the viewer API exposes the local surface for inspection  
+1. Terminal and agent histories are captured and sanitized by `context_daemon`.
+2. Data is written to the local storage root (default: `~/.contextgo`).
+3. `session_index` and `memory_index` build indexes on top of SQLite and local files.
+4. `context_cli` handles retrieval, import/export, health checks, smoke tests, and native backend invocations.
+5. `context_server` exposes the local viewer API for interactive inspection.
 
 ### Design Principles
 
-- local-first by default  
-- one CLI, one trust boundary, one validation chain  
-- MCP-free by default  
-- gradual Rust/Go acceleration instead of a full-stack rewrite  
+- **Local-first**: no external bridges, no Docker, no remote recall dependency by default.
+- **Single entry point**: operators always interact with one CLI surface.
+- **Monolith by default**: complexity is contained internally rather than split across multiple services.
+- **Validation-gated changes**: every change must pass `health`, `smoke`, and `benchmark` before merging.
+- **Gradual native acceleration**: Python provides stability; Rust and Go replace hot paths incrementally without modifying the CLI contract.

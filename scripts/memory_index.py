@@ -3,14 +3,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
 import sqlite3
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 try:
@@ -122,9 +122,7 @@ def _parse_markdown(path: Path) -> Observation | None:
     source_type = "conversation" if "/conversations/" in str(path).replace("\\", "/") else "history"
     session_id = path.stem.split("_")[-1] if "_" in path.stem else path.stem
 
-    fingerprint = hashlib.sha256(
-        f"{source_type}|{title}|{content}|{created_at_epoch}".encode("utf-8")
-    ).hexdigest()
+    fingerprint = hashlib.sha256(f"{source_type}|{title}|{content}|{created_at_epoch}".encode()).hexdigest()
 
     return Observation(
         fingerprint=fingerprint,
@@ -481,9 +479,7 @@ def _normalize_import_observation(raw: dict[str, Any]) -> dict[str, Any]:
     fingerprint = str(raw.get("fingerprint") or "").strip()
     if not fingerprint and content:
         fingerprint = hashlib.sha256(
-            f"{raw.get('source_type') or 'import'}|{raw.get('session_id') or 'imported'}|{title}|{content}|{created_at_epoch}".encode(
-                "utf-8"
-            )
+            f"{raw.get('source_type') or 'import'}|{raw.get('session_id') or 'imported'}|{title}|{content}|{created_at_epoch}".encode()
         ).hexdigest()
     return {
         "fingerprint": fingerprint,

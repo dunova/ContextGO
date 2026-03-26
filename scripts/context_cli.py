@@ -35,6 +35,10 @@ ENABLE_REMOTE_MEMORY_HTTP = env_bool("CONTEXTGO_ENABLE_REMOTE_MEMORY_HTTP", "CON
 REMOTE_MEMORY_URL = env_str("CONTEXTGO_REMOTE_URL", default="http://127.0.0.1:8090/api/v1")
 
 
+# ═══════════════════════════════════════════════════════════════
+# Section: Shared Helpers
+# ═══════════════════════════════════════════════════════════════
+
 def _local_memory_matches(query: str, limit: int = 3) -> list[dict]:
     return context_core.local_memory_matches(
         query,
@@ -176,6 +180,198 @@ def _remote_process_count() -> int:
     return sum(1 for line in (proc.stdout or "").splitlines() if line.strip())
 
 
+# ═══════════════════════════════════════════════════════════════
+# Section: Command Handlers
+# ═══════════════════════════════════════════════════════════════
+
+def cmd_search(args: argparse.Namespace) -> int:
+    text = session_index.format_search_results(
+        args.query,
+        search_type=args.type,
+        limit=args.limit,
+        literal=bool(args.literal),
+    )
+    print(text)
+    return 0 if not text.startswith("No matches found") else 1
+
+
+def cmd_semantic(args: argparse.Namespace) -> int:
+    matches = _local_memory_matches(args.query, limit=args.limit)
+    if matches:
+        print("--- LOCAL MEMORY MATCHES ---")
+        for item in matches:
+            print(json.dumps(item, ensure_ascii=False, indent=2))
+        return 0
+    text = session_index.format_search_results(
+        args.query,
+        search_type="content",
+        limit=min(args.limit, 10),
+        literal=True,
+    )
+    if text:
+        print("--- HISTORY CONTENT FALLBACK ---")
+        print(text)
+    return 0 if not text.startswith("No matches found") else 1
+
+
+def cmd_save(args: argparse.Namespace) -> int:
+    tags = [t.strip() for t in args.tags.split(",") if t.strip()]
+    message = _save_local_memory(args.title, args.content, tags)
+    print(message)
+    return 0 if not message.startswith("Failed to save memory:") else 1
+
+
+def cmd_export(args: argparse.Namespace) -> int:
+    payload = export_observations_payload(
+        args.query,
+        limit=args.limit,
+        source_type=args.source_type,
+    )
+    output_path = Path(args.output).expanduser()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"exported observations={payload['total_observations']} -> {output_path}")
+    return 0
+
+
+def cmd_import(args: argparse.Namespace) -> int:
+    input_path = Path(args.input).expanduser()
+    payload = json.loads(input_path.read_text(encoding="utf-8"))
+    result = import_observations_payload(payload, sync_from_storage=not args.no_sync)
+    print(
+        f"import done inserted={result['inserted']} skipped={result['skipped']} db={result['db_path']}"
+    )
+    return 0
+
+
+def cmd_serve(args: argparse.Namespace) -> int:
+    viewer_module = _load_memory_viewer()
+    _configure_viewer_module(viewer_module, args.host, args.port, args.token)
+    viewer_module.main()
+    return 0
+
+
+def cmd_maintain(args: argparse.Namespace) -> int:
+    maintenance_module = _load_context_maintenance()
+    # Forward flags to context_maintenance.main() as an argv list.
+    # context_maintenance.parse_args() owns its own argument definitions;
+    # we re-serialise only the values that were actually parsed here so
+    # the downstream parser remains the single source of truth for defaults.
+    forwarded = [
+        "--db", args.db,
+        "--codex-root", args.codex_root,
+        "--claude-root", args.claude_root,
+        "--max-enqueue", str(args.max_enqueue),
+        "--stale-minutes", str(args.stale_minutes),
+    ]
+    if args.include_subagents:
+        forwarded.append("--include-subagents")
+    if args.repair_queue:
+        forwarded.append("--repair-queue")
+    if args.enqueue_missing:
+        forwarded.append("--enqueue-missing")
+    if args.dry_run:
+        forwarded.append("--dry-run")
+    return maintenance_module.main(forwarded)
+
+
+def cmd_native_scan(args: argparse.Namespace) -> int:
+    result = context_native.run_native_scan(
+        backend=args.backend,
+        codex_root=args.codex_root,
+        claude_root=args.claude_root,
+        threads=args.threads,
+        release=not args.debug_build,
+        query=args.query,
+        json_output=bool(args.json),
+        limit=args.limit,
+    )
+    if args.json:
+        payload = result.json_payload()
+        if isinstance(payload, dict):
+            _print_json(payload)
+            if result.returncode != 0 and result.stderr:
+                print(result.stderr.rstrip(), file=sys.stderr)
+            return result.returncode
+    if result.stdout:
+        print(result.stdout.rstrip())
+    if result.stderr:
+        print(result.stderr.rstrip(), file=sys.stderr)
+    return result.returncode
+
+
+def cmd_smoke(args: argparse.Namespace) -> int:
+    _scripts_dir = Path(__file__).resolve().parent
+    payload = context_smoke.run_smoke(
+        _scripts_dir / "context_cli.py",
+        _scripts_dir / "e2e_quality_gate.py",
+    )
+    output = payload if args.verbose else _compact_smoke_payload(payload)
+    _print_json(output, pretty=bool(args.verbose))
+    failed = [item for item in payload["results"] if not item["ok"]]
+    return 1 if failed else 0
+
+
+def cmd_health(args: argparse.Namespace) -> int:
+    recall_payload = session_index.health_payload()
+    payload = {
+        "checked_at": datetime.now().isoformat(),
+        "session_search_lite": {
+            "ok": bool(recall_payload.get("session_index_db_exists")),
+            "sessions": recall_payload.get("total_sessions"),
+            "indexed_this_run": recall_payload.get("sync"),
+            "db": recall_payload.get("session_index_db"),
+        },
+        "source_freshness": _source_freshness(),
+        "local_memory_root": {
+            "exists": LOCAL_SHARED_ROOT.exists(),
+            "path": str(LOCAL_SHARED_ROOT),
+        },
+        "remote_sync_policy": {
+            "enabled": ENABLE_REMOTE_MEMORY_HTTP,
+            "mode": "optional-http" if ENABLE_REMOTE_MEMORY_HTTP else "disabled-by-policy",
+            "remote_processes": _remote_process_count(),
+        },
+        "native_backends": context_native.health_payload(),
+        "all_ok": bool(recall_payload.get("session_index_db_exists")),
+    }
+    output = payload if args.verbose else {
+        "checked_at": payload["checked_at"],
+        "all_ok": payload["all_ok"],
+        "session_search_lite": {
+            "ok": payload["session_search_lite"]["ok"],
+            "sessions": payload["session_search_lite"]["sessions"],
+            "db": payload["session_search_lite"]["db"],
+        },
+        "remote_sync_policy": payload["remote_sync_policy"],
+        "native_backends": payload["native_backends"],
+    }
+    _print_json(output, pretty=bool(args.verbose))
+    return 0 if payload["all_ok"] else 1
+
+
+# ═══════════════════════════════════════════════════════════════
+# Section: Command Dispatch Table
+# ═══════════════════════════════════════════════════════════════
+
+COMMANDS: dict[str, object] = {
+    "search": cmd_search,
+    "semantic": cmd_semantic,
+    "save": cmd_save,
+    "export": cmd_export,
+    "import": cmd_import,
+    "serve": cmd_serve,
+    "maintain": cmd_maintain,
+    "native-scan": cmd_native_scan,
+    "smoke": cmd_smoke,
+    "health": cmd_health,
+}
+
+
+# ═══════════════════════════════════════════════════════════════
+# Section: Argument Parser
+# ═══════════════════════════════════════════════════════════════
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="ContextGO unified CLI (search, viewer, native scan, smoke, and maintenance)."
@@ -249,164 +445,14 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+# ═══════════════════════════════════════════════════════════════
+# Section: Entry Points
+# ═══════════════════════════════════════════════════════════════
+
 def run(args: argparse.Namespace) -> int:
-    if args.command == "search":
-        text = session_index.format_search_results(
-            args.query,
-            search_type=args.type,
-            limit=args.limit,
-            literal=bool(args.literal),
-        )
-        print(text)
-        return 0 if not text.startswith("No matches found") else 1
-
-    if args.command == "semantic":
-        matches = _local_memory_matches(args.query, limit=args.limit)
-        if matches:
-            print("--- LOCAL MEMORY MATCHES ---")
-            for item in matches:
-                print(json.dumps(item, ensure_ascii=False, indent=2))
-            return 0
-        text = session_index.format_search_results(
-            args.query,
-            search_type="content",
-            limit=min(args.limit, 10),
-            literal=True,
-        )
-        if text:
-            print("--- HISTORY CONTENT FALLBACK ---")
-            print(text)
-        return 0 if not text.startswith("No matches found") else 1
-
-    if args.command == "save":
-        tags = [t.strip() for t in args.tags.split(",") if t.strip()]
-        message = _save_local_memory(args.title, args.content, tags)
-        print(message)
-        return 0 if not message.startswith("Failed to save memory:") else 1
-
-    if args.command == "export":
-        payload = export_observations_payload(
-            args.query,
-            limit=args.limit,
-            source_type=args.source_type,
-        )
-        output_path = Path(args.output).expanduser()
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        print(f"exported observations={payload['total_observations']} -> {output_path}")
-        return 0
-
-    if args.command == "import":
-        input_path = Path(args.input).expanduser()
-        payload = json.loads(input_path.read_text(encoding="utf-8"))
-        result = import_observations_payload(payload, sync_from_storage=not args.no_sync)
-        print(
-            f"import done inserted={result['inserted']} skipped={result['skipped']} db={result['db_path']}"
-        )
-        return 0
-
-    if args.command == "serve":
-        viewer_module = _load_memory_viewer()
-        _configure_viewer_module(viewer_module, args.host, args.port, args.token)
-        viewer_module.main()
-        return 0
-
-    if args.command == "maintain":
-        maintenance_module = _load_context_maintenance()
-        forwarded = [
-            "--db",
-            args.db,
-            "--codex-root",
-            args.codex_root,
-            "--claude-root",
-            args.claude_root,
-            "--max-enqueue",
-            str(args.max_enqueue),
-            "--stale-minutes",
-            str(args.stale_minutes),
-        ]
-        if args.include_subagents:
-            forwarded.append("--include-subagents")
-        if args.repair_queue:
-            forwarded.append("--repair-queue")
-        if args.enqueue_missing:
-            forwarded.append("--enqueue-missing")
-        if args.dry_run:
-            forwarded.append("--dry-run")
-        return maintenance_module.main(forwarded)
-
-    if args.command == "native-scan":
-        result = context_native.run_native_scan(
-            backend=args.backend,
-            codex_root=args.codex_root,
-            claude_root=args.claude_root,
-            threads=args.threads,
-            release=not args.debug_build,
-            query=args.query,
-            json_output=bool(args.json),
-            limit=args.limit,
-        )
-        if args.json:
-            payload = result.json_payload()
-            if isinstance(payload, dict):
-                _print_json(payload)
-                if result.returncode != 0 and result.stderr:
-                    print(result.stderr.rstrip(), file=sys.stderr)
-                return result.returncode
-        if result.stdout:
-            print(result.stdout.rstrip())
-        if result.stderr:
-            print(result.stderr.rstrip(), file=sys.stderr)
-        return result.returncode
-
-    if args.command == "smoke":
-        _scripts_dir = Path(__file__).resolve().parent
-        payload = context_smoke.run_smoke(
-            _scripts_dir / "context_cli.py",
-            _scripts_dir / "e2e_quality_gate.py",
-        )
-        output = payload if args.verbose else _compact_smoke_payload(payload)
-        _print_json(output, pretty=bool(args.verbose))
-        failed = [item for item in payload["results"] if not item["ok"]]
-        return 1 if failed else 0
-
-    if args.command == "health":
-        recall_payload = session_index.health_payload()
-        payload = {
-            "checked_at": datetime.now().isoformat(),
-            "session_search_lite": {
-                "ok": bool(recall_payload.get("session_index_db_exists")),
-                "sessions": recall_payload.get("total_sessions"),
-                "indexed_this_run": recall_payload.get("sync"),
-                "db": recall_payload.get("session_index_db"),
-            },
-            "source_freshness": _source_freshness(),
-            "local_memory_root": {
-                "exists": LOCAL_SHARED_ROOT.exists(),
-                "path": str(LOCAL_SHARED_ROOT),
-            },
-            "remote_sync_policy": {
-                "enabled": ENABLE_REMOTE_MEMORY_HTTP,
-                "mode": "optional-http" if ENABLE_REMOTE_MEMORY_HTTP else "disabled-by-policy",
-                "remote_processes": _remote_process_count(),
-            },
-            "native_backends": context_native.health_payload(),
-            "all_ok": bool(recall_payload.get("session_index_db_exists")),
-        }
-        output = payload if args.verbose else {
-            "checked_at": payload["checked_at"],
-            "all_ok": payload["all_ok"],
-            "session_search_lite": {
-                "ok": payload["session_search_lite"]["ok"],
-                "sessions": payload["session_search_lite"]["sessions"],
-                "db": payload["session_search_lite"]["db"],
-            },
-            "remote_sync_policy": payload["remote_sync_policy"],
-            "native_backends": payload["native_backends"],
-        }
-        _print_json(output, pretty=bool(args.verbose))
-        return 0 if payload["all_ok"] else 1
-
+    handler = COMMANDS.get(args.command)
+    if handler:
+        return handler(args)
     print(f"Unknown command: {args.command}", file=sys.stderr)
     return 2
 

@@ -3,14 +3,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
 import time
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 try:
@@ -24,6 +24,7 @@ NATIVE_ROOT = REPO_ROOT / "native"
 RUST_PROJECT = NATIVE_ROOT / "session_scan"
 GO_PROJECT = NATIVE_ROOT / "session_scan_go"
 
+
 # Default native target dir: prefer a user-owned path to avoid world-writable
 # /tmp races.  Use XDG_CACHE_HOME when available, otherwise fall back to a
 # per-uid /tmp subdirectory so that two different users on the same machine
@@ -33,6 +34,7 @@ def _default_native_target_dir() -> str:
     if xdg_cache:
         return str(Path(xdg_cache) / "contextgo" / "target")
     return str(Path.home() / ".cache" / "contextgo" / "target")
+
 
 DEFAULT_TARGET_DIR = env_str(
     "CONTEXTGO_NATIVE_TARGET_DIR",
@@ -134,7 +136,7 @@ class NativeMatch:
     metadata: dict[str, Any]
 
     @classmethod
-    def from_dict(cls, raw: dict[str, Any]) -> "NativeMatch" | None:
+    def from_dict(cls, raw: dict[str, Any]) -> NativeMatch | None:
         source = str(raw.get("source") or "").strip()
         path_text = str(raw.get("path") or "").strip()
         if not source or not path_text:
@@ -415,7 +417,9 @@ def health_payload(*, probe: bool = False) -> dict[str, Any]:
         return cached
     for backend in payload["available_backends"]:
         try:
-            result = run_native_scan(backend=backend, json_output=True, limit=1, release=(backend == "rust"), timeout=120)
+            result = run_native_scan(
+                backend=backend, json_output=True, limit=1, release=(backend == "rust"), timeout=120
+            )
             payload[backend] = {
                 "ok": result.returncode == 0,
                 "returncode": result.returncode,

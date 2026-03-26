@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """Unit tests for context_cli module."""
+
 from __future__ import annotations
 
+import importlib
+import json
+import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
-import sys
-import json
-import os
-import importlib
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
@@ -38,14 +39,12 @@ class ContextCliTests(unittest.TestCase):
 
     def test_semantic_falls_back_to_session_index(self) -> None:
         args = context_cli.build_parser().parse_args(["semantic", "foo", "--limit", "2"])
-        with mock.patch.object(context_cli, "_local_memory_matches", return_value=[]):
-            with mock.patch.object(
-                context_cli.session_index,
-                "format_search_results",
-                return_value="Found 1 sessions\nSession: abc",
-            ):
-                with mock.patch("builtins.print") as mock_print:
-                    rc = context_cli.run(args)
+        with mock.patch.object(context_cli, "_local_memory_matches", return_value=[]), mock.patch.object(
+            context_cli.session_index,
+            "format_search_results",
+            return_value="Found 1 sessions\nSession: abc",
+        ), mock.patch("builtins.print") as mock_print:
+            rc = context_cli.run(args)
         self.assertEqual(rc, 0)
         printed = "\n".join(" ".join(str(x) for x in call.args) for call in mock_print.call_args_list)
         self.assertIn("HISTORY CONTENT FALLBACK", printed)
@@ -74,9 +73,7 @@ class ContextCliTests(unittest.TestCase):
                             self.assertEqual(context_cli.run(export_args), 0)
                             payload = json.loads(output_path.read_text(encoding="utf-8"))
                             self.assertEqual(payload["total_observations"], 1)
-                            import_args = context_cli.build_parser().parse_args(
-                                ["import", str(output_path)]
-                            )
+                            import_args = context_cli.build_parser().parse_args(["import", str(output_path)])
                             with mock.patch("builtins.print") as mock_print:
                                 self.assertEqual(context_cli.run(import_args), 0)
                             printed = "\n".join(
@@ -101,9 +98,7 @@ class ContextCliTests(unittest.TestCase):
         viewer.main.assert_called_once()
 
     def test_maintain_subcommand_delegates(self) -> None:
-        args = context_cli.build_parser().parse_args(
-            ["maintain", "--repair-queue", "--enqueue-missing", "--dry-run"]
-        )
+        args = context_cli.build_parser().parse_args(["maintain", "--repair-queue", "--enqueue-missing", "--dry-run"])
         maintenance = mock.Mock()
         maintenance.main.return_value = 0
         with mock.patch.object(context_cli, "_load_context_maintenance", return_value=maintenance):
@@ -160,7 +155,10 @@ class ContextCliTests(unittest.TestCase):
 
     def test_smoke_subcommand_delegates(self) -> None:
         args = context_cli.build_parser().parse_args(["smoke"])
-        payload = {"summary": {"status": "pass"}, "results": [{"name": "health", "ok": True, "rc": 0, "detail": {"x": 1}}]}
+        payload = {
+            "summary": {"status": "pass"},
+            "results": [{"name": "health", "ok": True, "rc": 0, "detail": {"x": 1}}],
+        }
         with mock.patch.object(context_cli.context_smoke, "run_smoke", return_value=payload) as mock_run:
             with mock.patch("builtins.print") as mock_print:
                 rc = context_cli.run(args)
@@ -172,7 +170,10 @@ class ContextCliTests(unittest.TestCase):
 
     def test_smoke_subcommand_verbose_prints_full_payload(self) -> None:
         args = context_cli.build_parser().parse_args(["smoke", "--verbose"])
-        payload = {"summary": {"status": "pass"}, "results": [{"name": "health", "ok": True, "rc": 0, "detail": {"x": 1}}]}
+        payload = {
+            "summary": {"status": "pass"},
+            "results": [{"name": "health", "ok": True, "rc": 0, "detail": {"x": 1}}],
+        }
         with mock.patch.object(context_cli.context_smoke, "run_smoke", return_value=payload):
             with mock.patch("builtins.print") as mock_print:
                 rc = context_cli.run(args)
@@ -191,11 +192,10 @@ class ContextCliTests(unittest.TestCase):
                 "session_index_db": "/tmp/session.db",
                 "sync": {"scanned": 1},
             },
-        ):
-            with mock.patch.object(context_cli, "_source_freshness", return_value={"x": 1}):
-                with mock.patch.object(context_cli.context_native, "health_payload", return_value={"available_backends": ["go"]}):
-                    with mock.patch("builtins.print") as mock_print:
-                        rc = context_cli.run(args)
+        ), mock.patch.object(context_cli, "_source_freshness", return_value={"x": 1}), mock.patch.object(
+            context_cli.context_native, "health_payload", return_value={"available_backends": ["go"]}
+        ), mock.patch("builtins.print") as mock_print:
+            rc = context_cli.run(args)
         self.assertEqual(rc, 0)
         printed = "\n".join(" ".join(str(x) for x in call.args) for call in mock_print.call_args_list)
         self.assertIn('"all_ok":true', printed)
@@ -212,11 +212,10 @@ class ContextCliTests(unittest.TestCase):
                 "session_index_db": "/tmp/session.db",
                 "sync": {"scanned": 1},
             },
-        ):
-            with mock.patch.object(context_cli, "_source_freshness", return_value={"x": 1}):
-                with mock.patch.object(context_cli.context_native, "health_payload", return_value={"available_backends": ["go"]}):
-                    with mock.patch("builtins.print") as mock_print:
-                        rc = context_cli.run(args)
+        ), mock.patch.object(context_cli, "_source_freshness", return_value={"x": 1}), mock.patch.object(
+            context_cli.context_native, "health_payload", return_value={"available_backends": ["go"]}
+        ), mock.patch("builtins.print") as mock_print:
+            rc = context_cli.run(args)
         self.assertEqual(rc, 0)
         printed = "\n".join(" ".join(str(x) for x in call.args) for call in mock_print.call_args_list)
         self.assertIn('"source_freshness": {', printed)

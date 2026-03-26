@@ -6,10 +6,10 @@ from __future__ import annotations
 import json
 import os
 import re
+from collections.abc import Iterable
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterable
-
+from typing import Any
 
 TEXT_FILE_SUFFIXES = frozenset({".md", ".txt", ".json", ".jsonl", ".log"})
 
@@ -37,9 +37,7 @@ def iter_shared_files(shared_root: Path | str, max_files: int) -> list[Path]:
     files: list[Path] = [
         path
         for path in root.rglob("*")
-        if path.is_file()
-        and not path.name.startswith(".")
-        and path.suffix.lower() in TEXT_FILE_SUFFIXES
+        if path.is_file() and not path.name.startswith(".") and path.suffix.lower() in TEXT_FILE_SUFFIXES
     ]
     files.sort(key=safe_mtime, reverse=True)
     return files[: max(1, int(max_files))]

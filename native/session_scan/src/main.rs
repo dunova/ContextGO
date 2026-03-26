@@ -28,6 +28,8 @@ const SKIPPED_QUERY_MISS: &str = "query not matched";
 const SKIPPED_CURRENT_WORKDIR: &str = "skip current workdir session";
 
 // ── noise filter tables ───────────────────────────────────────────────────────
+// Auto-generated from config/noise_markers.json — do not edit manually.
+// Run scripts/check_noise_sync.py to verify sync with Python/Go backends.
 
 /// Substrings that mark a text fragment as noise.  Checked case-insensitively.
 const NOISE_MARKERS: &[&str] = &[
@@ -76,7 +78,7 @@ const NOISE_MARKERS: &[&str] = &[
     "状态汇总：",
     "已关闭且有有效产出",
     "我先按仓库要求做上下文预热",
-    "我先做"全局一致性同步"检查",
+    "我先做\"全局一致性同步\"检查",
     "主链不再是瓶颈",
     "现在真正该优化的是",
     "native 结果质量现状",
@@ -88,7 +90,7 @@ const NOISE_MARKERS: &[&str] = &[
     "我继续直接提主链结果质量",
     "我先复跑主链",
     "再决定要不要进一步做字段级过滤",
-    "现在不是"能不能跑"的问题",
+    "现在不是\"能不能跑\"的问题",
     "让它质量更好，能替代旧逻辑",
     "我继续。",
     "我现在直接复跑主链",
@@ -105,6 +107,7 @@ const NOISE_MARKERS: &[&str] = &[
 ];
 
 /// Line prefixes that mark a fragment as noise.  Checked case-insensitively.
+// Auto-generated from config/noise_markers.json — do not edit manually.
 const NOISE_PREFIXES: &[&str] = &["##", "```", "> ", "- [", "* ", "http", "https"];
 
 /// Field name used when a match is found in an unparsed raw line.
