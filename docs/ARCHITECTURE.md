@@ -1,5 +1,17 @@
 # ContextGO 单体产品架构
 
+## Architecture Diagram / 架构图
+
+```mermaid
+flowchart LR
+    A["Terminal / Agent Histories<br/>终端与 agent 历史"] --> B["ContextGO Daemon<br/>采集 + 脱敏"]
+    B --> C["Session Index / Memory Index<br/>SQLite + Local Files"]
+    C --> D["ContextGO CLI<br/>Search / Semantic / Save / Export / Import"]
+    D --> E["Viewer API<br/>本地可视化与查询"]
+    D --> F["Health / Smoke / Benchmark<br/>验证与交付链路"]
+    C --> G["Rust / Go Hot Paths<br/>渐进式热点提速"]
+```
+
 ## 架构树
 
 ```text
@@ -48,6 +60,18 @@ ContextGO/
 
 4. **运维验证层**  
    `scripts/context_healthcheck.sh`、`scripts/context_smoke.py`、`scripts/smoke_installed_runtime.py` 以及 `benchmarks/run.py` 统一保障 local-first 路线的安装态可用性和性能。Smoke 脚本依次调用 `context_cli health`、quality gate、读写导出导入、`semantic`、`serve`；benchmark harness 驱动 `context_cli health`/`search`、`session_index.sync` 基准。这些检查依赖 `scripts/context_config.storage_root()`（默认 `~/.contextgo` 或由 `CONTEXTGO_STORAGE_ROOT` 覆盖）与安装态 `INSTALL_ROOT=~/.local/share/contextgo/scripts`，发布包必须确保 storage root 可写，并在 INSTALL_ROOT 下至少提供 `context_cli.py` 与 `e2e_quality_gate.py`；同时保留 `context_healthcheck.sh`、`benchmarks/run.py` 等运维入口，避免健康检查或 benchmark 验证因路径缺失而失效。
+
+## English Summary
+
+ContextGO is organized as a local-first monolith:
+
+- `scripts/` is the control plane
+- `native/` is the hot-path acceleration layer
+- `benchmarks/` is the performance truth layer
+- `artifacts/` is the evaluation memory layer
+- `templates/` is the deployment layer
+
+The design goal is simple: keep one operational surface, one CLI, one validation chain, and one progressively faster runtime.
 
 ## 数据流
 

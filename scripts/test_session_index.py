@@ -360,7 +360,7 @@ class SessionIndexTests(unittest.TestCase):
         self.assertGreater(noisy, clean)
 
     def test_current_repo_meta_result_is_excluded(self) -> None:
-        repo = str(Path("/Volumes/AI/GitHub/context-mesh-foundry").resolve())
+        repo = str(Path("/workspace/ContextGO").resolve())
         with mock.patch("pathlib.Path.cwd", return_value=Path(repo)):
             self.assertTrue(
                 session_index._is_current_repo_meta_result(
@@ -379,7 +379,7 @@ class SessionIndexTests(unittest.TestCase):
             self.assertTrue(
                 session_index._is_current_repo_meta_result(
                     repo,
-                    "仓库：/Volumes/AI/GitHub/context-mesh-foundry。你负责 `benchmarks/**`。改动文件: benchmarks/run.py",
+                    "仓库：/workspace/ContextGO。你负责 `benchmarks/**`。改动文件: benchmarks/run.py",
                     "/tmp/session.jsonl",
                 )
             )
@@ -402,7 +402,7 @@ class SessionIndexTests(unittest.TestCase):
 
     def test_build_snippet_prefers_summary_marker_without_term_hit(self) -> None:
         text = (
-            "/Volumes/AI/GitHub/context-mesh-foundry "
+            "/workspace/ContextGO "
             "一些过程说明。 "
             "变更概览：统一默认安装目录与服务标签。 "
             "后面还有更多细节。"
@@ -433,13 +433,13 @@ class SessionIndexTests(unittest.TestCase):
     def test_path_only_content_is_demoted(self) -> None:
         self.assertTrue(
             session_index._looks_like_path_only_content(
-                "/Volumes/AI/GitHub/context-mesh-foundry",
-                "/Volumes/AI/GitHub/context-mesh-foundry",
+                "/workspace/ContextGO",
+                "/workspace/ContextGO",
             )
         )
         self.assertFalse(
             session_index._looks_like_path_only_content(
-                "/Volumes/AI/GitHub/context-mesh-foundry",
+                "/workspace/ContextGO",
                 "变更概览：统一默认安装目录。",
             )
         )
@@ -499,7 +499,7 @@ class SessionIndexTests(unittest.TestCase):
                                 "type": "session_meta",
                                 "payload": {
                                     "id": "current-session",
-                                    "cwd": "/Volumes/AI/GitHub/context-mesh-foundry",
+                                    "cwd": "/workspace/ContextGO",
                                     "timestamp": "2026-03-26T00:00:00Z",
                                 },
                             }
@@ -509,7 +509,7 @@ class SessionIndexTests(unittest.TestCase):
                                 "type": "event_msg",
                                 "payload": {
                                     "type": "user_message",
-                                    "message": "仓库：/Volumes/AI/GitHub/context-mesh-foundry。你负责 GitHub notebookLM 测试。",
+                                    "message": "仓库：/workspace/ContextGO。你负责 GitHub notebookLM 测试。",
                                 },
                             }
                         ),
@@ -547,7 +547,7 @@ class SessionIndexTests(unittest.TestCase):
             query = "继续搜索 GitHub 和 X 研究 notebookLM 的终端调用方案"
             with mock.patch.object(session_index, "_home", return_value=root):
                 with mock.patch.dict(os.environ, {session_index.SESSION_DB_PATH_ENV: str(db_path)}, clear=False):
-                    with mock.patch("pathlib.Path.cwd", return_value=Path("/Volumes/AI/GitHub/context-mesh-foundry")):
+                    with mock.patch("pathlib.Path.cwd", return_value=Path("/workspace/ContextGO")):
                         session_index.sync_session_index(force=True)
                         rows = session_index._search_rows(query, limit=5, literal=True)
             self.assertEqual(rows[0]["session_id"], "archived-session")
