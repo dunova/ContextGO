@@ -1047,12 +1047,19 @@ def format_search_results(query: str, *, search_type: str = "all", limit: int = 
     results = _search_rows(query, limit=limit, literal=literal)
     if not results:
         return "No matches found in local session index."
+
+    def compact_snippet(text: str, max_chars: int = 140) -> str:
+        clean = re.sub(r"\s+", " ", str(text or "")).strip()
+        if len(clean) <= max_chars:
+            return clean
+        return clean[: max_chars - 1].rstrip() + "…"
+
     lines = [f"Found {len(results)} sessions (local index):"]
     for idx, row in enumerate(results, 1):
         lines.append(f"[{idx}] {row['created_at'][:10]} | {row['session_id']} | {row['source_type']}")
         lines.append(f"    {row['title']}")
         lines.append(f"    File: {row['file_path']}")
-        lines.append(f"    > {row['snippet']}")
+        lines.append(f"    > {compact_snippet(row['snippet'])}")
     return "\n".join(lines)
 
 

@@ -144,11 +144,6 @@ def evaluate(query: str) -> dict:
 
 def append_log(round_no: int, payload: dict, decision: str, note: str) -> None:
     ARTIFACT_ROOT.mkdir(parents=True, exist_ok=True)
-    if not LOG_PATH.exists():
-        LOG_PATH.write_text(
-            "round\ttimestamp\tstability\trecall\ttoken_efficiency\ttotal_score\tdecision\tnote\n",
-            encoding="utf-8",
-        )
     row = "\t".join(
         [
             f"R{round_no:03d}",
@@ -161,8 +156,19 @@ def append_log(round_no: int, payload: dict, decision: str, note: str) -> None:
             note,
         ]
     )
-    with LOG_PATH.open("a", encoding="utf-8") as handle:
-        handle.write(row + "\n")
+    header = "round\ttimestamp\tstability\trecall\ttoken_efficiency\ttotal_score\tdecision\tnote"
+    lines = [header]
+    if LOG_PATH.exists():
+        existing = [line.rstrip("\n") for line in LOG_PATH.read_text(encoding="utf-8").splitlines() if line.strip()]
+        if existing:
+            lines = [existing[0]]
+            target_prefix = f"R{round_no:03d}\t"
+            for existing_line in existing[1:]:
+                if existing_line.startswith(target_prefix):
+                    continue
+                lines.append(existing_line)
+    lines.append(row)
+    LOG_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
     STATE_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 

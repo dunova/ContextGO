@@ -410,6 +410,26 @@ class SessionIndexTests(unittest.TestCase):
         snippet = session_index._build_snippet(text, ["2026-03-25"])
         self.assertIn("变更概览", snippet)
 
+    def test_format_search_results_compacts_long_snippet(self) -> None:
+        with mock.patch.object(
+            session_index,
+            "_search_rows",
+            return_value=[
+                {
+                    "source_type": "codex_session",
+                    "session_id": "s1",
+                    "title": "/tmp/project",
+                    "file_path": "/tmp/file.jsonl",
+                    "created_at": "2026-03-26T00:00:00Z",
+                    "snippet": "A" * 300,
+                }
+            ],
+        ):
+            text = session_index.format_search_results("x", limit=1)
+        self.assertIn("A" * 50, text)
+        self.assertIn("…", text)
+        self.assertLess(len(text.split("> ", 1)[1]), 160)
+
     def test_path_only_content_is_demoted(self) -> None:
         self.assertTrue(
             session_index._looks_like_path_only_content(
