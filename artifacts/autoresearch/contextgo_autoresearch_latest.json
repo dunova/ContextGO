@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-03-26T10:50:01",
+  "timestamp": "2026-03-26T10:54:07",
   "query": "NotebookLM",
   "dimensions": {
     "stability": 100,
@@ -46,7 +46,7 @@
   "task_name": "ContextGO AutoResearch",
   "target_score": 95,
   "max_rounds": 100,
-  "round": 20,
-  "note": "prefer-latest-best-metadata",
-  "git_commit": "feb69d0"
+  "round": 21,
+  "note": "add-best-generated-at-and-target",
+  "git_commit": "078e02c"
 }

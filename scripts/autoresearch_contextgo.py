@@ -273,7 +273,10 @@ def append_log(round_no: int, payload: dict, decision: str, note: str) -> None:
                 -_metric_value(item, "native_text_bytes", 10**9),
             ),
         )
-        BEST_PATH.write_text(json.dumps(best, ensure_ascii=False, indent=2), encoding="utf-8")
+        best_payload = dict(best)
+        best_payload["generated_at"] = datetime.now().isoformat(timespec="seconds")
+        best_payload["target_score"] = payload.get("target_score")
+        BEST_PATH.write_text(json.dumps(best_payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def build_parser() -> argparse.ArgumentParser:

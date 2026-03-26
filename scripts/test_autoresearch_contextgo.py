@@ -73,6 +73,8 @@ class AutoResearchTests(unittest.TestCase):
             best = json.loads(best_path.read_text(encoding="utf-8"))
             self.assertEqual(best["round"], 12)
             self.assertEqual(best["note"], "metrics")
+            self.assertEqual(best["target_score"], None)
+            self.assertIn("generated_at", best)
 
     def test_append_log_keeps_recent_metric_history(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
