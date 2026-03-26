@@ -1,10 +1,12 @@
 # Launch Copy
 
-## One-Liner
+## One-Liner / 一句话简介
 
 ContextGO 是一个面向多 agent AI 编码团队的本地优先上下文运行时：统一 CLI、精确检索、记忆管理、smoke 验证与 Rust/Go 热路径，默认无 MCP、无 Docker、无向量云依赖。
 
-## GitHub Release Copy
+ContextGO is a local-first context runtime for multi-agent AI coding teams, unifying search, memory, smoke validation, and Rust/Go hot paths behind one MCP-free CLI.
+
+## GitHub Release Copy / GitHub 发布文案
 
 ContextGO 是我们把“上下文系统”真正产品化之后的结果。
 
@@ -25,15 +27,30 @@ ContextGO 是我们把“上下文系统”真正产品化之后的结果。
 
 那么 ContextGO 会比大多数“再多一层编排”更贴近真实工作流。
 
-## Hacker News Title
+English version:
+
+ContextGO is what happens when a context system stops being a demo and becomes an actual local product.
+
+It is not another bridge layer, and it does not assume cloud vectors, Docker, or MCP as the default path.
+
+What it does is straightforward:
+
+- unify Codex, Claude, shell, and memory files into one searchable context chain
+- expose one CLI for `search / semantic / save / serve / health / smoke / native-scan`
+- ship with health, smoke, benchmark, and installed-runtime validation
+- upgrade hot paths with Rust/Go without changing operator workflows
+
+If your team cares about local data boundaries, reproducibility, rollback, and lower token cost, ContextGO is designed for that operating model.
+
+## Hacker News Title / HN 标题
 
 Show HN: ContextGO — a local-first context runtime for AI coding teams
 
-## Reddit Title
+## Reddit Title / Reddit 标题
 
 I built ContextGO: a local-first context + memory runtime for AI coding teams (no MCP, no Docker, no cloud vector dependency)
 
-## X Post
+## X Post / X 文案
 
 Built `ContextGO`: a local-first context runtime for AI coding teams.
 
