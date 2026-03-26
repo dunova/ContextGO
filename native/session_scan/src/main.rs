@@ -620,7 +620,7 @@ fn process_file(item: &WorkItem, query: &str) -> Result<SessionSummary> {
                         let score = candidate_score(detail.field, &detail.text, &query_lower);
                         let replace = best_match
                             .as_ref()
-                            .map_or(true, |(best_score, _, _)| score > *best_score);
+                            .is_none_or(|(best_score, _, _)| score > *best_score);
                         if replace {
                             best_match = Some((score, candidate, detail.field.to_string()));
                         }
@@ -636,7 +636,7 @@ fn process_file(item: &WorkItem, query: &str) -> Result<SessionSummary> {
                     let score = candidate_score(RAW_LINE_FIELD, &line, &query_lower);
                     let replace = best_match
                         .as_ref()
-                        .map_or(true, |(best_score, _, _)| score > *best_score);
+                        .is_none_or(|(best_score, _, _)| score > *best_score);
                     if replace {
                         best_match = Some((score, candidate, RAW_LINE_FIELD.to_string()));
                     }
