@@ -1,10 +1,58 @@
 # ContextGO
 
+[![GitHub stars](https://img.shields.io/github/stars/dunova/ContextGO?style=flat)](https://github.com/dunova/ContextGO/stargazers)
+[![Verify](https://github.com/dunova/ContextGO/actions/workflows/verify.yml/badge.svg)](https://github.com/dunova/ContextGO/actions/workflows/verify.yml)
+[![Release](https://img.shields.io/github/v/release/dunova/ContextGO)](https://github.com/dunova/ContextGO/releases)
+[![License](https://img.shields.io/github/license/dunova/ContextGO)](https://github.com/dunova/ContextGO/blob/main/LICENSE)
+[![Last Commit](https://img.shields.io/github/last-commit/dunova/ContextGO)](https://github.com/dunova/ContextGO/commits/main)
+![Local First](https://img.shields.io/badge/local--first-yes-1d4ed8)
+![MCP Free](https://img.shields.io/badge/MCP-free-111827)
+
 在本地把多 agent 的上下文体验变得可控、透明、可回滚。  
 ContextGO 是一个面向多 agent AI 编码团队的本地优先上下文运行时：统一 CLI、精确检索、记忆管理、viewer、smoke 验证与 Native 热路径，全程默认无 MCP、无 Docker、无向量云依赖。
 
 ContextGO is a local-first context runtime for multi-agent engineering teams.  
 It unifies search, memory, viewer, smoke validation, and native hot paths behind one CLI, without requiring MCP, Docker, or cloud vector infrastructure by default.
+
+如果你也在做 Codex / Claude / shell 协作，而且你需要一套本地优先、可回滚、可交付的上下文底座，先点个 `star`，等你真正要接这条链时能直接找回它。
+
+## 一句话价值
+
+当团队开始同时使用 Codex、Claude、shell、脚本和本地记忆文件时，真正缺的不是再多一层编排，而是一个可信、可查、可测、可交付的本地上下文底座。
+
+## 为什么会被 star
+
+- 不是 demo：它自带 `health / smoke / benchmark / installed-runtime` 验证闭环。
+- 不是桥接拼装：它默认就是一个单体产品，不依赖 MCP 壳层存活。
+- 不是云依赖产品：默认无向量云、无 Docker、无远程服务前置条件。
+- 不是一次性重写：Python 主链稳定交付，Rust/Go 只替换热点路径。
+
+## 信任块
+
+- 默认运行链路：`local-first / MCP-free / Docker-free`
+- 当前高分基线：`autoresearch = 99.0`
+- 当前关键体积指标：
+  - `health_bytes = 386`
+  - `smoke_bytes = 346`
+  - `search_bytes = 1417`
+  - `native_total_bytes = 4382`
+- 当前最佳轮次快照见：
+  - [artifacts/autoresearch/contextgo_autoresearch_best.json](/Volumes/AI/GitHub/context-mesh-foundry/artifacts/autoresearch/contextgo_autoresearch_best.json)
+
+## 快速判断它适不适合你
+
+适合：
+
+- 你在做多 agent AI 编码团队协作
+- 你希望上下文、记忆、检索都留在本地
+- 你需要一套可交付、可审计、可回滚的内部工具底座
+- 你想提速，但不想把现有工作流全盘推翻
+
+不适合：
+
+- 你只想要一个简单聊天记录查看器
+- 你优先接受云向量服务和中心化编排
+- 你没有本地部署和本地验证的要求
 
 ## 为什么值得关注
 
@@ -20,6 +68,17 @@ It unifies search, memory, viewer, smoke validation, and native hot paths behind
 - 私有团队记忆层：把关键信息沉淀在本地，而不是散在聊天窗口里。
 - 交付前质量门：用 `smoke + health + benchmark` 验证安装态与工作副本一致。
 - 渐进性能升级：不重写整套产品，只把最热的检索扫描链路逐步挪到 Rust/Go。
+
+## 为什么不是另一个 MCP / 云记忆工具
+
+| 对比项 | ContextGO | 典型 MCP / 云记忆方案 |
+|---|---|---|
+| 默认依赖 | 本地文件系统 + SQLite | 外部服务 / 桥接层 / 远程 API |
+| 数据边界 | 默认留在本机 | 常常要把上下文送出本地 |
+| 运维复杂度 | 单体部署 + 本地验证 | 多进程、多服务、多连接点 |
+| 故障定位 | `health + smoke + benchmark` 一条链 | 常分散在多层桥接与外部状态 |
+| 提速路径 | 渐进式 Rust/Go 热点替换 | 常常要改接口或改运行方式 |
+| 目标用户 | 真正在交付内部工具的团队 | 更偏实验集成与演示编排 |
 
 ## 架构树
 
@@ -70,6 +129,13 @@ Capture -> Index -> Search -> Save/Recall -> Viewer -> Smoke/Health -> Native Ho
 git clone https://github.com/dunova/ContextGO.git
 cd ContextGO
 bash scripts/unified_context_deploy.sh
+python3 scripts/context_cli.py health
+python3 scripts/context_cli.py smoke
+```
+
+如果你只想先看“它到底能不能跑”，直接执行：
+
+```bash
 python3 scripts/context_cli.py health
 python3 scripts/context_cli.py smoke
 ```
@@ -148,6 +214,13 @@ ContextGO 适合这些团队：
 - 更低依赖
 - 更高可审计性
 
+## 发布与增长素材
+
+- 架构说明：[docs/ARCHITECTURE.md](/Volumes/AI/GitHub/context-mesh-foundry/docs/ARCHITECTURE.md)
+- 发布说明：[docs/RELEASE_NOTES_0.6.1.md](/Volumes/AI/GitHub/context-mesh-foundry/docs/RELEASE_NOTES_0.6.1.md)
+- 发布文案：[docs/LAUNCH_COPY.md](/Volumes/AI/GitHub/context-mesh-foundry/docs/LAUNCH_COPY.md)
+- 故障排查：[docs/TROUBLESHOOTING.md](/Volumes/AI/GitHub/context-mesh-foundry/docs/TROUBLESHOOTING.md)
+
 ## English TL;DR
 
 ### What it is
@@ -205,6 +278,7 @@ ContextGO is a local-first context and memory runtime for AI coding teams.
 - star 仓库
 - 用它跑你自己的本地 AI 上下文底座
 - 提 issue / PR / benchmark 数据
+- 把你们的真实使用场景和性能数据反馈回来
 
 ## 版本
 
