@@ -24,8 +24,8 @@ Only the latest commit on the `main` branch is actively supported with security 
 
 To report a vulnerability privately:
 
-1. Email the maintainers at the address listed in the repository's `package.json` or `pyproject.toml` (if present), or contact the listed security contact in the repository profile.
-2. If no email address is available, use GitHub's private vulnerability reporting feature: navigate to the repository's **Security** tab and click **Report a vulnerability**.
+1. Report via GitHub Security Advisories at https://github.com/dunova/ContextGO/security/advisories/new
+2. If you prefer, contact the maintainers directly via the repository's **Security** tab (**Report a vulnerability** button).
 3. Encrypt sensitive reports using the maintainer's public PGP key if one is published in the repository.
 
 ### What to include

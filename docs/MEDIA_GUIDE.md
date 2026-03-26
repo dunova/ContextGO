@@ -94,10 +94,10 @@ Place all media assets in `docs/media/`:
 
 ```text
 docs/media/
-├── cli-search.png
-├── cli-smoke.png
-├── viewer-search.png
-└── architecture.png
+├── cli-search.svg
+├── cli-smoke.svg
+├── viewer-health.svg
+└── architecture.svg
 ```
 
 Two SVG assets are already committed and can be used in the README immediately:
@@ -111,9 +111,9 @@ Two SVG assets are already committed and can be used in the README immediately:
 
 If producing only one set of assets, prioritize these three:
 
-- `cli-search.png`
-- `viewer-search.png`
-- `architecture.png`
+- `cli-search.svg`
+- `viewer-health.svg`
+- `architecture.svg`
 
 当前仓库已内置两张静态 SVG 素材，可直接先用于 README：
 

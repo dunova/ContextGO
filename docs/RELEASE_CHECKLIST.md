@@ -11,7 +11,7 @@ This checklist must be completed in order for every release. Each step has a def
 - [ ] **CHANGELOG entry added.** `CHANGELOG.md` contains a new section at the top for the new version with date, Story, Added, Changed, Fixed, and Removed subsections as applicable.
 - [ ] **Release notes file created.** `docs/RELEASE_NOTES_<version>.md` exists and contains Highlights, Breaking Changes, New Features, Improvements, Bug Fixes, Performance, Documentation, Contributors, Verification, and Upgrade Path sections.
 - [ ] **No secrets or personal paths in code.** Run `grep -r "REDACTED\|password\|secret\|token\|/Users/\|/home/[a-z]\+" scripts/ native/ benchmarks/` and confirm zero matches on sensitive patterns. Confirm no hardcoded absolute local paths remain.
-- [ ] **Storage root configuration verified.** `scripts/context_config.py` `storage_root()` defaults to `~/.local/share/contextgo` (or the value of `CONTEXTGO_STORAGE_ROOT`). Confirm the path is readable and writable under the deploying user on the target machine.
+- [ ] **Storage root configuration verified.** `scripts/context_config.py` `storage_root()` defaults to `~/.contextgo` (or the value of `CONTEXTGO_STORAGE_ROOT`). Confirm the path is readable and writable under the deploying user on the target machine.
 - [ ] **Environment variable inventory reviewed.** All `CONTEXTGO_*` environment variables referenced in code are documented in `docs/ARCHITECTURE.md` or `CONTRIBUTING.md`.
 
 ---

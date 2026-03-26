@@ -17,3 +17,6 @@ Restart=no
 
 # Pass the storage root explicitly so the script does not rely on $HOME alone.
 Environment=CONTEXTGO_STORAGE_ROOT=%h/.contextgo
+
+[Install]
+WantedBy=context-healthcheck.timer

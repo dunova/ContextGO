@@ -22,7 +22,7 @@ git clone https://github.com/dunova/ContextGO.git
 cd ContextGO
 
 # Install Python dependencies
-pip install -r requirements.txt
+pip install pytest
 
 # Run the deploy script to initialize the local environment
 bash scripts/unified_context_deploy.sh
@@ -39,7 +39,7 @@ The storage root defaults to `~/.contextgo`. This can be overridden with the `CO
 ```bash
 # Rust
 cd native/session_scan
-CARGO_TARGET_DIR=/tmp/context_mesh_target cargo build --release
+CARGO_TARGET_DIR=/tmp/contextgo_target cargo build --release
 
 # Go
 cd native/session_scan_go
@@ -101,7 +101,7 @@ bash -n scripts/*.sh
 python3 -m py_compile scripts/*.py
 
 # Unit and integration tests
-python3 -m pytest scripts/test_context_cli.py scripts/test_context_core.py scripts/test_session_index.py
+python3 -m pytest scripts/test_context_cli.py scripts/test_context_core.py scripts/test_session_index.py scripts/test_context_native.py scripts/test_context_smoke.py scripts/test_autoresearch_contextgo.py
 
 # End-to-end quality gate
 python3 scripts/e2e_quality_gate.py

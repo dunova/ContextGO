@@ -165,7 +165,7 @@ Remote sync is disabled by default. Enable it only when you have a running Conte
 
 | Variable | Default | Description |
 |---|---|---|
-| `CONTEXTGO_NATIVE_TARGET_DIR` | `/tmp/contextgo_target` | Directory for Rust/Go native build artifacts. This is volatile by default. For persistent builds, set to a path under `~/.cache`. |
+| `CONTEXTGO_NATIVE_TARGET_DIR` | `~/.cache/contextgo/target` | Directory for Rust/Go native build artifacts. Defaults to a user-owned cache path to prevent TOCTOU races on multi-tenant systems. Override to a different path if needed. |
 | `CONTEXTGO_NATIVE_HEALTH_CACHE_TTL_SEC` | `30` | TTL in seconds for caching the native backend health probe result. |
 | `CONTEXTGO_ACTIVE_WORKDIR` | (current directory) | Working directory passed to native processes. Set automatically by `context_native.py`. |
 

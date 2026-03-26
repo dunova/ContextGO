@@ -68,7 +68,7 @@
     <key>CONTEXTGO_LOOP_JITTER_SEC</key><string>0.7</string>
   </dict>
 
-  <!-- Prevent the agent from being unloaded when the user switches sessions. -->
+  <!-- Do not create a new login session for this agent; it runs in the existing user session context. -->
   <key>SessionCreate</key><false/>
 
 </dict>

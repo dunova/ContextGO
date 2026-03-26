@@ -50,7 +50,7 @@ bash scripts/context_healthcheck.sh
 
 ## Viewer not reachable
 
-**Symptom:** After running `python3 scripts/context_cli.py serve`, `http://127.0.0.1:38880/api/health` returns a connection error.
+**Symptom:** After running `python3 scripts/context_cli.py serve`, `http://127.0.0.1:37677/api/health` returns a connection error.
 
 **Cause:** Port conflict, stale process, health check not yet ready, or server bound to a non-loopback address.
 
@@ -63,15 +63,15 @@ bash scripts/context_healthcheck.sh
 
 2. Check for port conflicts and kill stale processes:
    ```bash
-   lsof -iTCP:38880
+   lsof -iTCP:37677
    # If a process is listed, kill it:
    kill <PID>
    ```
 
 3. Start the viewer and wait a moment before querying:
    ```bash
-   python3 scripts/context_cli.py serve --host 127.0.0.1 --port 38880
-   curl http://127.0.0.1:38880/api/health
+   python3 scripts/context_cli.py serve --host 127.0.0.1 --port 37677
+   curl http://127.0.0.1:37677/api/health
    ```
 
 4. Run the smoke test, which includes the viewer health check:
