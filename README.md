@@ -1,50 +1,80 @@
 # ContextGO
 
-ContextGO 是一个面向多 agent AI 编码团队的本地优先上下文运行时。
-它把上下文采集、会话索引、记忆存储、viewer、运维验证和 Native 热点迁移收进一个单体产品里：无 MCP、无 Docker、默认无远程依赖。
+在本地把多 agent 的上下文体验变得可控、透明、可回滚。  
+ContextGO 是一个面向多 agent AI 编码团队的本地优先上下文运行时：统一 CLI、精确检索、记忆管理、viewer、smoke 验证与 Native 热路径，全程默认无 MCP、无 Docker、无向量云依赖。
 
-## 产品定位
+ContextGO is a local-first context runtime for multi-agent engineering teams.  
+It unifies search, memory, viewer, smoke validation, and native hot paths behind one CLI, without requiring MCP, Docker, or cloud vector infrastructure by default.
 
-- 本地单体：默认所有核心能力都在本机完成，数据留在本地 SQLite 与本地目录。
-- 统一入口：统一通过 `python3 scripts/context_cli.py` 驱动搜索、记忆、导入导出、viewer、运维与 smoke。
-- 低 token：优先精确检索、局部 snippet、结构化回退，不依赖向量云调用。
-- 可商用：带部署脚本、healthcheck、smoke、benchmark、release 文档，适合直接交付团队使用。
-- 渐进提速：Python 主链先稳定交付，Rust/Go 只替换热点路径，不破坏 CLI 体验。
+## 为什么值得关注
 
-## 为什么存在
+- 本地优先：默认数据只落在本机 `SQLite + ~/.contextgo`。
+- 多 agent 友好：把 Codex、Claude、shell、记忆文件统一到一条上下文链。
+- 低 token：优先精确检索、局部 snippet、结构化回退，不先上重型语义层。
+- 可商用交付：自带部署脚本、healthcheck、smoke、benchmark、release 文档。
+- 渐进提速：先稳定 Python 主链，再用 Rust/Go 只替换热点，不破坏用户命令。
 
-多数 AI 编码团队真正缺的不是再加一个编排层，而是一个可控、可审计、可回滚的本地上下文底座。
+## 典型场景
 
-ContextGO 解决的是四个直接问题：
+- 多 agent 调试接力：上一个终端没讲清的上下文，下一终端直接搜回来。
+- 私有团队记忆层：把关键信息沉淀在本地，而不是散在聊天窗口里。
+- 交付前质量门：用 `smoke + health + benchmark` 验证安装态与工作副本一致。
+- 渐进性能升级：不重写整套产品，只把最热的检索扫描链路逐步挪到 Rust/Go。
 
-- 会话和历史分散在 Codex、Claude、shell、本地记忆文件里，难统一搜索。
-- 一旦把上下文能力拆成多个桥接项目，维护成本和故障面会迅速上升。
-- 为了“更智能”而引入远程依赖，常常会增加 token、延迟和不确定性。
-- 热点模块需要提速，但团队不能接受每次提速都改命令、改部署、改运维路径。
+## 架构树
 
-## 核心能力
+```text
+ContextGO/
+├── docs/                      # 架构、发布、故障排查、商业交付文档
+├── scripts/                   # 单体主链：CLI / daemon / server / smoke / health / deploy
+│   ├── context_cli.py         # 唯一对外入口：search / semantic / save / serve / smoke
+│   ├── context_daemon.py      # 会话采集、脱敏、写盘
+│   ├── session_index.py       # 会话索引与检索排序
+│   ├── memory_index.py        # 记忆 / observation 索引
+│   ├── context_server.py      # viewer 服务入口
+│   ├── context_maintenance.py # 清理与维护
+│   ├── context_smoke.py       # 工作副本 smoke
+│   ├── context_healthcheck.sh # 安装态 / 本地健康检查
+│   └── unified_context_deploy.sh
+├── native/
+│   ├── session_scan/          # Rust 热路径
+│   └── session_scan_go/       # Go 热路径
+├── benchmarks/                # Python / native-wrapper 基准
+├── integrations/gsd/          # 与 GSD / gstack 工作流衔接
+├── artifacts/                 # autoresearch 结果、测试集、QA 报告
+├── templates/                 # launchd / systemd-user 模板
+├── examples/                  # 配置示例
+└── patches/                   # 兼容补丁说明
+```
 
-- `search`：统一搜 Codex、Claude、shell 与本地索引。
-- `semantic`：先查本地记忆，再回退历史内容。
-- `save` / `export` / `import`：沉淀与迁移团队记忆。
-- `serve`：启动本地 viewer。
-- `maintain`：执行维护与修复。
-- `health`：检查主链健康。
-- `smoke`：跑完整工作副本 smoke。
-- `native-scan`：验证 Rust/Go 热路径原型。
+更详细的说明见 [docs/ARCHITECTURE.md](/Volumes/AI/GitHub/context-mesh-foundry/docs/ARCHITECTURE.md)。
 
-## 10 分钟上线
+## 核心链路
+
+```text
+Capture -> Index -> Search -> Save/Recall -> Viewer -> Smoke/Health -> Native Hot Paths
+```
+
+对应关系：
+
+- `context_daemon.py`：采集与脱敏
+- `session_index.py` / `memory_index.py`：索引与检索
+- `context_cli.py`：统一命令入口
+- `context_server.py`：viewer API
+- `context_smoke.py` / `context_healthcheck.sh`：质量门
+- `native/session_scan*`：热点扫描提速
+
+## 10 分钟上手
 
 ```bash
 git clone https://github.com/dunova/ContextGO.git
 cd ContextGO
-cp .env.example .env
 bash scripts/unified_context_deploy.sh
 python3 scripts/context_cli.py health
 python3 scripts/context_cli.py smoke
 ```
 
-## 统一命令
+## 命令入口
 
 ```bash
 python3 scripts/context_cli.py search "auth root cause" --limit 10 --literal
@@ -59,74 +89,92 @@ python3 scripts/context_cli.py smoke
 python3 scripts/context_cli.py native-scan --backend auto --threads 4
 ```
 
-## 部署与运行时
+## 默认运行时
 
-- 默认安装目录：`~/.local/share/contextgo`
-- 默认数据目录：`~/.contextgo`
-- 本地服务标签：`com.contextgo.daemon`、`com.contextgo.healthcheck`
+- 安装目录：`~/.local/share/contextgo`
+- 数据目录：`~/.contextgo`
+- 服务标签：`com.contextgo.daemon` / `com.contextgo.healthcheck`
 - 默认远程同步：关闭
 - 默认信任边界：本机文件系统
 
-默认主链现已统一到 `ContextGO` 目录、标签与命令。
+## 为什么它比“再加一个编排层”更靠谱
+
+- 不把上下文拆成多个桥接项目，减少故障面。
+- 不先依赖云向量库，先把本地命中率、可追溯性和稳定性做好。
+- 所有优化都要过：
+  - `health`
+  - `smoke`
+  - `e2e_quality_gate`
+  - `benchmarks`
+- Native 提速不是另起炉灶，而是挂在同一 CLI 和同一验证链路上。
 
 ## 验证矩阵
-
-发布前推荐至少执行：
 
 ```bash
 bash -n scripts/*.sh
 python3 -m py_compile scripts/*.py benchmarks/*.py
-python3 -m pytest scripts/test_context_cli.py scripts/test_context_core.py scripts/test_session_index.py scripts/test_context_native.py
+python3 -m pytest scripts/test_context_cli.py scripts/test_context_core.py scripts/test_context_native.py scripts/test_context_smoke.py scripts/test_session_index.py
 python3 scripts/e2e_quality_gate.py
 python3 scripts/context_cli.py health
 python3 scripts/context_cli.py smoke
 python3 scripts/smoke_installed_runtime.py
+cd native/session_scan_go && go test ./...
+cd native/session_scan && CARGO_INCREMENTAL=0 cargo test
 python3 -m benchmarks --mode both --iterations 1 --warmup 0 --query benchmark --format text
-go test ./...
 ```
 
-如果你在本地启用了 Native 热路径，还应补跑：
+## 性能路线
 
-```bash
-python3 scripts/context_cli.py native-scan --backend go --threads 2 --query NotebookLM --limit 5 --json
-python3 scripts/context_cli.py native-scan --backend rust --threads 2 --query NotebookLM --limit 5 --json
-```
+当前不是“全面重写”，而是“热点替换”：
 
-## 性能与 Native 路线
-
-ContextGO 当前的路线不是“全面重写”，而是“热点替换”：
-
-1. 先让 Python 主链成为最稳的默认路径。
-2. 用 `benchmarks/` 明确测出瓶颈。
-3. 只把热路径抽到 Rust/Go。
-4. 对外仍然保持同一套 CLI、同一套部署脚本、同一套 smoke。
-
-当前 benchmark 已明确区分：
-
-- `python`：进程内主链成本
-- `native-wrapper`：子进程包装层成本，不等于纯 Go/Rust 核心执行时间
-
-这让性能判断更诚实，不会再把“解释器启动成本”误写成“Native 核心变慢”。
-
-## 架构原则
-
-- 如无必要，勿增实体
-- 默认本地优先
-- 默认低 token、低 surprise
-- 统一入口优先于多模块拼接
-- 兼容保留优先于破坏式重命名
-- 任何优化都必须通过 smoke 与已安装运行时验证
+1. 先把 Python 主链做到最稳。
+2. 用 benchmark 找出瓶颈。
+3. 只把热点挪到 Rust / Go。
+4. 用户侧仍然只面对同一套 `context_cli.py`。
 
 ## 商业化交付视角
 
-ContextGO 适合作为以下场景的内部产品：
+ContextGO 适合这些团队：
 
-- AI 编码团队的本地上下文底座
-- 研发组织的私有记忆与检索运行时
-- 需要低 token、低泄露风险的本地辅助层
-- 需要逐步替换热点而不是整体重写的过渡平台
+- 多 agent AI 编码团队
+- 私有研发知识库团队
+- 对数据边界敏感的企业内网环境
+- 想逐步提速，但不能承受“重写全栈”的团队
 
-它不假设云端向量库，不假设中心化编排服务，也不要求运维额外托管一套旁路基础设施。
+它强调的不是“更大编排”，而是：
+
+- 更低 surprise
+- 更低 token
+- 更低依赖
+- 更高可审计性
+
+## English TL;DR
+
+### What it is
+
+ContextGO is a local-first context and memory runtime for AI coding teams.
+
+### Why teams use it
+
+- One CLI for search, memory, viewer, health, smoke, and native hot paths
+- Local-only by default
+- No MCP required
+- No Docker required
+- No cloud vector dependency required
+
+### What makes it different
+
+- It optimizes for operational trust, not demo complexity
+- It keeps Python as the stable control plane
+- It upgrades hot paths with Rust/Go without changing operator workflows
+- It ships with validation, not just features
+
+### Best fit
+
+- Claude Code / Codex style agent teams
+- private engineering memory layers
+- local-first internal developer tooling
+- incremental performance migration paths
 
 ## FAQ
 
@@ -144,19 +192,22 @@ ContextGO 适合作为以下场景的内部产品：
 
 ### 它是否必须接向量数据库或向量 API？
 
-当前默认不需要。精确索引、结构化 snippet、SQLite 回退和本地记忆已经覆盖主需求。只有当你要处理超长文本块、跨语义弱匹配、跨知识域召回时，才值得评估可选向量层。
+默认不需要。只有当你要做跨语义、低关键词重合、超长文本弱召回时，才值得评估可选向量层。
 
-### 为什么现在只应该看到 ContextGO？
+### 为什么现在仓库里应该主要只看到 ContextGO？
 
-因为主链已经开始全面切换到 `ContextGO`，后续会继续移除剩余兼容命名与旧桥接痕迹。
+因为当前主链目标就是彻底收敛为一个统一产品，而不是多个上游项目的拼接壳层。
+
+## Star 指南
+
+如果 ContextGO 对你的团队有帮助，欢迎：
+
+- star 仓库
+- 用它跑你自己的本地 AI 上下文底座
+- 提 issue / PR / benchmark 数据
 
 ## 版本
 
-- 当前发布版本：`0.6.1`
-- 本轮发布说明：[`docs/RELEASE_NOTES_0.6.1.md`](/Volumes/AI/GitHub/ContextGO/docs/RELEASE_NOTES_0.6.1.md)
-- 历史变更：[`CHANGELOG.md`](/Volumes/AI/GitHub/ContextGO/CHANGELOG.md)
-
-## English Snapshot
-
-ContextGO is a local-first context runtime for multi-agent engineering teams.
-It ships as a commercializable monolith: unified CLI, local indexing, memory storage, smoke checks, deployment scripts, and gradual Rust/Go hot-path migration without changing operator workflows.
+- 当前版本：`0.6.1`
+- 发布说明：[docs/RELEASE_NOTES_0.6.1.md](/Volumes/AI/GitHub/context-mesh-foundry/docs/RELEASE_NOTES_0.6.1.md)
+- 历史变更：[CHANGELOG.md](/Volumes/AI/GitHub/context-mesh-foundry/CHANGELOG.md)

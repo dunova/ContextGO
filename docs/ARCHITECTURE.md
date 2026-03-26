@@ -1,5 +1,31 @@
 # ContextGO 单体产品架构
 
+## 架构树
+
+```text
+ContextGO/
+├── docs/                      # 架构、发布、故障排查、商业交付文档
+├── scripts/                   # 单体主链：CLI / daemon / server / smoke / health / deploy
+│   ├── context_cli.py         # 搜索、语义、记忆、viewer、smoke 的唯一入口
+│   ├── context_daemon.py      # 会话采集与脱敏写盘
+│   ├── session_index.py       # 会话索引与检索排序
+│   ├── memory_index.py        # 记忆 / observation 索引
+│   ├── context_server.py      # viewer 服务入口
+│   ├── context_maintenance.py # 清理、修复、维护
+│   ├── context_smoke.py       # 工作副本 smoke
+│   ├── context_healthcheck.sh # 健康检查
+│   └── unified_context_deploy.sh
+├── native/
+│   ├── session_scan/          # Rust 热路径
+│   └── session_scan_go/       # Go 热路径
+├── benchmarks/                # Python / native-wrapper 基准
+├── integrations/gsd/          # GSD / gstack 对接
+├── artifacts/                 # autoresearch 结果、测试集、QA 报告
+├── templates/                 # launchd / systemd-user 模板
+├── examples/                  # 配置模板
+└── patches/                   # 兼容补丁说明
+```
+
 ## 组件概览
 
 1. **采集层**  
