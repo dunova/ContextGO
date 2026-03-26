@@ -179,6 +179,47 @@ class ContextCliTests(unittest.TestCase):
         printed = "\n".join(" ".join(str(x) for x in call.args) for call in mock_print.call_args_list)
         self.assertIn('"x": 1', printed)
 
+    def test_health_subcommand_compacts_payload_by_default(self) -> None:
+        args = context_cli.build_parser().parse_args(["health"])
+        with mock.patch.object(
+            context_cli.session_index,
+            "health_payload",
+            return_value={
+                "session_index_db_exists": True,
+                "total_sessions": 7,
+                "session_index_db": "/tmp/session.db",
+                "sync": {"scanned": 1},
+            },
+        ):
+            with mock.patch.object(context_cli, "_source_freshness", return_value={"x": 1}):
+                with mock.patch.object(context_cli.context_native, "health_payload", return_value={"available_backends": ["go"]}):
+                    with mock.patch("builtins.print") as mock_print:
+                        rc = context_cli.run(args)
+        self.assertEqual(rc, 0)
+        printed = "\n".join(" ".join(str(x) for x in call.args) for call in mock_print.call_args_list)
+        self.assertIn('"all_ok":true', printed)
+        self.assertNotIn('"source_freshness"', printed)
+
+    def test_health_subcommand_verbose_prints_full_payload(self) -> None:
+        args = context_cli.build_parser().parse_args(["health", "--verbose"])
+        with mock.patch.object(
+            context_cli.session_index,
+            "health_payload",
+            return_value={
+                "session_index_db_exists": True,
+                "total_sessions": 7,
+                "session_index_db": "/tmp/session.db",
+                "sync": {"scanned": 1},
+            },
+        ):
+            with mock.patch.object(context_cli, "_source_freshness", return_value={"x": 1}):
+                with mock.patch.object(context_cli.context_native, "health_payload", return_value={"available_backends": ["go"]}):
+                    with mock.patch("builtins.print") as mock_print:
+                        rc = context_cli.run(args)
+        self.assertEqual(rc, 0)
+        printed = "\n".join(" ".join(str(x) for x in call.args) for call in mock_print.call_args_list)
+        self.assertIn('"source_freshness": {', printed)
+
     def test_package_import_context_cli(self) -> None:
         sys.path.insert(0, str(SCRIPT_DIR.parent))
         try:

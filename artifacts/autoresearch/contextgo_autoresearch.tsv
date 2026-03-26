@@ -11,3 +11,5 @@ R009	2026-03-26T10:10:18	100	100	95	99.0	KEEP	compact-json-cli-output-fixed
 R010	2026-03-26T10:14:21	100	100	95	99.0	KEEP	dedupe-log-and-compact-search-text
 R011	2026-03-26T10:16:40	100	100	95	99.0	KEEP	pre-snippet-120-pass
 R012	2026-03-26T10:17:49	100	100	95	99.0	KEEP	snippet-120-compaction
+R013	2026-03-26T10:19:43	100	100	95	99.0	KEEP	pre-health-compaction
+R014	2026-03-26T10:21:14	100	100	95	99.0	KEEP	compact-health-default-output

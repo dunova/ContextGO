@@ -244,7 +244,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     smoke.add_argument("--verbose", action="store_true", help="Print full smoke payload")
 
-    sub.add_parser("health", help="Check context system health")
+    health = sub.add_parser("health", help="Check context system health")
+    health.add_argument("--verbose", action="store_true", help="Print full health payload")
     return parser
 
 
@@ -388,7 +389,18 @@ def run(args: argparse.Namespace) -> int:
             "native_backends": context_native.health_payload(),
             "all_ok": bool(recall_payload.get("session_index_db_exists")),
         }
-        _print_json(payload)
+        output = payload if args.verbose else {
+            "checked_at": payload["checked_at"],
+            "all_ok": payload["all_ok"],
+            "session_search_lite": {
+                "ok": payload["session_search_lite"]["ok"],
+                "sessions": payload["session_search_lite"]["sessions"],
+                "db": payload["session_search_lite"]["db"],
+            },
+            "remote_sync_policy": payload["remote_sync_policy"],
+            "native_backends": payload["native_backends"],
+        }
+        _print_json(output, pretty=bool(args.verbose))
         return 0 if payload["all_ok"] else 1
 
     print(f"Unknown command: {args.command}", file=sys.stderr)
