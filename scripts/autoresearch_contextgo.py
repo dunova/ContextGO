@@ -15,6 +15,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 ARTIFACT_ROOT = REPO_ROOT / "artifacts" / "autoresearch"
 LOG_PATH = ARTIFACT_ROOT / "contextgo_autoresearch.tsv"
 STATE_PATH = ARTIFACT_ROOT / "contextgo_autoresearch_latest.json"
+METRICS_PATH = ARTIFACT_ROOT / "contextgo_autoresearch_metrics.json"
 DEFAULT_MAX_ROUNDS = 100
 DEFAULT_QUERY = "NotebookLM"
 
@@ -207,6 +208,38 @@ def append_log(round_no: int, payload: dict, decision: str, note: str) -> None:
     lines.append(row)
     LOG_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
     STATE_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    metrics = []
+    signals = payload.get("signals") or {}
+    for line in lines[1:]:
+        round_id = line.split("\t", 1)[0]
+        if round_id != f"R{round_no:03d}":
+            continue
+        metrics.append(
+            {
+                "round": payload.get("round", round_no),
+                "timestamp": payload["timestamp"],
+                "total_score": payload["total_score"],
+                "stability": payload["dimensions"]["stability"],
+                "recall": payload["dimensions"]["recall"],
+                "token_efficiency": payload["dimensions"]["token_efficiency"],
+                "health_bytes": signals.get("health_bytes"),
+                "search_bytes": signals.get("search_bytes"),
+                "smoke_bytes": signals.get("smoke_bytes"),
+                "native_total_bytes": signals.get("native_total_bytes"),
+                "native_text_bytes": signals.get("native_text_bytes"),
+            }
+        )
+    existing_metrics = []
+    if METRICS_PATH.exists():
+        try:
+            existing_metrics = json.loads(METRICS_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            existing_metrics = []
+    current_round = payload.get("round", round_no)
+    existing_metrics = [item for item in existing_metrics if item.get("round") != current_round]
+    existing_metrics.extend(metrics)
+    existing_metrics.sort(key=lambda item: item.get("round", 0))
+    METRICS_PATH.write_text(json.dumps(existing_metrics, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def build_parser() -> argparse.ArgumentParser:

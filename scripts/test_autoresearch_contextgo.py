@@ -40,6 +40,32 @@ class AutoResearchTests(unittest.TestCase):
             latest = json.loads(state_path.read_text(encoding="utf-8"))
             self.assertEqual(latest["total_score"], 99.0)
 
+    def test_append_log_updates_metrics_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = Path(tmpdir) / "log.tsv"
+            state_path = Path(tmpdir) / "latest.json"
+            metrics_path = Path(tmpdir) / "metrics.json"
+            payload = {
+                "round": 12,
+                "timestamp": "2026-03-26T10:17:49",
+                "dimensions": {"stability": 100, "recall": 100, "token_efficiency": 95},
+                "total_score": 99.0,
+                "signals": {
+                    "health_bytes": 386,
+                    "search_bytes": 1417,
+                    "smoke_bytes": 346,
+                    "native_total_bytes": 4382,
+                    "native_text_bytes": 579,
+                },
+            }
+            with mock.patch.object(ar, "LOG_PATH", log_path):
+                with mock.patch.object(ar, "STATE_PATH", state_path):
+                    with mock.patch.object(ar, "METRICS_PATH", metrics_path):
+                        ar.append_log(12, payload, "KEEP", "metrics")
+            metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
+            self.assertEqual(metrics[0]["round"], 12)
+            self.assertEqual(metrics[0]["health_bytes"], 386)
+
 
 if __name__ == "__main__":
     unittest.main()
