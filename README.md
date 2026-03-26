@@ -102,19 +102,15 @@ ContextGO/
 
 ## Product Preview / 产品预览
 
-建议在这里放 2 张真实截图，优先静态图，不急着上 GIF。
+### CLI Search Preview / CLI 检索预览
 
-推荐素材位：
+![CLI Search Preview](docs/media/cli-search.svg)
 
-1. **CLI Search Preview / CLI 检索预览**
-   - 展示 `search` 命中真实历史会话
-   - 最好带 `health / smoke / native-scan` 中至少一项结果
+### Viewer Preview / Viewer 预览
 
-2. **Viewer Preview / Viewer 预览**
-   - 展示 `/api/health` 或 `/api/search` 的返回效果
-   - 最好体现本地 viewer 的可视化与可调试感
+![Viewer Preview](docs/media/viewer-health.svg)
 
-截图规范见 [MEDIA_GUIDE.md](docs/MEDIA_GUIDE.md)。
+更多截图规范与后续补图方式见 [MEDIA_GUIDE.md](docs/MEDIA_GUIDE.md)。
 
 ## Quick Start / 10 分钟上手
 

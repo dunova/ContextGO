@@ -1,0 +1,30 @@
+<svg width="1440" height="900" viewBox="0 0 1440 900" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1440" height="900" fill="#0B1020"/>
+  <rect x="56" y="56" width="1328" height="788" rx="24" fill="#111827" stroke="#1F2937"/>
+  <rect x="56" y="56" width="1328" height="56" rx="24" fill="#0F172A"/>
+  <circle cx="92" cy="84" r="8" fill="#EF4444"/>
+  <circle cx="120" cy="84" r="8" fill="#F59E0B"/>
+  <circle cx="148" cy="84" r="8" fill="#10B981"/>
+  <text x="180" y="90" fill="#E5E7EB" font-family="Menlo, Monaco, monospace" font-size="24">ContextGO CLI / Search Preview</text>
+
+  <text x="96" y="160" fill="#93C5FD" font-family="Menlo, Monaco, monospace" font-size="28">$ python3 scripts/context_cli.py search "NotebookLM" --limit 3 --literal</text>
+  <text x="96" y="222" fill="#F8FAFC" font-family="Menlo, Monaco, monospace" font-size="26">Found 3 sessions (local index):</text>
+
+  <rect x="88" y="256" width="1264" height="148" rx="18" fill="#0F172A" stroke="#1E293B"/>
+  <text x="112" y="292" fill="#A7F3D0" font-family="Menlo, Monaco, monospace" font-size="22">[1] 2026-03-06 | 019cc22b-5f38-7b43-a472-292a61adff4f | codex_session</text>
+  <text x="112" y="328" fill="#E5E7EB" font-family="Menlo, Monaco, monospace" font-size="20">/Volumes/AI/trading/projects/polymarket-btc-5m</text>
+  <text x="112" y="364" fill="#CBD5E1" font-family="Menlo, Monaco, monospace" font-size="18">ContextGO 命中了真实归档会话，而不是当前测试线程或技能噪声。</text>
+
+  <rect x="88" y="430" width="1264" height="148" rx="18" fill="#0F172A" stroke="#1E293B"/>
+  <text x="112" y="466" fill="#A7F3D0" font-family="Menlo, Monaco, monospace" font-size="22">[2] 2026-03-06 | 019cc215-7b9b-7bf0-9b16-04f1549436e6 | codex_session</text>
+  <text x="112" y="502" fill="#E5E7EB" font-family="Menlo, Monaco, monospace" font-size="20">/Volumes/AI/GitHub</text>
+  <text x="112" y="538" fill="#CBD5E1" font-family="Menlo, Monaco, monospace" font-size="18">长查询、日期查询、literal query 都可在本地统一入口下完成。</text>
+
+  <rect x="88" y="604" width="1264" height="164" rx="18" fill="#0F172A" stroke="#1E293B"/>
+  <text x="112" y="642" fill="#A7F3D0" font-family="Menlo, Monaco, monospace" font-size="22">[3] 2026-03-06 | 019cc0ff-8579-7321-ae5a-a1ef9919e668 | codex_session</text>
+  <text x="112" y="678" fill="#E5E7EB" font-family="Menlo, Monaco, monospace" font-size="20">/Volumes/AI/openclash</text>
+  <text x="112" y="714" fill="#CBD5E1" font-family="Menlo, Monaco, monospace" font-size="18">低 token、局部 snippet、本地优先、无 MCP，是 ContextGO 的默认产品姿态。</text>
+
+  <rect x="1004" y="680" width="308" height="64" rx="16" fill="#111827" stroke="#2563EB"/>
+  <text x="1040" y="720" fill="#93C5FD" font-family="Inter, Arial, sans-serif" font-size="28" font-weight="700">local-first / MCP-free</text>
+</svg>

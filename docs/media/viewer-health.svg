@@ -1,0 +1,31 @@
+<svg width="1440" height="900" viewBox="0 0 1440 900" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1440" height="900" fill="#F8FAFC"/>
+  <rect x="56" y="56" width="1328" height="788" rx="24" fill="#FFFFFF" stroke="#E5E7EB"/>
+  <rect x="56" y="56" width="1328" height="56" rx="24" fill="#E2E8F0"/>
+  <circle cx="92" cy="84" r="8" fill="#EF4444"/>
+  <circle cx="120" cy="84" r="8" fill="#F59E0B"/>
+  <circle cx="148" cy="84" r="8" fill="#10B981"/>
+  <text x="180" y="90" fill="#0F172A" font-family="Menlo, Monaco, monospace" font-size="24">ContextGO Viewer API</text>
+
+  <rect x="88" y="136" width="1264" height="72" rx="18" fill="#EFF6FF" stroke="#BFDBFE"/>
+  <text x="112" y="180" fill="#1D4ED8" font-family="Menlo, Monaco, monospace" font-size="24">GET /api/health</text>
+
+  <rect x="88" y="232" width="1264" height="214" rx="18" fill="#0F172A"/>
+  <text x="112" y="274" fill="#A7F3D0" font-family="Menlo, Monaco, monospace" font-size="22">{ "ok": true, "checked_at": "2026-03-26T11:57:03",</text>
+  <text x="112" y="310" fill="#CBD5E1" font-family="Menlo, Monaco, monospace" font-size="20">  "sync": { "scanned": 67, "added": 0, "updated": 0, "removed": 0 },</text>
+  <text x="112" y="346" fill="#CBD5E1" font-family="Menlo, Monaco, monospace" font-size="20">  "db_path": "~/.contextgo/index/memory_index.db",</text>
+  <text x="112" y="382" fill="#CBD5E1" font-family="Menlo, Monaco, monospace" font-size="20">  "total_observations": 67,</text>
+  <text x="112" y="418" fill="#A7F3D0" font-family="Menlo, Monaco, monospace" font-size="20">  "latest_epoch": 1774495805 }</text>
+
+  <rect x="88" y="478" width="1264" height="72" rx="18" fill="#ECFDF5" stroke="#A7F3D0"/>
+  <text x="112" y="522" fill="#047857" font-family="Menlo, Monaco, monospace" font-size="24">GET /api/search?query=NotebookLM&amp;limit=3</text>
+
+  <rect x="88" y="574" width="1264" height="194" rx="18" fill="#0F172A"/>
+  <text x="112" y="616" fill="#F8FAFC" font-family="Menlo, Monaco, monospace" font-size="22">{ "count": 1, "results": [</text>
+  <text x="112" y="652" fill="#CBD5E1" font-family="Menlo, Monaco, monospace" font-size="20">  { "source_type": "history", "session_id": "rollout-2026-03-25T14-11",</text>
+  <text x="112" y="688" fill="#CBD5E1" font-family="Menlo, Monaco, monospace" font-size="20">    "title": "Live codex_session Session",</text>
+  <text x="112" y="724" fill="#A7F3D0" font-family="Menlo, Monaco, monospace" font-size="20">    "content": "ContextGO 命中真实历史，支持本地 viewer 调试。" } ] }</text>
+
+  <rect x="1030" y="706" width="280" height="44" rx="12" fill="#ECFDF5" stroke="#10B981"/>
+  <text x="1080" y="736" fill="#047857" font-family="Inter, Arial, sans-serif" font-size="24" font-weight="700">viewer / API / SSE ready</text>
+</svg>
