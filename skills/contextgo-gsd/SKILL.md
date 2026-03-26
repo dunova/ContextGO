@@ -2,11 +2,13 @@
 name: contextgo-gsd
 version: "0.9"
 description: |
-  ContextGO GSD (Get Stuff Done) workflow. Activates when the user starts a
-  coding session, says "GSD", "continue", "pick up where I left off", "what
-  was I doing", or any task that benefits from cross-session continuity.
-  Also activates on session wrap-up: "done", "wrap up", "save progress".
-  Requires: contextgo CLI (pip install contextgo or python3 scripts/context_cli.py).
+  ContextGO GSD (Get Stuff Done) workflow reference. This skill provides
+  detailed guidance for the recall-execute-persist loop. Core auto-behaviors
+  (search on uncertainty, save on milestones) are already defined in
+  .claude/CLAUDE.md and AGENTS.md -- this skill is a deeper reference.
+  Activates when the user mentions "GSD", "workflow", or wants to understand
+  the full context lifecycle.
+  Requires: contextgo CLI (pip install contextgo).
 ---
 
 # ContextGO GSD Workflow
@@ -14,6 +16,9 @@ description: |
 GSD is a three-phase loop that runs across every coding session.
 ContextGO provides the memory layer -- a local SQLite FTS5 index of all
 your Codex, Claude, and shell sessions. No cloud. No MCP. Just CLI.
+
+> Note: The basic auto-search and auto-save behaviors are already active
+> via `.claude/CLAUDE.md`. This skill provides the full reference.
 
 ## Phase 1 -- Recall
 

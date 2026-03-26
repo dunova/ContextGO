@@ -108,50 +108,75 @@ bash scripts/context_healthcheck.sh
 
 ---
 
-## How to Use ContextGO as Your Context Provider
+## Automatic Context Behaviors
 
-As an AI agent, use ContextGO to persist conclusions and retrieve past context across sessions:
+These are not commands you wait for the user to invoke. As an AI agent, you
+should execute these behaviors proactively during your normal workflow.
+
+### Auto-search (do this silently, without being asked)
+
+| Situation | Action |
+|-----------|--------|
+| Session starts with a continuation task | `contextgo semantic "<topic>" --limit 3` |
+| You are unsure about project history | `contextgo search "<keyword>" --limit 5` |
+| User asks about past work | `contextgo semantic "<question>"` |
+| Before an architectural decision | `contextgo search "<topic>" --limit 3` |
+
+**How to present results**: Summarize in 2-3 sentences. Do NOT paste raw output.
+If search returns nothing, proceed silently -- do not mention the search.
+
+### Auto-save (suggest or execute at milestones)
+
+| Situation | Action |
+|-----------|--------|
+| Hard bug root cause found | `contextgo save --title "Bug: ..." --content "..." --tags bug,...` |
+| Architectural decision made | `contextgo save --title "Decision: ..." --content "rationale" --tags decision,...` |
+| Session wrap-up ("done", "wrap up") | `contextgo save --title "Handoff: ..." --content "next steps" --tags handoff,...` |
+
+### Commands
 
 ```bash
-# After solving a hard problem, save the conclusion
-python3 scripts/context_cli.py save \
-  --title "Root cause: race condition in queue drain" \
-  --content "The issue was in worker.py line 88 — drain() was called before flush(). Fix: await flush() before drain()." \
-  --tags bug,queue,concurrency
+# Broad recall (saved memories first, then session history)
+contextgo semantic "natural language question" --limit 3
 
-# At the start of a new session, recall relevant context
-python3 scripts/context_cli.py semantic "queue drain race condition" --limit 3
+# Keyword search (direct FTS5)
+contextgo search "specific keyword" --limit 5
 
-# Search all indexed sessions for a keyword
-python3 scripts/context_cli.py search "worker flush" --limit 5
+# Exact match
+contextgo search "exact phrase" --literal --limit 5
 
-# Export full memory snapshot for handoff
-python3 scripts/context_cli.py export "" /tmp/context_snapshot.json --limit 5000
+# Save conclusion
+contextgo save --title "Brief title" --content "Full details" --tags "project,topic"
+
+# Cross-tool handoff
+contextgo export "" /tmp/snapshot.json --limit 5000
+contextgo import /tmp/snapshot.json
 ```
 
-Storage root defaults to `~/.contextgo`. Override with `CONTEXTGO_STORAGE_ROOT`.
+Storage root: `~/.contextgo` (override: `CONTEXTGO_STORAGE_ROOT`).
 
 ---
 
-## Skills (Claude Code / CLI-native AI integration)
+## Skills (optional Claude Code integration)
 
-ContextGO ships with three Claude Code skills in `skills/`. Install them:
+For Claude Code users, ContextGO ships skills in `skills/` that provide
+additional structure for the GSD workflow:
 
 ```bash
 bash skills/install.sh
 ```
 
-This copies skills to `~/.claude/skills/` where Claude Code auto-discovers them.
+| Skill | Purpose |
+|-------|---------|
+| `contextgo-gsd` | Full recall-execute-persist workflow reference |
+| `contextgo-recall` | Context search and summarization guide |
+| `contextgo-save` | When and how to persist conclusions |
 
-| Skill | Trigger | What it does |
-|-------|---------|-------------|
-| `contextgo-gsd` | "GSD", "continue", session start/end | Full recall-execute-persist loop |
-| `contextgo-recall` | "recall", "search history", "what did I do" | Search and summarize past sessions |
-| `contextgo-save` | "save this", "remember", hard problem solved | Persist conclusions for future recall |
+These skills complement the auto-behaviors above. The auto-behaviors work
+without skills installed -- they are driven by the instructions in this file
+and `.claude/CLAUDE.md`.
 
-### GSD Workflow
-
-The GSD (Get Stuff Done) skill defines a three-phase loop:
+### GSD Loop
 
 1. **Recall** -- At session start, `contextgo semantic` to prime context
 2. **Execute** -- Work normally; daemon captures everything in background

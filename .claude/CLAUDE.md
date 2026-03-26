@@ -63,3 +63,68 @@ bash scripts/context_healthcheck.sh
 - No secrets, tokens, or API keys in any committed file
 - Default storage root is `~/.contextgo`; override with `CONTEXTGO_STORAGE_ROOT`
 - Remote sync is disabled by default; enabled only via `CONTEXTGO_ENABLE_REMOTE_MEMORY_HTTP=true`
+
+## Context Awareness (auto-triggered behaviors)
+
+You have access to ContextGO, a local session memory index. Use it proactively
+as part of your natural workflow — do not wait for the user to ask.
+
+### When to search automatically
+
+- **Session start / new topic**: If the user's first message references ongoing work,
+  a project name, or a continuation ("continue", "pick up", "where were we"),
+  run `contextgo semantic "<topic>" --limit 3` before responding. Use the results
+  to orient yourself silently — summarize briefly, do not dump raw output.
+
+- **Uncertainty**: If you are unsure about a project's history, past decisions,
+  or why something was done a certain way, search before guessing:
+  `contextgo search "<keyword>" --limit 5`
+
+- **User asks about the past**: "What did I do with X", "recall", "search memory",
+  "find that thing", "what happened with Y" — these are direct recall requests.
+  Run `contextgo semantic "<query>"` or `contextgo search "<query>"` and
+  summarize the findings conversationally.
+
+- **Before making architectural decisions**: Search for prior decisions on the
+  same topic to avoid contradicting past choices:
+  `contextgo search "<topic>" --limit 3`
+
+### When to save automatically
+
+- **Hard problem solved**: After finding a non-obvious root cause or fix,
+  suggest saving: `contextgo save --title "..." --content "..." --tags "..."`
+
+- **Architectural decision made**: When the user chooses approach A over B,
+  save the rationale so future sessions know why.
+
+- **Session wrap-up**: If the user says "done", "wrap up", "that's it for today",
+  and significant work was done, save a handoff note.
+
+### How to search
+
+```bash
+# Broad recall (checks saved memories first, then session history)
+contextgo semantic "natural language question" --limit 3
+
+# Keyword search (direct FTS5 against session index)
+contextgo search "specific keyword" --limit 5
+
+# Exact phrase match
+contextgo search "exact error message" --limit 5 --literal
+```
+
+### How to save
+
+```bash
+contextgo save \
+  --title "Brief: what was decided or learned" \
+  --content "Details: rationale, file paths, gotchas, next steps" \
+  --tags "project,topic,type"
+```
+
+### Rules
+
+- Never paste raw search output to the user. Summarize in 2-3 sentences.
+- Search silently when orienting yourself. Only mention it if results are relevant.
+- If search returns nothing, do not mention the search — just proceed normally.
+- Save only durable knowledge (decisions, root causes, warnings), not routine edits.
