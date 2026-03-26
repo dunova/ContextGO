@@ -93,7 +93,7 @@ var DefaultNoisePrefixes = []string{
 	"https",
 }
 
-const defaultSnippetLimit = 220
+const defaultSnippetLimit = 180
 
 type SessionScanner struct {
 	noiseFilter  *NoiseFilter

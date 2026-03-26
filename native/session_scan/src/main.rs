@@ -530,7 +530,7 @@ fn process_file(item: &WorkItem, query: &str) -> Result<SessionSummary> {
                     ) {
                         continue;
                     }
-                    if let Some(candidate) = matched_snippet(&detail.text, &query_lower, 220) {
+                    if let Some(candidate) = matched_snippet(&detail.text, &query_lower, 180) {
                         if should_skip_meta_candidate(&candidate) {
                             continue;
                         }
@@ -550,7 +550,7 @@ fn process_file(item: &WorkItem, query: &str) -> Result<SessionSummary> {
                 }
             }
         } else if !query_lower.is_empty() {
-            if let Some(candidate) = matched_snippet(&line, &query_lower, 220) {
+            if let Some(candidate) = matched_snippet(&line, &query_lower, 180) {
                 if should_skip_meta_candidate(&candidate) {
                     continue;
                 }
