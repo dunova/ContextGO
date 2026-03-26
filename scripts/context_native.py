@@ -110,9 +110,7 @@ class NativeRunResult:
                 try:
                     parsed = json.loads(snippet)
                 except json.JSONDecodeError as nested:
-                    self._payload_error = (
-                        f"{self._payload_error}; fallback parse failed: {nested}"
-                    )
+                    self._payload_error = f"{self._payload_error}; fallback parse failed: {nested}"
                     return None
             else:
                 return None

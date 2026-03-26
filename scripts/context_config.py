@@ -118,9 +118,7 @@ def storage_root(default_home_name: str = ".contextgo") -> Path:
     resolved = Path(os.path.expanduser(raw)).resolve()
 
     if not resolved.is_absolute():
-        raise ValueError(
-            f"CONTEXTGO_STORAGE_ROOT resolved to a non-absolute path: {resolved}"
-        )
+        raise ValueError(f"CONTEXTGO_STORAGE_ROOT resolved to a non-absolute path: {resolved}")
     if len(resolved.parts) < _MIN_STORAGE_ROOT_PARTS:
         raise ValueError(
             f"CONTEXTGO_STORAGE_ROOT resolved to a suspiciously short path "

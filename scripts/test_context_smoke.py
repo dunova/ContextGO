@@ -71,31 +71,26 @@ class TestAvailableNativeBackends(unittest.TestCase):
 
     def test_filters_unknown_backends(self) -> None:
         payload = {"native_backends": {"available_backends": ["rust", "wasm", "go"]}}
-        with mock.patch.object(
-            context_smoke, "run_cmd", return_value=(0, json.dumps(payload), "")
-        ):
+        with mock.patch.object(context_smoke, "run_cmd", return_value=(0, json.dumps(payload), "")):
             backends = context_smoke._available_native_backends(Path("/tmp/context_cli.py"))
         self.assertEqual(set(backends), {"rust", "go"})
 
     def test_env_forwarded_to_run_cmd(self) -> None:
         received: list[dict | None] = []
 
-        def fake_run_cmd(
-            args: list[str], timeout: int = 60, env: dict | None = None
-        ) -> tuple[int, str, str]:
+        def fake_run_cmd(args: list[str], timeout: int = 60, env: dict | None = None) -> tuple[int, str, str]:
             received.append(env)
             return (1, "", "")
 
         context_smoke.run_cmd = fake_run_cmd  # type: ignore[assignment]
         try:
-            context_smoke._available_native_backends(
-                Path("/tmp/context_cli.py"), env={"FOO": "bar"}
-            )
+            context_smoke._available_native_backends(Path("/tmp/context_cli.py"), env={"FOO": "bar"})
         finally:
             # restore from module
             import importlib
 
             import context_smoke as _cs  # noqa: F401
+
             importlib.reload(context_smoke)
 
         self.assertEqual(received[0], {"FOO": "bar"})
@@ -106,9 +101,7 @@ class TestNativeScanContract(unittest.TestCase):
         """Return (calls_list, fake_run_cmd) for native scan tests."""
         calls: list[list[str]] = []
 
-        def fake_run_cmd(
-            args: list[str], timeout: int = 60, env: dict | None = None
-        ) -> tuple[int, str, str]:
+        def fake_run_cmd(args: list[str], timeout: int = 60, env: dict | None = None) -> tuple[int, str, str]:
             calls.append(args)
             if "health" in args:
                 payload = {"native_backends": {"available_backends": ["rust", "go"]}}
@@ -118,9 +111,7 @@ class TestNativeScanContract(unittest.TestCase):
                 "matches": [
                     {
                         "session_id": "native-fixture-session",
-                        "snippet": (
-                            f"最终交付：ContextGO native smoke marker {query} 已验证。"
-                        ),
+                        "snippet": (f"最终交付：ContextGO native smoke marker {query} 已验证。"),
                     }
                 ]
             }
@@ -147,9 +138,7 @@ class TestNativeScanContract(unittest.TestCase):
         calls: list[list[str]] = []
         first_go = {"value": True}
 
-        def fake_run_cmd(
-            args: list[str], timeout: int = 60, env: dict | None = None
-        ) -> tuple[int, str, str]:
+        def fake_run_cmd(args: list[str], timeout: int = 60, env: dict | None = None) -> tuple[int, str, str]:
             calls.append(args)
             if "health" in args:
                 payload = {"native_backends": {"available_backends": ["go"]}}
@@ -162,9 +151,7 @@ class TestNativeScanContract(unittest.TestCase):
                 "matches": [
                     {
                         "session_id": "native-fixture-session",
-                        "snippet": (
-                            f"最终交付：ContextGO native smoke marker {query} 已验证。"
-                        ),
+                        "snippet": (f"最终交付：ContextGO native smoke marker {query} 已验证。"),
                     }
                 ]
             }
@@ -188,9 +175,7 @@ class TestNativeScanContract(unittest.TestCase):
         self.assertTrue(result["detail"].get("skipped"))
 
     def test_handles_invalid_json_response(self) -> None:
-        def fake_run_cmd(
-            args: list[str], timeout: int = 60, env: dict | None = None
-        ) -> tuple[int, str, str]:
+        def fake_run_cmd(args: list[str], timeout: int = 60, env: dict | None = None) -> tuple[int, str, str]:
             if "health" in args:
                 payload = {"native_backends": {"available_backends": ["rust"]}}
                 return 0, json.dumps(payload), ""
@@ -207,9 +192,7 @@ class TestNativeScanContract(unittest.TestCase):
 class TestWriteNativeFixture(unittest.TestCase):
     def test_creates_expected_session(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            codex_root, claude_root = context_smoke._write_native_fixture(
-                Path(tmpdir), "marker-123"
-            )
+            codex_root, claude_root = context_smoke._write_native_fixture(Path(tmpdir), "marker-123")
             self.assertTrue(codex_root.exists())
             self.assertTrue(claude_root.exists())
             files = list(codex_root.rglob("*.jsonl"))

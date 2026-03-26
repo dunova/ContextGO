@@ -120,6 +120,7 @@ _SQL_MAX_EPOCH = "SELECT MAX(created_at_epoch) FROM session_documents"
 # Section: Noise configuration
 # ═══════════════════════════════════════════════════════════════
 
+
 def _load_noise_config() -> dict[str, list[str]]:
     """Load noise-filter marker tables from ``config/noise_markers.json``.
 
@@ -159,11 +160,37 @@ _NOISE_TEXT_LOWER_MARKERS: tuple[str, ...] = tuple(_NOISE_CONFIG["text_noise_low
 
 STOPWORDS: frozenset[str] = frozenset(
     {
-        "the", "and", "for", "with", "that", "this", "from", "into",
-        "what", "when", "where", "which", "who", "how",
-        "please", "search", "session", "history", "continue", "find",
+        "the",
+        "and",
+        "for",
+        "with",
+        "that",
+        "this",
+        "from",
+        "into",
+        "what",
+        "when",
+        "where",
+        "which",
+        "who",
+        "how",
+        "please",
+        "search",
+        "session",
+        "history",
+        "continue",
+        "find",
         # Chinese stopwords
-        "继续", "搜索", "终端", "方案", "项目", "历史", "会话", "相关", "那个", "这个",
+        "继续",
+        "搜索",
+        "终端",
+        "方案",
+        "项目",
+        "历史",
+        "会话",
+        "相关",
+        "那个",
+        "这个",
     }
 )
 
@@ -339,12 +366,30 @@ def _is_current_repo_meta_result(title: str, content: str, file_path: str) -> bo
     if not compact:
         return True
     meta_markers = (
-        "写集仅限", "改动文件：", "改动文件:", "**改动文件**",
-        "核心变化：", "核心变化:", "建议验证命令：", "建议验证命令:",
-        "职责只限测试", "测试集使用", "全平台对话测试集",
-        "artifacts/testsets/dataset_", "仓库：", "你负责",
-        "变更概览", "改动概览", "我先", "我继续", "我现在",
-        "已收到任务", "已变更概览", "search NotebookLM", "native-scan", "session_index",
+        "写集仅限",
+        "改动文件：",
+        "改动文件:",
+        "**改动文件**",
+        "核心变化：",
+        "核心变化:",
+        "建议验证命令：",
+        "建议验证命令:",
+        "职责只限测试",
+        "测试集使用",
+        "全平台对话测试集",
+        "artifacts/testsets/dataset_",
+        "仓库：",
+        "你负责",
+        "变更概览",
+        "改动概览",
+        "我先",
+        "我继续",
+        "我现在",
+        "已收到任务",
+        "已变更概览",
+        "search NotebookLM",
+        "native-scan",
+        "session_index",
     )
     return any(marker in compact for marker in meta_markers)
 

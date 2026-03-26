@@ -223,9 +223,7 @@ def test_viewer(cli_path: Path, env: dict[str, str] | None = None) -> dict[str, 
         last_err = ""
         while time.time() < deadline:
             try:
-                with urllib.request.urlopen(
-                    f"http://127.0.0.1:{port}/api/health", timeout=2
-                ) as resp:
+                with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health", timeout=2) as resp:
                     body = resp.read().decode("utf-8")
                     ok = resp.status == 200
                     break
@@ -369,9 +367,7 @@ def test_native_scan_contract(
             rc, out, err = run_cmd(args, timeout=120, env=env)
 
             # Retry once on transient resource-lock errors (e.g. file-system busy).
-            if rc != 0 and "resource temporarily unavailable" in (
-                (out or "") + "\n" + (err or "")
-            ).lower():
+            if rc != 0 and "resource temporarily unavailable" in ((out or "") + "\n" + (err or "")).lower():
                 time.sleep(0.5)
                 rc, out, err = run_cmd(args, timeout=120, env=env)
 

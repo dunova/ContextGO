@@ -64,9 +64,7 @@ _MAX_POST_BYTES: int = env_int("CONTEXTGO_VIEWER_MAX_POST_BYTES", default=1_048_
 _MAX_BATCH_IDS: int = env_int("CONTEXTGO_VIEWER_MAX_BATCH_IDS", default=500, minimum=1)
 _SSE_INTERVAL_SEC: float = env_float("CONTEXTGO_VIEWER_SSE_INTERVAL_SEC", default=1.0, minimum=0.2)
 _SSE_MAX_TICKS: int = env_int("CONTEXTGO_VIEWER_SSE_MAX_TICKS", default=120, minimum=1)
-_SYNC_MIN_INTERVAL_SEC: float = env_float(
-    "CONTEXTGO_VIEWER_SYNC_MIN_INTERVAL_SEC", default=5.0, minimum=0.0
-)
+_SYNC_MIN_INTERVAL_SEC: float = env_float("CONTEXTGO_VIEWER_SYNC_MIN_INTERVAL_SEC", default=5.0, minimum=0.0)
 
 # ---------------------------------------------------------------------------
 # Sync state cache  (thread-safe, double-checked locking)
@@ -89,21 +87,14 @@ def _maybe_sync_index() -> dict[str, Any]:
 
     # Fast path: read without acquiring the lock when cache is warm.
     cached = _sync_payload
-    if (
-        _SYNC_MIN_INTERVAL_SEC > 0
-        and cached is not None
-        and (_sync_at + _SYNC_MIN_INTERVAL_SEC) > now
-    ):
+    if _SYNC_MIN_INTERVAL_SEC > 0 and cached is not None and (_sync_at + _SYNC_MIN_INTERVAL_SEC) > now:
         return dict(cached)
 
     # Slow path: refresh outside the lock so only one expensive I/O call runs
     # at a time, but other threads can still serve the stale cache.
     with _sync_lock:
         # Re-check after acquiring the lock (another thread may have refreshed).
-        if (
-            _sync_payload is not None
-            and (_sync_at + _SYNC_MIN_INTERVAL_SEC) > time.monotonic()
-        ):
+        if _sync_payload is not None and (_sync_at + _SYNC_MIN_INTERVAL_SEC) > time.monotonic():
             return dict(_sync_payload)
         payload = sync_index_from_storage()
         _sync_at = time.monotonic()
@@ -267,9 +258,7 @@ def _qs_str(qs: dict[str, list[str]], key: str, default: str = "") -> str:
     return (qs.get(key, [default])[0] or default).strip()
 
 
-def _qs_int(
-    qs: dict[str, list[str]], key: str, default: int, min_v: int, max_v: int
-) -> int:
+def _qs_int(qs: dict[str, list[str]], key: str, default: int, min_v: int, max_v: int) -> int:
     """Return the first value for *key* in *qs* as a clamped integer."""
     return _clamp_int(qs.get(key, [str(default)])[0] or str(default), default, min_v, max_v)
 
@@ -469,11 +458,7 @@ class Handler(BaseHTTPRequestHandler):
         after = _qs_int(qs, "depth_after", 3, 0, 20)
         try:
             sync = _maybe_sync_index()
-            rows = (
-                timeline_index(anchor_id=anchor, depth_before=before, depth_after=after)
-                if anchor > 0
-                else []
-            )
+            rows = timeline_index(anchor_id=anchor, depth_before=before, depth_after=after) if anchor > 0 else []
         except Exception as exc:
             self._send_json(500, {"ok": False, "error": "timeline failed", "detail": str(exc)})
             return
@@ -498,9 +483,7 @@ class Handler(BaseHTTPRequestHandler):
                     "sync": _maybe_sync_index(),
                     **index_stats(),
                 }
-                self.wfile.write(
-                    f"data: {json.dumps(data, ensure_ascii=False)}\n\n".encode()
-                )
+                self.wfile.write(f"data: {json.dumps(data, ensure_ascii=False)}\n\n".encode())
                 self.wfile.flush()
                 time.sleep(_SSE_INTERVAL_SEC)
             except (BrokenPipeError, ConnectionResetError, OSError):
@@ -577,9 +560,7 @@ def main() -> None:
         SystemExit: When a non-loopback bind address is used without a token.
     """
     if HOST not in _LOOPBACK_HOSTS and not VIEWER_TOKEN:
-        raise SystemExit(
-            "CONTEXTGO_VIEWER_TOKEN must be set when binding a non-loopback host."
-        )
+        raise SystemExit("CONTEXTGO_VIEWER_TOKEN must be set when binding a non-loopback host.")
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     print(f"ContextGO Viewer listening on http://{HOST}:{PORT}")
     try:

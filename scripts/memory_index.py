@@ -92,27 +92,17 @@ _SQL_UPDATE_PATH = "UPDATE observations SET file_path = ?, updated_at_epoch = ? 
 _SQL_DELETE_OBS = "DELETE FROM observations WHERE id = ?"
 
 _SQL_FIND_BY_PATH = (
-    "SELECT id, fingerprint FROM observations"
-    " WHERE file_path = ?"
-    " ORDER BY updated_at_epoch DESC, id DESC"
+    "SELECT id, fingerprint FROM observations WHERE file_path = ? ORDER BY updated_at_epoch DESC, id DESC"
 )
 _SQL_FIND_BY_FP = "SELECT id, file_path FROM observations WHERE fingerprint = ?"
 _SQL_FIND_BY_FPS = "SELECT fingerprint FROM observations WHERE fingerprint IN ({})"
-_SQL_STALE_LOCAL = (
-    "SELECT id, file_path FROM observations WHERE source_type IN ('history', 'conversation')"
-)
+_SQL_STALE_LOCAL = "SELECT id, file_path FROM observations WHERE source_type IN ('history', 'conversation')"
 _SQL_COUNT = "SELECT COUNT(*) FROM observations"
 _SQL_MAX_EPOCH = "SELECT MAX(created_at_epoch) FROM observations"
-_SQL_FETCH_BY_IDS = (
-    "SELECT * FROM observations WHERE id IN ({}) ORDER BY created_at_epoch DESC"
-)
+_SQL_FETCH_BY_IDS = "SELECT * FROM observations WHERE id IN ({}) ORDER BY created_at_epoch DESC"
 _SQL_ANCHOR = "SELECT id, created_at_epoch FROM observations WHERE id = ?"
-_SQL_BEFORE = (
-    "SELECT * FROM observations WHERE created_at_epoch <= ? ORDER BY created_at_epoch DESC LIMIT ?"
-)
-_SQL_AFTER = (
-    "SELECT * FROM observations WHERE created_at_epoch > ? ORDER BY created_at_epoch ASC LIMIT ?"
-)
+_SQL_BEFORE = "SELECT * FROM observations WHERE created_at_epoch <= ? ORDER BY created_at_epoch DESC LIMIT ?"
+_SQL_AFTER = "SELECT * FROM observations WHERE created_at_epoch > ? ORDER BY created_at_epoch ASC LIMIT ?"
 
 
 # ---------------------------------------------------------------------------
@@ -283,9 +273,7 @@ def _parse_markdown(path: Path) -> Observation | None:
     source_type = "conversation" if "/conversations/" in path_str else "history"
     session_id = path.stem.split("_")[-1] if "_" in path.stem else path.stem
 
-    fingerprint = hashlib.sha256(
-        f"{source_type}|{title}|{content}|{created_at_epoch}".encode()
-    ).hexdigest()
+    fingerprint = hashlib.sha256(f"{source_type}|{title}|{content}|{created_at_epoch}".encode()).hexdigest()
 
     return Observation(
         fingerprint=fingerprint,
@@ -655,9 +643,7 @@ def _normalize_import_observation(raw: dict[str, Any]) -> dict[str, Any]:
     if not fingerprint and content:
         src = raw.get("source_type") or "import"
         sid = raw.get("session_id") or "imported"
-        fingerprint = hashlib.sha256(
-            f"{src}|{sid}|{title}|{content}|{created_at_epoch}".encode()
-        ).hexdigest()
+        fingerprint = hashlib.sha256(f"{src}|{sid}|{title}|{content}|{created_at_epoch}".encode()).hexdigest()
 
     return {
         "fingerprint": fingerprint,
@@ -720,10 +706,7 @@ def import_observations_payload(
             # Batch-check which fingerprints already exist.
             fps = [c["fingerprint"] for c in candidates]
             qmarks = ",".join("?" for _ in fps)
-            existing = {
-                row["fingerprint"]
-                for row in conn.execute(_SQL_FIND_BY_FPS.format(qmarks), fps).fetchall()
-            }
+            existing = {row["fingerprint"] for row in conn.execute(_SQL_FIND_BY_FPS.format(qmarks), fps).fetchall()}
 
             for obs in candidates:
                 if obs["fingerprint"] in existing:

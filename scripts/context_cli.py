@@ -296,11 +296,16 @@ def cmd_maintain(args: argparse.Namespace) -> int:
     # Re-serialize only the flags parsed here so context_maintenance.parse_args()
     # remains the single source of truth for its own defaults.
     forwarded: list[str] = [
-        "--db", args.db,
-        "--codex-root", args.codex_root,
-        "--claude-root", args.claude_root,
-        "--max-enqueue", str(args.max_enqueue),
-        "--stale-minutes", str(args.stale_minutes),
+        "--db",
+        args.db,
+        "--codex-root",
+        args.codex_root,
+        "--claude-root",
+        args.claude_root,
+        "--max-enqueue",
+        str(args.max_enqueue),
+        "--stale-minutes",
+        str(args.stale_minutes),
     ]
     for flag in ("--include-subagents", "--repair-queue", "--enqueue-missing", "--dry-run"):
         attr = flag.lstrip("-").replace("-", "_")

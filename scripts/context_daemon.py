@@ -525,9 +525,11 @@ def _refresh_glob_cache(
 
     try:
         from pathlib import Path as _Path
+
         _Path(pattern.split("*")[0].rstrip("/"))
         # Use glob on the literal pattern via subprocess-free Path.glob
         import glob as _glob
+
         results = [Path(p) for p in _glob.glob(pattern, recursive=True)]
         if len(results) > max_results:
             results.sort(key=lambda p: p.stat().st_mtime if p.exists() else 0.0, reverse=True)
@@ -872,9 +874,7 @@ class SessionTracker:
                         text = ""
                         if ptype == "message":
                             texts = [
-                                c.get("text", "")
-                                for c in payload.get("content", [])
-                                if c.get("type") == "output_text"
+                                c.get("text", "") for c in payload.get("content", []) if c.get("type") == "output_text"
                             ]
                             text = "\n".join(t for t in texts if t)
                         elif ptype == "reasoning":
@@ -1051,7 +1051,11 @@ class SessionTracker:
         self._error_count = error_ref[0]
 
         # Document types to consider, ordered by preference.
-        brain_docs = ["walkthrough.md", "task.md", "implementation_plan.md"] if ANTIGRAVITY_INGEST_MODE == "final_only" else ["walkthrough.md", "implementation_plan.md"]
+        brain_docs = (
+            ["walkthrough.md", "task.md", "implementation_plan.md"]
+            if ANTIGRAVITY_INGEST_MODE == "final_only"
+            else ["walkthrough.md", "implementation_plan.md"]
+        )
 
         seen_sids: set[str] = set()
 

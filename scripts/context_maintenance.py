@@ -56,9 +56,7 @@ _DEFAULT_DB = "~/.contextgo/db/contextgo.db"
 # SQL statements
 # ---------------------------------------------------------------------------
 
-_SQL_FETCH_EXISTING_PATHS = (
-    "SELECT session_file_path FROM sessions WHERE session_file_path IS NOT NULL"
-)
+_SQL_FETCH_EXISTING_PATHS = "SELECT session_file_path FROM sessions WHERE session_file_path IS NOT NULL"
 
 _SQL_COUNT_STALE = """
     SELECT count(*) FROM jobs
@@ -232,9 +230,7 @@ def print_snapshot(
     processing_sp: int = cur.execute(
         "SELECT count(*) FROM jobs WHERE kind='session_process' AND status='processing'"
     ).fetchone()[0]
-    done_sp: int = cur.execute(
-        "SELECT count(*) FROM jobs WHERE kind='session_process' AND status='done'"
-    ).fetchone()[0]
+    done_sp: int = cur.execute("SELECT count(*) FROM jobs WHERE kind='session_process' AND status='done'").fetchone()[0]
     llm_err_sessions: int = cur.execute(
         "SELECT count(*) FROM sessions WHERE session_title LIKE '\u26a0 LLM API Error%'"
     ).fetchone()[0]
@@ -270,9 +266,7 @@ def repair_queue(
     Returns:
         Number of jobs affected (or that *would* be affected in dry-run mode).
     """
-    cutoff = (
-        dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=stale_minutes)
-    ).strftime("%Y-%m-%d %H:%M:%S")
+    cutoff = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=stale_minutes)).strftime("%Y-%m-%d %H:%M:%S")
 
     if dry_run:
         return cur.execute(_SQL_COUNT_STALE, (cutoff,)).fetchone()[0]
@@ -365,9 +359,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         cur = conn.cursor()
 
-        local_items = collect_local_session_files(
-            codex_root, claude_root, args.include_subagents
-        )
+        local_items = collect_local_session_files(codex_root, claude_root, args.include_subagents)
         existing_paths = fetch_existing_session_paths(cur)
 
         missing: list[SessionItem] = []
@@ -389,13 +381,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"repair_queue: released_stale_processing={released}")
 
         if args.enqueue_missing:
-            inserted, revived = enqueue_missing(
-                cur, missing, args.max_enqueue, args.dry_run
-            )
-            print(
-                f"enqueue_missing: inserted={inserted} revived={revived}"
-                f" (max={args.max_enqueue})"
-            )
+            inserted, revived = enqueue_missing(cur, missing, args.max_enqueue, args.dry_run)
+            print(f"enqueue_missing: inserted={inserted} revived={revived} (max={args.max_enqueue})")
 
         if args.dry_run:
             conn.rollback()
