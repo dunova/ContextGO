@@ -74,3 +74,5 @@ Desktop.ini
 
 # Autoresearch artifacts (committed intentionally for metric tracking)
 # artifacts/autoresearch/
+.coverage
+coverage.xml
