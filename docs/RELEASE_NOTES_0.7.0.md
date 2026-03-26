@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # ContextGO 0.7.0 Release Notes
 
 **Release date:** 2026-03-26
@@ -128,20 +129,64 @@ This release was produced by the ContextGO core team. Contributions in the form 
 ## Verification
 
 The following commands constitute the full verification chain for this release:
+=======
+# ContextGO 0.7.0
+
+## 中文版
+
+`0.7.0` 是 ContextGO 的商业化收口版本。  
+这一版的重点不是增加运行时新特性，而是把仓库、文档、发布面、验证链路和 GitHub 展示层彻底对齐到一个更完整的产品形态。
+
+### 本次发布包含
+
+- README 改为中英分离双语版
+- 架构文档补双语架构图与双语架构树
+- GitHub Release 页改为中英双语正文
+- 仓库右侧 description / topics 全面对齐 `ContextGO`
+- 补齐媒体素材规范与首页预览素材
+- CI workflow 对齐当前仓库实际测试矩阵
+
+### 为什么这是 0.7.0
+
+因为这次变化已经超出“补丁修复”：
+
+- 仓库首页已不再像内部工程说明，而更像产品首页
+- 发布页已不再是临时说明，而是正式的对外发布面
+- workflow 与验证矩阵已和当前仓库真实状态对齐
+- 文档、素材、发布、仓库元信息已经形成统一 front door
+
+### 关键命令
+
+```bash
+python3 scripts/context_cli.py health
+python3 scripts/context_cli.py smoke
+python3 scripts/context_cli.py native-scan --backend auto --threads 4
+python3 scripts/smoke_installed_runtime.py
+python3 -m benchmarks --mode both --iterations 1 --warmup 0 --query benchmark --format text
+```
+
+### 验证
+>>>>>>> dc4bf4c (release: prepare v0.7.0)
 
 ```bash
 bash -n scripts/*.sh
 python3 -m py_compile scripts/*.py benchmarks/*.py
 python3 -m pytest scripts/test_context_cli.py scripts/test_context_core.py scripts/test_context_native.py scripts/test_context_smoke.py scripts/test_session_index.py scripts/test_autoresearch_contextgo.py
 python3 scripts/e2e_quality_gate.py
+<<<<<<< HEAD
 python3 scripts/context_cli.py health
 python3 scripts/context_cli.py smoke
 python3 scripts/smoke_installed_runtime.py
 python3 -m benchmarks --mode both --iterations 1 --warmup 0 --query benchmark --format text
+=======
+python3 scripts/context_cli.py smoke
+python3 scripts/smoke_installed_runtime.py
+>>>>>>> dc4bf4c (release: prepare v0.7.0)
 cd native/session_scan_go && go test ./...
 cd native/session_scan && CARGO_INCREMENTAL=0 cargo test
 ```
 
+<<<<<<< HEAD
 ---
 
 ## Upgrade Path
@@ -155,3 +200,71 @@ To verify the installed runtime after deployment:
 ```bash
 python3 scripts/smoke_installed_runtime.py
 ```
+=======
+### 发布定位
+
+ContextGO 0.7.0 适合作为一个给多 agent AI 编码团队直接部署的本地上下文运行时：
+
+- 本地优先
+- 默认无 MCP
+- 默认无 Docker
+- 默认无云向量依赖
+- Rust / Go 热路径渐进替换
+
+## English Version
+
+`0.7.0` is a commercial-polish release for ContextGO.  
+It turns the repository, documentation, release surface, and validation chain into a more coherent product-facing package.
+
+### What shipped
+
+- a bilingual README with separated Chinese and English sections
+- a bilingual architecture document with diagram and tree
+- a bilingual GitHub release body
+- aligned repository metadata and topics
+- media guidance plus preview assets
+- CI workflow updates aligned with the current repo structure
+
+### Why this is 0.7.0
+
+This is not just another cleanup round:
+
+- the repo homepage now reads like a product surface
+- the release page is now a real launch surface
+- CI reflects the actual verification matrix
+- repo metadata, docs, launch copy, and release copy now point to the same product story
+
+### Core commands
+
+```bash
+python3 scripts/context_cli.py health
+python3 scripts/context_cli.py smoke
+python3 scripts/context_cli.py native-scan --backend auto --threads 4
+python3 scripts/smoke_installed_runtime.py
+python3 -m benchmarks --mode both --iterations 1 --warmup 0 --query benchmark --format text
+```
+
+### Validation
+
+```bash
+bash -n scripts/*.sh
+python3 -m py_compile scripts/*.py benchmarks/*.py
+python3 -m pytest scripts/test_context_cli.py scripts/test_context_core.py scripts/test_context_native.py scripts/test_context_smoke.py scripts/test_session_index.py scripts/test_autoresearch_contextgo.py
+python3 scripts/e2e_quality_gate.py
+python3 scripts/context_cli.py smoke
+python3 scripts/smoke_installed_runtime.py
+cd native/session_scan_go && go test ./...
+cd native/session_scan && CARGO_INCREMENTAL=0 cargo test
+```
+
+### Positioning
+
+ContextGO 0.7.0 is a local-first context runtime for multi-agent AI coding teams:
+
+- MCP-free by default
+- Docker-free by default
+- cloud-vector-free by default
+- one CLI
+- one validation chain
+- gradual Rust/Go acceleration
+>>>>>>> dc4bf4c (release: prepare v0.7.0)

@@ -4,57 +4,155 @@ on:
   push:
   pull_request:
 
-jobs:
-  verify:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
-      - uses: actions/setup-python@v5
+jobs:
+  lint:
+    name: Lint and Syntax Checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - uses: actions/setup-go@v5
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
         with:
-          go-version: "1.25"
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-lint-${{ hashFiles('**/requirements*.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-lint-
+            ${{ runner.os }}-pip-
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Check Bash syntax
+        run: bash -n scripts/*.sh
 
-      - name: Install Python test deps
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install pytest
-
-      - name: Bash syntax
-        run: |
-          bash -n scripts/*.sh
-
-      - name: Python syntax
-        run: |
-          python -m py_compile scripts/*.py benchmarks/*.py
-
-      - name: Python tests
-        run: |
-          python -m pytest scripts/test_context_cli.py scripts/test_context_core.py scripts/test_session_index.py scripts/test_context_native.py
-
-      - name: Quality gate
-        run: |
-          python scripts/e2e_quality_gate.py
-
-      - name: Benchmark smoke
-        run: |
-          python -m benchmarks --iterations 1 --warmup 0 --query benchmark
-
-      - name: Go native prototype
-        working-directory: native/session_scan_go
-        run: |
-          go test ./...
-
-      - name: Rust native prototype
-        run: |
-          CARGO_TARGET_DIR=/tmp/context_mesh_target cargo check --manifest-path native/session_scan/Cargo.toml
+      - name: Check Python syntax
+        run: python -m py_compile scripts/*.py benchmarks/*.py
 
       - name: Secret and path scan
         run: |
           ! rg -n "AIza[0-9A-Za-z_-]{20,}|sk-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}" --glob '!.github/' .
           ! rg -n "/Users/\\w+/" --glob '!.github/' scripts/
+
+  python-test:
+    name: Python Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: lint
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-test-${{ hashFiles('**/requirements*.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-test-
+            ${{ runner.os }}-pip-
+
+      - name: Install Python test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest
+
+      - name: Run Python unit tests
+        run: |
+          python -m pytest scripts/test_context_cli.py scripts/test_context_core.py scripts/test_context_native.py scripts/test_context_smoke.py scripts/test_session_index.py scripts/test_autoresearch_contextgo.py
+
+      - name: Run benchmark smoke test
+        run: |
+          python -m benchmarks --iterations 1 --warmup 0 --query benchmark
+
+  go-test:
+    name: Go Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: lint
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache-dependency-path: native/session_scan_go/go.mod
+
+      - name: Run Go tests
+        working-directory: native/session_scan_go
+        run: go test ./...
+
+  rust-check:
+    name: Rust Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: lint
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo registry and build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            /tmp/contextgo_target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('native/session_scan/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Run Cargo check on Rust native prototype
+        run: CARGO_TARGET_DIR=/tmp/contextgo_target cargo check --manifest-path native/session_scan/Cargo.toml
+
+  quality-gate:
+    name: Quality Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs:
+      - python-test
+      - go-test
+      - rust-check
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-quality-${{ hashFiles('**/requirements*.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-quality-
+            ${{ runner.os }}-pip-
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest
+
+      - name: Run end-to-end quality gate
+        run: python scripts/e2e_quality_gate.py

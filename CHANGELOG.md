@@ -4,6 +4,7 @@
 
 ### Story
 
+<<<<<<< HEAD
 0.7 is the commercial-grade polish release. The runtime feature set from 0.6.1 is frozen; this cycle was spent hardening every layer of the stack to the standard a production engineering team would require before treating the context runtime as a shared infrastructure dependency.
 
 The three pillars of this release are: comprehensive test coverage across all Python modules and both native backends, a fully integrated CI/CD pipeline that gates merges on the complete validation chain, and documentation that accurately reflects the current behavior of every operator-facing surface.
@@ -40,6 +41,33 @@ No breaking changes. No migration required from 0.6.1.
 - `context_smoke.py`: native contract check raised an unhandled `FileNotFoundError` when the fixture directory did not exist. Now caught and reported as a named structured failure.
 - `benchmarks/run.py`: `native-wrapper` timing column was silently skipped in text output when the native backend returned a non-zero exit code. Now marked as `FAIL` with the exit code.
 - `e2e_quality_gate.py`: stdout buffering caused gate stage output to appear out of order in CI ptys. Now explicitly flushed after each stage result line.
+=======
+- `0.7.0` 标志着 ContextGO 从“已经能用的本地上下文运行时”进一步收口成“可对外展示、可商业交付、可持续发布”的仓库形态。
+- 这一轮不再围绕旧项目缝合，而是统一了仓库首页、架构图、发布文案、媒体素材规范、GitHub Release 页面和 CI workflow。
+- 发布页、README、架构文档和仓库右侧简介现在都对齐到 `ContextGO` 的双语产品口径。
+
+### Added
+
+- `docs/RELEASE_NOTES_0.7.0.md`
+- `docs/LAUNCH_COPY.md`
+- `docs/MEDIA_GUIDE.md`
+- `docs/media/cli-search.svg`
+- `docs/media/viewer-health.svg`
+- `.github/workflows/release.yml`
+
+### Changed
+
+- `VERSION` bump 到 `0.7.0`
+- `README.md` 改为中英分离双语版，并加入预览素材区
+- `docs/ARCHITECTURE.md` 改为中英分离双语版，并补双语架构图
+- `.github/workflows/verify.yml` 对齐当前仓库测试矩阵与 Go/Rust 路径
+
+### Fixed
+
+- 修复 GitHub Release `v0.7.0` 正文与仓库当前真实状态不一致的问题
+- 修复 GitHub Release 页仅英文、缺少中文完整说明的问题
+- 修复 workflow 中使用旧缓存路径与缺测当前测试模块的问题
+>>>>>>> dc4bf4c (release: prepare v0.7.0)
 
 ## 0.6.1 - 2026-03-25
 
