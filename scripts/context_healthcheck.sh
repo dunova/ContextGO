@@ -4,7 +4,11 @@
 # Usage: context_healthcheck.sh [--quiet] [--deep] [--help]
 #
 # Default mode is non-intrusive and low-overhead.
-# --deep enables optional remote probes.
+# --deep enables optional remote probes that may make network connections.
+#
+# Exit codes:
+#   0  All core checks passed (warnings do not affect exit status).
+#   1  One or more core checks failed.
 #
 # Environment variables:
 #   CONTEXTGO_STORAGE_ROOT    Storage root (default: ~/.contextgo)
@@ -32,10 +36,15 @@ EOF
 }
 
 CONTEXTGO_STORAGE_ROOT="${CONTEXTGO_STORAGE_ROOT:-$HOME/.contextgo}"
+readonly CONTEXTGO_STORAGE_ROOT
 LOG_DIR="$CONTEXTGO_STORAGE_ROOT/logs"
+readonly LOG_DIR
 HEALTHCHECK_LOG="$LOG_DIR/healthcheck.log"
+readonly HEALTHCHECK_LOG
 REMOTE_SYNC_BASE_URL="${CONTEXTGO_REMOTE_URL:-http://127.0.0.1:8090/api/v1}"
+readonly REMOTE_SYNC_BASE_URL
 REMOTE_SYNC_HEALTH_URL="${REMOTE_SYNC_HEALTH_URL:-${REMOTE_SYNC_BASE_URL%/}/health}"
+readonly REMOTE_SYNC_HEALTH_URL
 
 mkdir -p "$LOG_DIR"
 chmod 700 "$LOG_DIR" 2>/dev/null || true
@@ -125,13 +134,13 @@ check_cli_runtime() {
     fi
 
     out="$(python3 "$cli_script" health 2>&1)" || true
-    if echo "$out" | python3 -c \
+    if printf '%s\n' "$out" | python3 -c \
         'import json,sys; print("1" if json.loads(sys.stdin.read()).get("all_ok") else "0")' \
         2>/dev/null | grep -q '^1$'; then
-        sessions="$(echo "$out" | python3 -c \
+        sessions="$(printf '%s\n' "$out" | python3 -c \
             'import json,sys; d=json.loads(sys.stdin.read()); print((d.get("session_search_lite") or {}).get("sessions") or 0)' \
             2>/dev/null)" || true
-        db_path="$(echo "$out" | python3 -c \
+        db_path="$(printf '%s\n' "$out" | python3 -c \
             'import json,sys; d=json.loads(sys.stdin.read()); print((d.get("session_search_lite") or {}).get("db") or "")' \
             2>/dev/null)" || true
         report_ok "Local session index healthy (sessions=${sessions:-0})"
@@ -277,7 +286,7 @@ SUMMARY_FAIL=0
 SUMMARY_FAILED_NAMES=()
 
 for entry in "${CHECK_SUMMARY[@]}"; do
-    IFS='|' read -r name chk_status detail <<< "$entry"
+    IFS='|' read -r name chk_status _detail <<< "$entry"
     case "$chk_status" in
         fail)
             SUMMARY_FAIL=$(( SUMMARY_FAIL + 1 ))

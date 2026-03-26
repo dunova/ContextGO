@@ -4,6 +4,10 @@
 #
 # Usage: unified_context_deploy.sh [--help]
 #
+# Exit codes:
+#   0  Deployment completed successfully.
+#   1  A required directory is missing or launchctl bootstrap failed.
+#
 # Environment variables:
 #   CONTEXTGO_INSTALL_ROOT    Installation root  (default: ~/.local/share/contextgo)
 #   CONTEXTGO_STORAGE_ROOT    Storage root       (default: ~/.contextgo)
@@ -35,13 +39,21 @@ if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+readonly REPO_ROOT
 HOME_DIR="${HOME:-$(cd ~ && pwd)}"
+readonly HOME_DIR
 INSTALL_ROOT="${CONTEXTGO_INSTALL_ROOT:-$HOME_DIR/.local/share/contextgo}"
+readonly INSTALL_ROOT
 CONTEXTGO_STORAGE_ROOT="${CONTEXTGO_STORAGE_ROOT:-$HOME_DIR/.contextgo}"
+readonly CONTEXTGO_STORAGE_ROOT
 PATCH_LAUNCHD="${PATCH_LAUNCHD:-1}"
+readonly PATCH_LAUNCHD
 RELOAD_LAUNCHD="${RELOAD_LAUNCHD:-1}"
+readonly RELOAD_LAUNCHD
 APPLY_CONTEXT_POLICY="${APPLY_CONTEXT_POLICY:-1}"
+readonly APPLY_CONTEXT_POLICY
 
 log() { printf '[deploy] %s\n' "$*"; }
 
@@ -185,13 +197,15 @@ fi
 
 if [ "$RELOAD_LAUNCHD" = "1" ] && command -v launchctl >/dev/null 2>&1; then
     UID_NUM="$(id -u)"
-    python3 - <<PY
+    export UID_NUM
+    python3 - <<'PY'
+import os
 import subprocess
 import time
 from pathlib import Path
 
 home = Path.home()
-uid_num = "${UID_NUM}"
+uid_num = os.environ["UID_NUM"]
 labels = ["com.contextgo.daemon", "com.contextgo.healthcheck"]
 
 

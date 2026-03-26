@@ -551,7 +551,7 @@ class SessionTracker:
                     self._upsert_session(sid, source_name, text, now)
 
             self._set_cursor(cursor_key, path, cur_size)
-        except Exception as exc:
+        except (OSError, UnicodeDecodeError) as exc:
             self._error_count += 1
             logger.error("poll_jsonl_sources(%s): %s", source_name, exc)
 
@@ -584,7 +584,7 @@ class SessionTracker:
                         sid, text = parsed
                         self._upsert_session(sid, source_name, text, now)
                 self._set_cursor(cursor_key, path, cur_size)
-            except Exception as exc:
+            except (OSError, UnicodeDecodeError) as exc:
                 self._error_count += 1
                 logger.error("poll_shell_sources(%s): %s", source_name, exc)
 
@@ -666,7 +666,7 @@ class SessionTracker:
                             self._upsert_session(sid, "codex_session", text, now)
 
                 self._set_cursor(cursor_key, path, cur_size)
-            except Exception as exc:
+            except (OSError, UnicodeDecodeError) as exc:
                 self._error_count += 1
                 logger.error("poll_codex_sessions(%s): %s", path, exc)
 
@@ -793,7 +793,7 @@ class SessionTracker:
                 if messages_added:
                     logger.debug("claude_transcripts: +%d msgs from %s", messages_added, os.path.basename(path))
 
-            except Exception as exc:
+            except (OSError, UnicodeDecodeError) as exc:
                 self._error_count += 1
                 logger.error("poll_claude_transcripts(%s): %s", path, exc)
 

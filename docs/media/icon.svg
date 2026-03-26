@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="ContextGO icon">
+  <title>ContextGO</title>
+
+  <!-- Background rounded square -->
+  <rect x="0" y="0" width="64" height="64" rx="12" ry="12" fill="#2563eb"/>
+
+  <!-- Outer ring (context/memory) -->
+  <circle cx="22" cy="32" r="12" fill="none" stroke="#ffffff" stroke-width="3.5" opacity="0.85"/>
+  <!-- Inner ring (overlap) -->
+  <circle cx="34" cy="32" r="12" fill="none" stroke="#ffffffcc" stroke-width="3.5" opacity="0.65"/>
+  <!-- Arrow chevron for "go" -->
+  <polyline points="44,26 52,32 44,38" fill="none" stroke="#f59e0b" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

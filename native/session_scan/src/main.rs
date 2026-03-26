@@ -655,6 +655,7 @@ fn matched_snippet(text: &str, query_lower: &str, limit: usize) -> Option<String
 /// Clips `text` to at most `limit` characters, keeping the matched region
 /// centred in the window.  Operates on Unicode scalar values (chars), not
 /// bytes, to avoid splitting multi-byte sequences.
+#[inline]
 fn clip_snippet(text: &str, index: usize, query_len: usize, limit: usize) -> String {
     let total_chars = text.chars().count();
     if limit == 0 || total_chars <= limit {
@@ -675,6 +676,7 @@ fn clip_snippet(text: &str, index: usize, query_len: usize, limit: usize) -> Str
 
 /// Returns `true` when `line` (already lower-cased) matches any noise marker
 /// or heuristic pattern.
+#[inline]
 fn is_noise_line(line: &str) -> bool {
     let trimmed = line.trim();
     if trimmed.is_empty() {
@@ -724,6 +726,7 @@ fn is_noise_line(line: &str) -> bool {
 
 /// Returns `true` when the text is project-internal meta commentary that
 /// should not surface as a search result even if it contains the query.
+#[inline]
 fn should_skip_meta_text(
     current_workdir: Option<&str>,
     session_cwd: Option<&str>,
@@ -751,6 +754,8 @@ fn should_skip_meta_text(
     looks_like_meta && normalized_cwd == workdir
 }
 
+/// Returns `true` when a snippet candidate is project-internal meta
+/// commentary that should be excluded regardless of workdir matching.
 fn should_skip_meta_candidate(text: &str) -> bool {
     let trimmed = text.trim();
     (trimmed.starts_with('我')
@@ -766,6 +771,8 @@ fn should_skip_meta_candidate(text: &str) -> bool {
 
 // ── record-type filtering ─────────────────────────────────────────────────────
 
+/// Returns `true` for record types that contain no useful user-visible text,
+/// such as tool call outputs, token counts, and reasoning traces.
 fn should_skip_record_type(value: &Value) -> bool {
     let top_level = value.get("type").and_then(Value::as_str).unwrap_or("");
     if matches!(top_level, "turn_context" | "custom_tool_call") {
@@ -795,6 +802,8 @@ fn should_skip_record_type(value: &Value) -> bool {
 
 // ── scoring ───────────────────────────────────────────────────────────────────
 
+/// Returns a base priority score for a JSON field path.  Higher values indicate
+/// fields that carry primary user-visible content.
 fn field_priority(field: &str) -> i32 {
     match field {
         "message.content.text" | "payload.content.text" => 120,
@@ -810,6 +819,8 @@ fn field_priority(field: &str) -> i32 {
     }
 }
 
+/// Computes a match quality score combining field priority and query hit
+/// frequency.  Used to select the best snippet when multiple candidates match.
 fn candidate_score(field: &str, text: &str, query_lower: &str) -> i32 {
     let hits = text.to_lowercase().matches(query_lower).count() as i32;
     field_priority(field) + hits * 25
@@ -817,6 +828,8 @@ fn candidate_score(field: &str, text: &str, query_lower: &str) -> i32 {
 
 // ── text extraction ───────────────────────────────────────────────────────────
 
+/// Returns all non-empty text fragments from a parsed JSON record, labelled
+/// with the field path from which each was extracted.
 fn extract_text_candidates(value: &Value) -> Vec<MatchDetail> {
     const ROOT_FIELDS: &[(&str, &str)] = &[
         ("root.display", "display"),
@@ -861,6 +874,7 @@ fn extract_text_candidates(value: &Value) -> Vec<MatchDetail> {
     out
 }
 
+/// Appends a `MatchDetail` to `out` when `value` is a non-empty JSON string.
 fn collect_text_candidate(field: &'static str, value: Option<&Value>, out: &mut Vec<MatchDetail>) {
     if let Some(text) = value.and_then(Value::as_str) {
         let trimmed = text.trim();
@@ -875,6 +889,8 @@ fn collect_text_candidate(field: &'static str, value: Option<&Value>, out: &mut 
 
 // ── field extractors ──────────────────────────────────────────────────────────
 
+/// Extracts the session identifier from a parsed JSON record, checking
+/// `payload.id`, `sessionId`, and `session_id` in priority order.
 fn extract_session_id(value: &Value) -> Option<String> {
     nested_str(value, &["payload", "id"])
         .or_else(|| nested_str(value, &["sessionId"]))
@@ -882,6 +898,8 @@ fn extract_session_id(value: &Value) -> Option<String> {
         .map(str::to_string)
 }
 
+/// Extracts the most relevant timestamp from a parsed JSON record, preferring
+/// `payload.timestamp` over root-level date keys.
 fn extract_timestamp(value: &Value) -> Option<String> {
     nested_str(value, &["payload", "timestamp"])
         .or_else(|| nested_str(value, &["createdAt"]))
@@ -890,6 +908,7 @@ fn extract_timestamp(value: &Value) -> Option<String> {
         .map(str::to_string)
 }
 
+/// Extracts the working directory recorded in a parsed JSON record.
 fn extract_cwd(value: &Value) -> Option<String> {
     nested_str(value, &["payload", "cwd"])
         .or_else(|| nested_str(value, &["cwd"]))
@@ -915,6 +934,9 @@ fn active_workdir() -> Option<String> {
         .map(|p| p.to_string_lossy().into_owned())
 }
 
+/// Navigates a chain of `keys` through nested JSON objects and returns the
+/// final value as a string slice, or `None` if any key is absent or the
+/// final value is not a string.
 fn nested_str<'a>(value: &'a Value, keys: &[&str]) -> Option<&'a str> {
     let mut current = value;
     for key in keys {
@@ -927,6 +949,8 @@ fn nested_str<'a>(value: &'a Value, keys: &[&str]) -> Option<&'a str> {
 
 const VALID_EXTENSIONS: &[&str] = &["json", "jsonl"];
 
+/// Returns `true` when the file has a recognised session extension and does
+/// not belong to a skill directory that should be excluded from scanning.
 fn is_valid_extension(path: &Path) -> bool {
     let lower_path = path.to_string_lossy().to_lowercase();
     if should_skip_path(&lower_path) {
@@ -938,10 +962,15 @@ fn is_valid_extension(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// Returns `true` when `lower_path` (already lower-cased) belongs to a skill
+/// directory that should be excluded from session scanning.
 fn should_skip_path(lower_path: &str) -> bool {
     lower_path.contains("/skills/") || lower_path.contains("skills-repo")
 }
 
+/// Returns `true` when an error should be surfaced to the caller.  Expected
+/// skip sentinels (`SKIPPED_QUERY_MISS`, `SKIPPED_CURRENT_WORKDIR`) are
+/// suppressed to keep stderr clean during normal operation.
 fn should_report_error(err: &anyhow::Error) -> bool {
     let text = err.to_string();
     text != SKIPPED_QUERY_MISS && text != SKIPPED_CURRENT_WORKDIR

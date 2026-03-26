@@ -1,0 +1,58 @@
+# GitHub Labels for ContextGO
+# Synced automatically via .github/workflows/sync-labels.yml
+
+- name: bug
+  color: "d73a4a"
+  description: Something isn't working
+
+- name: enhancement
+  color: "0075ca"
+  description: New feature or request
+
+- name: documentation
+  color: "0e8a16"
+  description: Improvements or additions to documentation
+
+- name: question
+  color: "d876e3"
+  description: Further information is requested
+
+- name: needs-triage
+  color: "e4e669"
+  description: Awaiting initial review and classification
+
+- name: good-first-issue
+  color: "7057ff"
+  description: Good for newcomers
+
+- name: help-wanted
+  color: "e4811b"
+  description: Extra attention is needed
+
+- name: priority-high
+  color: "b60205"
+  description: Must be addressed urgently
+
+- name: priority-medium
+  color: "fbca04"
+  description: Should be addressed soon
+
+- name: priority-low
+  color: "cfd3d7"
+  description: Nice to have; no immediate urgency
+
+- name: area-python
+  color: "bfd4f2"
+  description: Relates to the Python core (scripts/)
+
+- name: area-native
+  color: "c5def5"
+  description: Relates to Rust or Go native binaries
+
+- name: area-docs
+  color: "d4e6fc"
+  description: Relates to documentation (docs/)
+
+- name: area-ci
+  color: "b8d9f8"
+  description: Relates to CI/CD workflows and tooling

@@ -8,7 +8,7 @@
 ## Quick Setup (AI Auto-Install)
 
 ```bash
-git clone https://github.com/dunova/ContextGO.git && cd ContextGO && bash scripts/unified_context_deploy.sh && python3 scripts/context_cli.py smoke
+git clone https://github.com/dunova/ContextGO.git && cd ContextGO && bash scripts/unified_context_deploy.sh && python3 scripts/context_cli.py smoke --sandbox
 ```
 
 Works on macOS and Linux. No Docker. No MCP. No external services required.
@@ -49,8 +49,8 @@ ContextGO is a local-first context and memory runtime that unifies Codex, Claude
 # 1. Health check — verify installation state
 python3 scripts/context_cli.py health
 
-# 2. Smoke gate — confirm full command surface is working
-python3 scripts/context_cli.py smoke
+# 2. Smoke gate — confirm full command surface is working (sandboxed, does not touch ~/.contextgo)
+python3 scripts/context_cli.py smoke --sandbox
 
 # 3. Search past sessions by keyword
 python3 scripts/context_cli.py search "auth root cause" --limit 10
@@ -89,8 +89,8 @@ python3 -m pytest scripts/test_context_cli.py scripts/test_context_core.py scrip
 # End-to-end quality gate
 python3 scripts/e2e_quality_gate.py
 
-# Smoke tests
-python3 scripts/context_smoke.py
+# Smoke tests (sandboxed — does not write to ~/.contextgo)
+python3 scripts/context_cli.py smoke --sandbox
 
 # Health check
 bash scripts/context_healthcheck.sh

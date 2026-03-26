@@ -9,19 +9,20 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 from datetime import datetime
 from pathlib import Path
 
 try:
-    from context_config import env_bool, env_int, env_str, storage_root
     import context_core
     import context_native
     import context_smoke
-    from memory_index import export_observations_payload, import_observations_payload
     import session_index
+    from context_config import env_bool, env_int, env_str, storage_root
+    from memory_index import export_observations_payload, import_observations_payload
 except ImportError:  # pragma: no cover
-    from .context_config import env_bool, env_int, env_str, storage_root  # type: ignore[import-not-found]
     from . import context_core, context_native, context_smoke, session_index  # type: ignore[import-not-found]
+    from .context_config import env_bool, env_int, env_str, storage_root  # type: ignore[import-not-found]
     from .memory_index import export_observations_payload, import_observations_payload  # type: ignore[import-not-found]
 
 
@@ -109,9 +110,9 @@ def _configure_viewer_module(module, host: str, port: int, token: str) -> None:
         module.apply_runtime_config(host, port, token_value)
         return
 
-    setattr(module, "HOST", host)
-    setattr(module, "PORT", port)
-    setattr(module, "VIEWER_TOKEN", token_value)
+    module.HOST = host
+    module.PORT = port
+    module.VIEWER_TOKEN = token_value
 
 
 def _compact_smoke_payload(payload: dict[str, object]) -> dict[str, object]:
@@ -302,10 +303,23 @@ def cmd_native_scan(args: argparse.Namespace) -> int:
 
 def cmd_smoke(args: argparse.Namespace) -> int:
     _scripts_dir = Path(__file__).resolve().parent
-    payload = context_smoke.run_smoke(
-        _scripts_dir / "context_cli.py",
-        _scripts_dir / "e2e_quality_gate.py",
-    )
+
+    if args.sandbox:
+        with tempfile.TemporaryDirectory(prefix="contextgo-sandbox-") as _sandbox_dir:
+            os.environ["CONTEXTGO_STORAGE_ROOT"] = _sandbox_dir
+            try:
+                payload = context_smoke.run_smoke(
+                    _scripts_dir / "context_cli.py",
+                    _scripts_dir / "e2e_quality_gate.py",
+                )
+            finally:
+                os.environ.pop("CONTEXTGO_STORAGE_ROOT", None)
+    else:
+        payload = context_smoke.run_smoke(
+            _scripts_dir / "context_cli.py",
+            _scripts_dir / "e2e_quality_gate.py",
+        )
+
     output = payload if args.verbose else _compact_smoke_payload(payload)
     _print_json(output, pretty=bool(args.verbose))
     failed = [item for item in payload["results"] if not item["ok"]]
@@ -439,6 +453,15 @@ def build_parser() -> argparse.ArgumentParser:
         description="Run the smoke gate that checks CLI, viewer, and memory flows end to end.",
     )
     smoke.add_argument("--verbose", action="store_true", help="Print full smoke payload")
+    smoke.add_argument(
+        "--sandbox",
+        action="store_true",
+        help=(
+            "Run smoke in an isolated temporary directory. "
+            "Sets CONTEXTGO_STORAGE_ROOT to a fresh tempfile.TemporaryDirectory() "
+            "and cleans up on exit so the developer's ~/.contextgo is never touched."
+        ),
+    )
 
     health = sub.add_parser("health", help="Check context system health")
     health.add_argument("--verbose", action="store_true", help="Print full health payload")

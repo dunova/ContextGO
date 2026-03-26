@@ -22,6 +22,7 @@ MAX_METRIC_HISTORY = 20
 
 
 def run_cmd(args: list[str], timeout: int = 180) -> tuple[int, str, str]:
+    """Run a subprocess and return (returncode, stdout, stderr)."""
     proc = subprocess.run(
         args,
         cwd=str(REPO_ROOT),
@@ -33,6 +34,7 @@ def run_cmd(args: list[str], timeout: int = 180) -> tuple[int, str, str]:
 
 
 def current_git_commit() -> str:
+    """Return the short HEAD git commit hash, or empty string on failure."""
     rc, out, _ = run_cmd(["git", "rev-parse", "--short", "HEAD"], timeout=30)
     return out.strip() if rc == 0 and out.strip() else ""
 
@@ -106,6 +108,7 @@ def _smoke_eval() -> tuple[int, dict, int]:
 
 
 def evaluate(query: str) -> dict:
+    """Run all evaluation probes and return a scored metrics payload."""
     health_rc, health_out, health_err = run_cmd(
         [sys.executable, str(REPO_ROOT / "scripts" / "context_cli.py"), "health"]
     )

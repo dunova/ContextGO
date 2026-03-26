@@ -39,15 +39,15 @@ python3 -m pytest scripts/test_context_cli.py scripts/test_context_core.py scrip
 # End-to-end quality gate
 python3 scripts/e2e_quality_gate.py
 
-# Smoke tests
-python3 scripts/context_smoke.py
+# Smoke tests (sandboxed — does not write to ~/.contextgo)
+python3 scripts/context_cli.py smoke --sandbox
 python3 scripts/smoke_installed_runtime.py
 
 # Health check
 bash scripts/context_healthcheck.sh
 
-# Quick smoke via CLI
-python3 scripts/context_cli.py smoke
+# Quick smoke via CLI (sandboxed)
+python3 scripts/context_cli.py smoke --sandbox
 ```
 
 ## Style Rules

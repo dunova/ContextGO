@@ -1,0 +1,10 @@
+blank_issues_enabled: false
+
+contact_links:
+  - name: Discussions
+    url: https://github.com/dunova/ContextGO/discussions
+    about: Ask questions, share ideas, or start a conversation with the community.
+
+  - name: Documentation
+    url: https://github.com/dunova/ContextGO/tree/main/docs
+    about: Browse the full ContextGO documentation before opening an issue.

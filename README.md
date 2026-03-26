@@ -1,11 +1,13 @@
-# ContextGO
+<p align="center">
+  <img src="docs/media/logo.svg" alt="ContextGO" width="400">
+</p>
 
 **Local-first context and memory runtime for multi-agent AI coding teams.**
 
 **面向多 Agent AI 编码团队的本地优先上下文与记忆运行时。**
 
 ```
-pip install git+https://github.com/dunova/ContextGO.git
+pip install contextgo
 ```
 
 ---
@@ -39,7 +41,7 @@ ContextGO unifies Codex, Claude, and shell session histories into one **searchab
 **Option 1 — pip (recommended)**
 
 ```bash
-pip install git+https://github.com/dunova/ContextGO.git
+pip install contextgo
 contextgo health
 ```
 
@@ -215,7 +217,7 @@ ContextGO 将 Codex、Claude 和 shell 的会话历史统一到一条**可检索
 **方式一 — pip（推荐）**
 
 ```bash
-pip install git+https://github.com/dunova/ContextGO.git
+pip install contextgo
 contextgo health
 ```
 

@@ -6,7 +6,8 @@ install:
 test:
 	python3 -m pytest scripts/test_context_cli.py scripts/test_context_core.py \
 		scripts/test_context_native.py scripts/test_context_smoke.py \
-		scripts/test_session_index.py scripts/test_autoresearch_contextgo.py -v
+		scripts/test_session_index.py scripts/test_autoresearch_contextgo.py \
+		--cov=scripts --cov-report=term-missing --cov-report=xml -v
 
 lint:
 	ruff check scripts/ benchmarks/
@@ -17,7 +18,7 @@ format:
 	ruff check --fix scripts/ benchmarks/
 
 smoke:
-	python3 scripts/context_cli.py smoke
+	python3 scripts/context_cli.py smoke --sandbox
 
 health:
 	python3 scripts/context_cli.py health

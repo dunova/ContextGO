@@ -35,3 +35,31 @@ jobs:
           generate_release_notes: ${{ steps.notes.outputs.body_path == '' }}
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
+
+  publish-pypi:
+    name: Publish to PyPI
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      id-token: write
+    environment:
+      name: pypi
+      url: https://pypi.org/p/contextgo
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build
+        run: pip install build
+
+      - name: Build sdist and wheel
+        run: python3 -m build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

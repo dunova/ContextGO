@@ -4,6 +4,11 @@
 # Usage: scf_context_prewarm.sh <query> [mode] [limit]
 #
 # Runs an exact history search via context_cli.py, then a quick health check.
+# Results are printed to stdout for the caller to review.
+#
+# Exit codes:
+#   0  Prewarm completed (non-zero search exit is non-fatal and also exits 0).
+#   1  Required argument missing (shows usage).
 set -euo pipefail
 
 usage() {
@@ -37,8 +42,11 @@ fi
 log() { printf '[scf-prewarm] %s\n' "$*"; }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR
 CLI_SCRIPT="$SCRIPT_DIR/context_cli.py"
+readonly CLI_SCRIPT
 HC_SCRIPT="$SCRIPT_DIR/context_healthcheck.sh"
+readonly HC_SCRIPT
 
 if [ ! -f "$CLI_SCRIPT" ]; then
     log "WARNING: context_cli.py not found at $CLI_SCRIPT; skipping exact search"
