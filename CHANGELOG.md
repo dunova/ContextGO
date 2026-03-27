@@ -15,6 +15,37 @@ _No unreleased changes._
 
 ---
 
+## [0.9.2] — 2026-03-27
+
+### Overview
+
+Performance, stability, and quality hardening release. 20-round AutoResearch optimization targeting lightweight, stable, and fast operation. Coverage pushed from 51% to 84%, test count from 225 to 783, with zero new dependencies.
+
+20 轮 AutoResearch 迭代优化版本，目标：轻量、稳定、迅速。覆盖率从 51% 提升至 84%，测试数量从 225 增加到 783，零新增依赖。
+
+### Added
+
+- 550+ new tests across session_index, memory_index, context_daemon, context_core, context_native, check_noise_sync, and utility scripts
+- Export-import and maintain cases in e2e quality gate
+- Sandbox isolation for smoke_installed_runtime
+- Go scanner: Unicode byte-offset mismatch fix and `TestSnippetMatcherToLowerByteShift` regression test
+
+### Fixed
+
+- CORS origin bypass vulnerability in memory_viewer (now uses proper hostname parsing)
+- Go scanner: Unicode byte-offset mismatch in `SnippetMatcher.Match` for multi-byte lowercased characters
+- Go 1.19 compatibility: replaced builtin `min()` with explicit comparison
+- CLI error messages improved with actionable guidance (import, save)
+- Healthcheck and e2e diagnostics enhanced with detailed failure context
+
+### Changed
+
+- Test coverage: 51% -> 84.5%
+- Test count: 225 -> 783
+- All native backends verified (Rust clippy clean, Go vet clean)
+
+---
+
 ## [0.9.1] — 2026-03-27
 
 ### Overview
