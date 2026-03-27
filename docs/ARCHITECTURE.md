@@ -28,7 +28,7 @@ flowchart LR
     end
 
     subgraph Interface
-        CLI["context_cli<br/>search · semantic · save · export · import · serve · maintain"]
+        CLI["context_cli<br/>search · semantic · save · export · import · serve · maintain · native-scan · smoke · health"]
         SRV["context_server<br/>local viewer HTTP API"]
     end
 
@@ -98,9 +98,9 @@ ContextGO/
 
 ### 3. Interface layer / 接口层
 
-`context_cli.py` is the single operator entry point. It exposes eight subcommands:
+`context_cli.py` is the single operator entry point. It exposes ten subcommands:
 
-`context_cli.py` 是唯一的操作入口，提供以下子命令：
+`context_cli.py` 是唯一的操作入口，提供以下十个子命令：
 
 | Subcommand | Purpose / 用途 |
 |---|---|
@@ -112,6 +112,8 @@ ContextGO/
 | `import` | Import observations from JSON / 从 JSON 导入观测 |
 | `serve` | Start the local viewer server / 启动本地 viewer 服务 |
 | `maintain` | Index cleanup and repair / 索引清理与修复 |
+| `native-scan` | Run native Rust/Go scan backend directly / 直接调用原生扫描后端 |
+| `smoke` | Run end-to-end smoke gate / 运行端到端 smoke 验证 |
 
 `context_server.py` and `memory_viewer.py` implement the local HTTP viewer API (see [API.md](API.md)).
 

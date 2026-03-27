@@ -4,28 +4,62 @@
 from __future__ import annotations
 
 import argparse
-import importlib
 import json
 import os
-import subprocess
 import sys
-import tempfile
-import urllib.request
 from datetime import datetime
 from pathlib import Path
 from types import ModuleType
 
 try:
-    import context_core
-    import context_native
-    import context_smoke
-    import session_index
     from context_config import env_bool, env_int, env_str, storage_root
-    from memory_index import export_observations_payload, import_observations_payload
 except ImportError:  # pragma: no cover
-    from . import context_core, context_native, context_smoke, session_index  # type: ignore[import-not-found]
     from .context_config import env_bool, env_int, env_str, storage_root  # type: ignore[import-not-found]
-    from .memory_index import export_observations_payload, import_observations_payload  # type: ignore[import-not-found]
+
+
+def _get_context_core() -> ModuleType:
+    """Lazy import of context_core — deferred until first use."""
+    try:
+        import context_core as _m  # type: ignore[import-not-found]
+    except ImportError:
+        from . import context_core as _m  # type: ignore[import-not-found]
+    return _m
+
+
+def _get_context_native() -> ModuleType:
+    """Lazy import of context_native — deferred until first use."""
+    try:
+        import context_native as _m  # type: ignore[import-not-found]
+    except ImportError:
+        from . import context_native as _m  # type: ignore[import-not-found]
+    return _m
+
+
+def _get_context_smoke() -> ModuleType:
+    """Lazy import of context_smoke — deferred until first use."""
+    try:
+        import context_smoke as _m  # type: ignore[import-not-found]
+    except ImportError:
+        from . import context_smoke as _m  # type: ignore[import-not-found]
+    return _m
+
+
+def _get_session_index() -> ModuleType:
+    """Lazy import of session_index — deferred until first use."""
+    try:
+        import session_index as _m  # type: ignore[import-not-found]
+    except ImportError:
+        from . import session_index as _m  # type: ignore[import-not-found]
+    return _m
+
+
+def _get_memory_index() -> ModuleType:
+    """Lazy import of memory_index — deferred until first use."""
+    try:
+        import memory_index as _m  # type: ignore[import-not-found]
+    except ImportError:
+        from . import memory_index as _m  # type: ignore[import-not-found]
+    return _m
 
 
 HOME = Path.home()
@@ -53,13 +87,29 @@ REMOTE_MEMORY_URL = env_str("CONTEXTGO_REMOTE_URL", default="http://127.0.0.1:80
 
 
 # ───────────────────────────────────────────────
+# Thin wrappers for deferred memory_index callables
+# (kept as module-level names so tests can mock them directly)
+# ───────────────────────────────────────────────
+
+
+def export_observations_payload(query: str = "", *, limit: int = 5000, source_type: str = "all") -> dict:
+    """Delegate to memory_index.export_observations_payload (deferred import)."""
+    return _get_memory_index().export_observations_payload(query, limit=limit, source_type=source_type)
+
+
+def import_observations_payload(payload: dict, *, sync_from_storage: bool = True) -> dict:
+    """Delegate to memory_index.import_observations_payload (deferred import)."""
+    return _get_memory_index().import_observations_payload(payload, sync_from_storage=sync_from_storage)
+
+
+# ───────────────────────────────────────────────
 # Shared helpers
 # ───────────────────────────────────────────────
 
 
 def _local_memory_matches(query: str, limit: int = 3) -> list[dict]:
     """Return local memory items matching *query*, up to *limit* results."""
-    return context_core.local_memory_matches(
+    return _get_context_core().local_memory_matches(
         query,
         shared_root=LOCAL_SHARED_ROOT,
         limit=limit,
@@ -75,7 +125,7 @@ def _save_local_memory(title: str, content: str, tags: list[str]) -> str:
     Returns a human-readable status message.
     """
     try:
-        path = context_core.write_memory_markdown(
+        path = _get_context_core().write_memory_markdown(
             title,
             content,
             tags,
@@ -86,6 +136,8 @@ def _save_local_memory(title: str, content: str, tags: list[str]) -> str:
 
     if not ENABLE_REMOTE_MEMORY_HTTP:
         return f"Saved locally: {path}"
+
+    import urllib.request  # deferred: only needed for remote HTTP sync
 
     payload = json.dumps(
         {
@@ -115,6 +167,8 @@ def _load_module(name: str) -> ModuleType:
     Exists as a named function so tests can mock late imports (serve, maintain)
     without patching importlib globally.
     """
+    import importlib  # deferred: only needed for serve/maintain commands
+
     return importlib.import_module(name)
 
 
@@ -167,9 +221,10 @@ def _print_json(payload: object, *, pretty: bool = False) -> None:
 
 def _source_freshness() -> dict[str, dict[str, object]]:
     """Return a mapping of known history source names to their path and mtime."""
+    _core = _get_context_core()
     antigravity_candidates = sorted(
         (HOME / ".gemini" / "antigravity" / "brain").glob("*/walkthrough.md"),
-        key=context_core.safe_mtime,
+        key=_core.safe_mtime,
         reverse=True,
     )
     sources: dict[str, Path | None] = {
@@ -188,13 +243,15 @@ def _source_freshness() -> dict[str, dict[str, object]]:
         result[name] = {
             "exists": p.exists(),
             "path": str(p),
-            "mtime": datetime.fromtimestamp(context_core.safe_mtime(p)).isoformat() if p.exists() else None,
+            "mtime": datetime.fromtimestamp(_core.safe_mtime(p)).isoformat() if p.exists() else None,
         }
     return result
 
 
 def _remote_process_count() -> int:
     """Return the number of running contextgo-remote processes, or 0 on error."""
+    import subprocess  # deferred: only needed for health command
+
     try:
         proc = subprocess.run(
             ["pgrep", "-f", "contextgo-remote"],
@@ -214,7 +271,10 @@ def _remote_process_count() -> int:
 
 def cmd_search(args: argparse.Namespace) -> int:
     """Search session/history context and print results."""
-    text = session_index.format_search_results(
+    if not args.query or not args.query.strip():
+        print("Error: search query must not be empty.", file=sys.stderr)
+        return 2
+    text = _get_session_index().format_search_results(
         args.query,
         search_type=args.type,
         limit=args.limit,
@@ -226,13 +286,16 @@ def cmd_search(args: argparse.Namespace) -> int:
 
 def cmd_semantic(args: argparse.Namespace) -> int:
     """Search local memories first, then fall back to history content search."""
+    if not args.query or not args.query.strip():
+        print("Error: search query must not be empty.", file=sys.stderr)
+        return 2
     matches = _local_memory_matches(args.query, limit=args.limit)
     if matches:
         print("--- LOCAL MEMORY MATCHES ---")
         for item in matches:
             print(json.dumps(item, ensure_ascii=False, indent=2))
         return 0
-    text = session_index.format_search_results(
+    text = _get_session_index().format_search_results(
         args.query,
         search_type="content",
         limit=min(args.limit, 10),
@@ -254,12 +317,18 @@ def cmd_save(args: argparse.Namespace) -> int:
 
 def cmd_export(args: argparse.Namespace) -> int:
     """Export indexed observations to a JSON file."""
+    if not args.output or not args.output.strip():
+        print("Error: export output path must not be empty.", file=sys.stderr)
+        return 2
     payload = export_observations_payload(
         args.query,
         limit=args.limit,
         source_type=args.source_type,
     )
     output_path = Path(args.output).expanduser()
+    if output_path.is_dir():
+        print(f"Error: output path '{output_path}' is a directory, not a file.", file=sys.stderr)
+        return 2
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"exported observations={payload['total_observations']} -> {output_path}")
@@ -288,6 +357,9 @@ def cmd_import(args: argparse.Namespace) -> int:
 
 def cmd_serve(args: argparse.Namespace) -> int:
     """Start the local memory viewer server (blocks until interrupted)."""
+    if not (1 <= args.port <= 65535):
+        print(f"Error: port {args.port} is out of valid range 1-65535.", file=sys.stderr)
+        return 2
     viewer_module = _load_module("context_server")
     _configure_viewer_module(viewer_module, args.host, args.port, args.token)
     viewer_module.main()
@@ -320,7 +392,10 @@ def cmd_maintain(args: argparse.Namespace) -> int:
 
 def cmd_native_scan(args: argparse.Namespace) -> int:
     """Run the native Rust/Go scan backend and print results."""
-    result = context_native.run_native_scan(
+    if args.threads < 1:
+        print(f"Error: --threads must be at least 1, got {args.threads}.", file=sys.stderr)
+        return 2
+    result = _get_context_native().run_native_scan(
         backend=args.backend,
         codex_root=args.codex_root,
         claude_root=args.claude_root,
@@ -353,14 +428,16 @@ def cmd_smoke(args: argparse.Namespace) -> int:
     )
 
     if args.sandbox:
+        import tempfile  # deferred: only needed for sandbox smoke runs
+
         with tempfile.TemporaryDirectory(prefix="contextgo-sandbox-") as sandbox_dir:
             os.environ["CONTEXTGO_STORAGE_ROOT"] = sandbox_dir
             try:
-                payload = context_smoke.run_smoke(*smoke_args)
+                payload = _get_context_smoke().run_smoke(*smoke_args)
             finally:
                 os.environ.pop("CONTEXTGO_STORAGE_ROOT", None)
     else:
-        payload = context_smoke.run_smoke(*smoke_args)
+        payload = _get_context_smoke().run_smoke(*smoke_args)
 
     output = payload if args.verbose else _compact_smoke_payload(payload)
     _print_json(output, pretty=args.verbose)
@@ -369,7 +446,7 @@ def cmd_smoke(args: argparse.Namespace) -> int:
 
 def cmd_health(args: argparse.Namespace) -> int:
     """Check context system health and print a JSON status payload."""
-    recall = session_index.health_payload()
+    recall = _get_session_index().health_payload()
     db_ok = bool(recall.get("session_index_db_exists"))
     payload: dict[str, object] = {
         "checked_at": datetime.now().isoformat(),
@@ -389,7 +466,7 @@ def cmd_health(args: argparse.Namespace) -> int:
             "mode": "optional-http" if ENABLE_REMOTE_MEMORY_HTTP else "disabled-by-policy",
             "remote_processes": _remote_process_count(),
         },
-        "native_backends": context_native.health_payload(),
+        "native_backends": _get_context_native().health_payload(),
         "all_ok": db_ok,
     }
 
@@ -547,6 +624,32 @@ def run(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     """Parse *argv* and run the selected command. Returns an exit code."""
     return run(build_parser().parse_args(argv))
+
+
+_LAZY_MODULE_MAP: dict[str, object] = {}
+_LAZY_MODULE_GETTERS: dict[str, object] = {
+    "context_core": _get_context_core,
+    "context_native": _get_context_native,
+    "context_smoke": _get_context_smoke,
+    "session_index": _get_session_index,
+    "memory_index": _get_memory_index,
+}
+
+
+def __getattr__(name: str) -> object:
+    """Support lazy access to deferred modules as attributes of this module.
+
+    This allows ``context_cli.context_native`` etc. to work for test mocking
+    while still deferring the actual import until first use.
+    """
+    getter = _LAZY_MODULE_GETTERS.get(name)
+    if getter is not None:
+        module = getter()  # type: ignore[call-arg]
+        _LAZY_MODULE_MAP[name] = module
+        # Cache it as a real attribute so subsequent accesses skip __getattr__
+        globals()[name] = module
+        return module
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 if __name__ == "__main__":

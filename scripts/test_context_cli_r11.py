@@ -524,5 +524,120 @@ class TestCmdSemanticLocalMatch(unittest.TestCase):
         self.assertEqual(rc, 1)
 
 
+class TestEdgeCaseHardening(unittest.TestCase):
+    """Edge case tests added in AutoResearch R7 to cover defensive guards."""
+
+    # --- cmd_search: empty / whitespace-only query ---
+
+    def test_cmd_search_empty_query_returns_2(self) -> None:
+        args = context_cli.build_parser().parse_args(["search", "placeholder"])
+        args.query = ""
+        with mock.patch("sys.stderr"):
+            rc = context_cli.cmd_search(args)
+        self.assertEqual(rc, 2)
+
+    def test_cmd_search_whitespace_only_query_returns_2(self) -> None:
+        args = context_cli.build_parser().parse_args(["search", "placeholder"])
+        args.query = "   "
+        with mock.patch("sys.stderr"):
+            rc = context_cli.cmd_search(args)
+        self.assertEqual(rc, 2)
+
+    # --- cmd_semantic: empty / whitespace-only query ---
+
+    def test_cmd_semantic_empty_query_returns_2(self) -> None:
+        args = context_cli.build_parser().parse_args(["semantic", "placeholder"])
+        args.query = ""
+        with mock.patch("sys.stderr"):
+            rc = context_cli.cmd_semantic(args)
+        self.assertEqual(rc, 2)
+
+    def test_cmd_semantic_whitespace_query_returns_2(self) -> None:
+        args = context_cli.build_parser().parse_args(["semantic", "placeholder"])
+        args.query = "\t\n"
+        with mock.patch("sys.stderr"):
+            rc = context_cli.cmd_semantic(args)
+        self.assertEqual(rc, 2)
+
+    # --- cmd_export: empty output path and directory output path ---
+
+    def test_cmd_export_empty_output_returns_2(self) -> None:
+        args = context_cli.build_parser().parse_args(["export", "q", "placeholder_output"])
+        args.output = ""
+        with mock.patch("sys.stderr"):
+            rc = context_cli.cmd_export(args)
+        self.assertEqual(rc, 2)
+
+    def test_cmd_export_directory_output_returns_2(self) -> None:
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            args = context_cli.build_parser().parse_args(["export", "q", tmpdir])
+            with (
+                mock.patch.object(
+                    context_cli,
+                    "export_observations_payload",
+                    return_value={"total_observations": 0, "observations": []},
+                ),
+                mock.patch("sys.stderr"),
+            ):
+                rc = context_cli.cmd_export(args)
+        self.assertEqual(rc, 2)
+
+    # --- cmd_serve: port out of valid range ---
+
+    def test_cmd_serve_port_zero_returns_2(self) -> None:
+        args = context_cli.build_parser().parse_args(["serve"])
+        args.port = 0
+        with mock.patch("sys.stderr"):
+            rc = context_cli.cmd_serve(args)
+        self.assertEqual(rc, 2)
+
+    def test_cmd_serve_port_too_high_returns_2(self) -> None:
+        args = context_cli.build_parser().parse_args(["serve"])
+        args.port = 99999
+        with mock.patch("sys.stderr"):
+            rc = context_cli.cmd_serve(args)
+        self.assertEqual(rc, 2)
+
+    def test_cmd_serve_port_boundary_65535_ok(self) -> None:
+        args = context_cli.build_parser().parse_args(["serve"])
+        args.port = 65535
+        mock_module = mock.Mock()
+        mock_module.main = mock.Mock(return_value=None)
+        mock_module.apply_runtime_config = mock.Mock()
+        with mock.patch.object(context_cli, "_load_module", return_value=mock_module):
+            rc = context_cli.cmd_serve(args)
+        self.assertEqual(rc, 0)
+
+    # --- cmd_native_scan: threads <= 0 ---
+
+    def test_cmd_native_scan_threads_zero_returns_2(self) -> None:
+        args = context_cli.build_parser().parse_args(["native-scan"])
+        args.threads = 0
+        with mock.patch("sys.stderr"):
+            rc = context_cli.cmd_native_scan(args)
+        self.assertEqual(rc, 2)
+
+    def test_cmd_native_scan_threads_negative_returns_2(self) -> None:
+        args = context_cli.build_parser().parse_args(["native-scan"])
+        args.threads = -4
+        with mock.patch("sys.stderr"):
+            rc = context_cli.cmd_native_scan(args)
+        self.assertEqual(rc, 2)
+
+    def test_cmd_native_scan_threads_one_is_valid(self) -> None:
+        args = context_cli.build_parser().parse_args(["native-scan", "--threads", "1"])
+        mock_result = mock.Mock()
+        mock_result.returncode = 0
+        mock_result.stdout = ""
+        mock_result.stderr = ""
+        with (
+            mock.patch.object(context_cli.context_native, "run_native_scan", return_value=mock_result),
+            mock.patch("builtins.print"),
+        ):
+            rc = context_cli.cmd_native_scan(args)
+        self.assertEqual(rc, 0)
+
+
 if __name__ == "__main__":
     unittest.main()

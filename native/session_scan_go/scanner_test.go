@@ -370,6 +370,745 @@ func BenchmarkSnippetMatcherMatch(b *testing.B) {
 	}
 }
 
+// ── NewSessionScanner defaults ────────────────────────────────────────────────
+
+func TestNewSessionScannerDefaults(t *testing.T) {
+	// nil filter → DefaultNoiseMarkers applied; snippetLimit ≤ 0 → defaultSnippetLimit.
+	sc := NewSessionScanner(nil, 0)
+	if sc.noiseFilter == nil {
+		t.Fatal("expected non-nil noise filter from nil input")
+	}
+	if sc.snippetLimit != defaultSnippetLimit {
+		t.Fatalf("expected snippetLimit %d, got %d", defaultSnippetLimit, sc.snippetLimit)
+	}
+
+	// Negative snippetLimit should also fall back.
+	sc2 := NewSessionScanner(NewNoiseFilter(nil), -1)
+	if sc2.snippetLimit != defaultSnippetLimit {
+		t.Fatalf("expected snippetLimit %d for negative input, got %d", defaultSnippetLimit, sc2.snippetLimit)
+	}
+
+	// Explicit positive limit must be preserved.
+	sc3 := NewSessionScanner(NewNoiseFilter(nil), 50)
+	if sc3.snippetLimit != 50 {
+		t.Fatalf("expected snippetLimit 50, got %d", sc3.snippetLimit)
+	}
+}
+
+// ── ProcessFile error & edge case paths ──────────────────────────────────────
+
+func TestProcessFileNotFound(t *testing.T) {
+	sc := NewSessionScanner(nil, defaultSnippetLimit)
+	_, ok := sc.ProcessFile(WorkItem{Source: "test", Path: "/nonexistent/file.jsonl"}, "query")
+	if ok {
+		t.Fatal("expected false for non-existent file")
+	}
+}
+
+func TestProcessFileEmptyFile(t *testing.T) {
+	tmp, err := os.CreateTemp(t.TempDir(), "empty*.jsonl")
+	if err != nil {
+		t.Fatalf("create temp file: %v", err)
+	}
+	tmp.Close()
+
+	sc := NewSessionScanner(nil, defaultSnippetLimit)
+	// Empty query → matchFound starts true, so even an empty file returns ok.
+	_, ok := sc.ProcessFile(WorkItem{Source: "test", Path: tmp.Name()}, "")
+	if !ok {
+		t.Fatal("expected ok=true for empty query (all files match)")
+	}
+
+	// Non-empty query → no match found in empty file.
+	_, ok2 := sc.ProcessFile(WorkItem{Source: "test", Path: tmp.Name()}, "something")
+	if ok2 {
+		t.Fatal("expected ok=false for non-empty query with no content")
+	}
+}
+
+func TestProcessFileRawLineMatch(t *testing.T) {
+	// A file whose lines are not valid JSON should still be matched as raw_line.
+	tmp, err := os.CreateTemp(t.TempDir(), "raw*.jsonl")
+	if err != nil {
+		t.Fatalf("create temp file: %v", err)
+	}
+	defer tmp.Close()
+
+	if _, err := tmp.WriteString("this is a raw non-json line with keyword here\n"); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	sc := NewSessionScanner(NewNoiseFilter(nil), defaultSnippetLimit)
+	summary, ok := sc.ProcessFile(WorkItem{Source: "test", Path: tmp.Name()}, "keyword")
+	if !ok {
+		t.Fatal("expected match on raw non-JSON line")
+	}
+	if summary.MatchField != "raw_line" {
+		t.Fatalf("expected MatchField=raw_line, got %q", summary.MatchField)
+	}
+}
+
+func TestProcessFileRootCwdFilter(t *testing.T) {
+	// extractCwd should also read root-level "cwd" (not just payload.cwd).
+	tmp, err := os.CreateTemp(t.TempDir(), "rootcwd*.jsonl")
+	if err != nil {
+		t.Fatalf("create temp file: %v", err)
+	}
+	defer tmp.Close()
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+
+	import_line, err := json.Marshal(map[string]any{
+		"type": "session_meta",
+		"cwd":  cwd, // root-level cwd, not nested under payload
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	msg, err := json.Marshal(map[string]any{
+		"type":    "event_msg",
+		"payload": map[string]any{"type": "agent_message", "message": "notebooklm search result"},
+	})
+	if err != nil {
+		t.Fatalf("marshal msg: %v", err)
+	}
+	tmp.Write(append(import_line, '\n'))
+	tmp.Write(append(msg, '\n'))
+
+	sc := NewSessionScanner(NewNoiseFilter(DefaultNoiseMarkers), defaultSnippetLimit)
+	_, ok := sc.ProcessFile(WorkItem{Source: "test", Path: tmp.Name()}, "notebooklm")
+	if ok {
+		t.Fatal("expected file with root-level cwd matching current dir to be excluded")
+	}
+}
+
+func TestProcessFileEmptyQueryAllMatch(t *testing.T) {
+	tmp, err := os.CreateTemp(t.TempDir(), "allm*.jsonl")
+	if err != nil {
+		t.Fatalf("create temp file: %v", err)
+	}
+	defer tmp.Close()
+
+	line, _ := json.Marshal(map[string]any{"type": "event_msg", "payload": map[string]any{"type": "agent_message", "message": "hello world"}})
+	tmp.Write(append(line, '\n'))
+
+	sc := NewSessionScanner(nil, defaultSnippetLimit)
+	_, ok := sc.ProcessFile(WorkItem{Source: "test", Path: tmp.Name()}, "")
+	if !ok {
+		t.Fatal("expected ok=true for empty query")
+	}
+}
+
+func TestProcessFileSessionIDFromPayload(t *testing.T) {
+	tmp, err := os.CreateTemp(t.TempDir(), "sid*.jsonl")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	defer tmp.Close()
+
+	line, _ := json.Marshal(map[string]any{
+		"type":    "session_meta",
+		"payload": map[string]any{"id": "my-session-123"},
+	})
+	tmp.Write(append(line, '\n'))
+
+	sc := NewSessionScanner(nil, defaultSnippetLimit)
+	summary, ok := sc.ProcessFile(WorkItem{Source: "test", Path: tmp.Name()}, "")
+	if !ok {
+		t.Fatal("expected ok=true for empty query")
+	}
+	if summary.SessionID != "my-session-123" {
+		t.Fatalf("expected SessionID my-session-123, got %q", summary.SessionID)
+	}
+}
+
+func TestProcessFileTimestamps(t *testing.T) {
+	tmp, err := os.CreateTemp(t.TempDir(), "ts*.jsonl")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	defer tmp.Close()
+
+	first, _ := json.Marshal(map[string]any{"createdAt": "2025-01-01T00:00:00Z", "message": "first"})
+	second, _ := json.Marshal(map[string]any{"createdAt": "2025-06-01T00:00:00Z", "message": "second"})
+	tmp.Write(append(first, '\n'))
+	tmp.Write(append(second, '\n'))
+
+	sc := NewSessionScanner(nil, defaultSnippetLimit)
+	summary, ok := sc.ProcessFile(WorkItem{Source: "test", Path: tmp.Name()}, "")
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	if summary.FirstTimestamp != "2025-01-01T00:00:00Z" {
+		t.Fatalf("FirstTimestamp: got %q, want 2025-01-01T00:00:00Z", summary.FirstTimestamp)
+	}
+	if summary.LastTimestamp != "2025-06-01T00:00:00Z" {
+		t.Fatalf("LastTimestamp: got %q, want 2025-06-01T00:00:00Z", summary.LastTimestamp)
+	}
+}
+
+// ── shouldSkipRecordType remaining branches ───────────────────────────────────
+
+func TestShouldSkipRecordTypeAdditional(t *testing.T) {
+	cases := []struct {
+		name string
+		rec  map[string]any
+		want bool
+	}{
+		{
+			"turn_context",
+			map[string]any{"type": "turn_context"},
+			true,
+		},
+		{
+			"custom_tool_call",
+			map[string]any{"type": "custom_tool_call"},
+			true,
+		},
+		{
+			"response_item_function_call",
+			map[string]any{"type": "response_item", "payload": map[string]any{"type": "function_call"}},
+			true,
+		},
+		{
+			"response_item_reasoning",
+			map[string]any{"type": "response_item", "payload": map[string]any{"type": "reasoning"}},
+			true,
+		},
+		{
+			"event_msg_task_started",
+			map[string]any{"type": "event_msg", "payload": map[string]any{"type": "task_started"}},
+			true,
+		},
+		{
+			"event_msg_agent_message_kept",
+			map[string]any{"type": "event_msg", "payload": map[string]any{"type": "agent_message"}},
+			false,
+		},
+		{
+			"response_item_no_nested_payload",
+			map[string]any{"type": "response_item"},
+			false,
+		},
+		{
+			"event_msg_no_nested_payload",
+			map[string]any{"type": "event_msg"},
+			false,
+		},
+		{
+			"unknown_type",
+			map[string]any{"type": "something_else"},
+			false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := shouldSkipRecordType(tc.rec); got != tc.want {
+				t.Fatalf("shouldSkipRecordType(%v) = %v, want %v", tc.rec, got, tc.want)
+			}
+		})
+	}
+}
+
+// ── IsNoiseLower additional branches ─────────────────────────────────────────
+
+func TestIsNoiseLowerEmptyString(t *testing.T) {
+	f := NewNoiseFilter(nil)
+	if !f.IsNoiseLower("") {
+		t.Fatal("expected empty string to be noise")
+	}
+}
+
+func TestIsNoiseLowerNilFilter(t *testing.T) {
+	var f *NoiseFilter
+	if f.IsNoiseLower("anything") {
+		t.Fatal("nil filter should return false")
+	}
+}
+
+func TestIsNoiseLowerFSNoise(t *testing.T) {
+	f := NewNoiseFilter(nil)
+	cases := []struct {
+		name string
+		line string
+	}{
+		{"drwx", "drwxr-xr-x   2 user staff  64 jan  1 00:00 dir"},
+		{"rwxr-xr-x", "-rwxr-xr-x   1 user staff 128 jan  1 00:00 file"},
+		{"ntotal", "some content\ntotal 42 blocks"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if !f.IsNoiseLower(tc.line) {
+				t.Fatalf("expected %q to be noise", tc.line)
+			}
+		})
+	}
+}
+
+func TestIsNoiseLowerNotebooklmCompound(t *testing.T) {
+	f := NewNoiseFilter(nil)
+	line := "notebooklm search session_index native-scan result"
+	if !f.IsNoiseLower(line) {
+		t.Fatalf("expected notebooklm compound pattern to be noise: %q", line)
+	}
+}
+
+func TestIsNoiseLowerWoXianCompound(t *testing.T) {
+	f := NewNoiseFilter(nil)
+	cases := []string{
+		"我先做 search 查询",
+		"我继续 native-scan 结果",
+		"我先看 session_index 状态",
+		"我继续 search 下去",
+	}
+	for _, line := range cases {
+		if !f.IsNoiseLower(line) {
+			t.Fatalf("expected Chinese action meta-chatter to be noise: %q", line)
+		}
+	}
+}
+
+func TestIsNoiseLowerShortTokenHeuristic(t *testing.T) {
+	f := NewNoiseFilter(nil)
+	// Five or more short spaceless tokens triggers the heuristic.
+	line := "tokena\ntokenb\ntokenc\ntokend\ntokene\ntokenf"
+	if !f.IsNoiseLower(line) {
+		t.Fatalf("expected short-token heuristic to flag line: %q", line)
+	}
+	// Fewer than 5 short tokens should not be flagged solely by the heuristic.
+	clean := "tokena\ntokenb\ntokenc"
+	if f.IsNoiseLower(clean) {
+		t.Fatalf("did not expect short-token heuristic to flag only 3 tokens: %q", clean)
+	}
+}
+
+// TestIsNoiseLowerShortTokenEmptyParts verifies that the short-token loop
+// correctly skips over empty parts produced by consecutive newlines (the
+// "if part == """  { continue }" branch inside the short-token counter loop).
+func TestIsNoiseLowerShortTokenEmptyParts(t *testing.T) {
+	f := NewNoiseFilter(nil)
+	// Consecutive newlines create empty split parts.  The 6 real tokens should
+	// still be counted and trigger the heuristic (>= 5 short spaceless tokens).
+	line := "tokena\n\ntokenb\n\ntokenc\n\ntokend\n\ntokene\n\ntokenf"
+	if !f.IsNoiseLower(line) {
+		t.Fatalf("expected short-token heuristic to flag line with empty split parts: %q", line)
+	}
+	// Only 3 real tokens separated by empty parts — should NOT trigger heuristic.
+	sparse := "alpha\n\nbeta\n\ngamma"
+	if f.IsNoiseLower(sparse) {
+		t.Fatalf("did not expect heuristic to flag only 3 tokens with empty parts: %q", sparse)
+	}
+}
+
+// ── SnippetMatcher nil receiver ───────────────────────────────────────────────
+
+func TestSnippetMatcherNilReceiver(t *testing.T) {
+	var m *SnippetMatcher
+	if !m.QueryEmpty() {
+		t.Fatal("nil SnippetMatcher.QueryEmpty() should return true")
+	}
+	_, ok := m.Match("some text")
+	if ok {
+		t.Fatal("nil SnippetMatcher.Match() should return false")
+	}
+}
+
+// ── fieldPriority ─────────────────────────────────────────────────────────────
+
+func TestFieldPriority(t *testing.T) {
+	cases := []struct {
+		field string
+		want  int
+	}{
+		{"message.content.text", 120},
+		{"payload.content.text", 120},
+		{"message", 100},
+		{"message.content", 100},
+		{"payload.message", 100},
+		{"root.text", 100},
+		{"payload.text", 100},
+		{"root.content", 70},
+		{"root.display", 70},
+		{"payload.display", 70},
+		{"root.last_agent_message", 70},
+		{"payload.last_agent_message", 70},
+		{"root.prompt", 20},
+		{"payload.prompt", 20},
+		{"root.user_instructions", 20},
+		{"payload.user_instructions", 20},
+		{"raw_line", 10},
+		{"unknown_field", 40},
+	}
+	for _, tc := range cases {
+		t.Run(tc.field, func(t *testing.T) {
+			if got := fieldPriority(tc.field); got != tc.want {
+				t.Fatalf("fieldPriority(%q) = %d, want %d", tc.field, got, tc.want)
+			}
+		})
+	}
+}
+
+// ── clipRuneWindow edge cases ─────────────────────────────────────────────────
+
+func TestClipRuneWindowNegativeInputs(t *testing.T) {
+	text := "hello world test"
+	// Negative index should be clamped to 0.
+	start, end := clipRuneWindow(text, -5, 3, 5)
+	if start < 0 {
+		t.Fatalf("start should be >= 0, got %d", start)
+	}
+	if end-start > 5 {
+		t.Fatalf("window too large: start=%d end=%d", start, end)
+	}
+
+	// Negative queryLen should be clamped to 0.
+	start2, end2 := clipRuneWindow(text, 2, -3, 5)
+	if start2 < 0 || end2 < start2 {
+		t.Fatalf("invalid window with negative queryLen: start=%d end=%d", start2, end2)
+	}
+}
+
+func TestClipRuneWindowTextShorterThanLimit(t *testing.T) {
+	text := "short"
+	start, end := clipRuneWindow(text, 0, 2, 100)
+	if start != 0 || end != len([]rune(text)) {
+		t.Fatalf("expected full text [0,%d], got [%d,%d]", len([]rune(text)), start, end)
+	}
+}
+
+func TestClipRuneWindowMatchNearEnd(t *testing.T) {
+	// Match near the end should shift window backwards to fill the limit.
+	text := "aaaabbbbccccddddeeeeffffgggghhhhiiiijjjjkkkkquery"
+	idx := strings.Index(strings.ToLower(text), "query")
+	start, end := clipRuneWindow(text, idx, len("query"), 10)
+	if end-start > 10 {
+		t.Fatalf("window too large: %d", end-start)
+	}
+	if end > len([]rune(text)) {
+		t.Fatalf("end %d exceeds rune count %d", end, len([]rune(text)))
+	}
+}
+
+// ── clipSnippet limit <= 0 ────────────────────────────────────────────────────
+
+func TestClipSnippetZeroLimit(t *testing.T) {
+	text := "some text here"
+	got := clipSnippet(text, 0, 4, 0)
+	if got != text {
+		t.Fatalf("clipSnippet with limit=0 should return full text, got %q", got)
+	}
+}
+
+func TestClipSnippetNegativeLimit(t *testing.T) {
+	text := "some text here"
+	got := clipSnippet(text, 0, 4, -1)
+	if got != text {
+		t.Fatalf("clipSnippet with negative limit should return full text, got %q", got)
+	}
+}
+
+func TestClipSnippetExactLimit(t *testing.T) {
+	// Text length == limit should return full text, not slice.
+	text := "hello" // 5 runes
+	got := clipSnippet(text, 0, 5, 5)
+	if got != text {
+		t.Fatalf("expected %q, got %q", text, got)
+	}
+}
+
+// ── extractTextCandidates additional fields ───────────────────────────────────
+
+func TestExtractTextCandidatesAllFields(t *testing.T) {
+	payload := map[string]any{
+		"message":              "root message",
+		"display":              "root display",
+		"text":                 "root text",
+		"prompt":               "root prompt",
+		"output":               "root output",
+		"content":              "root content",
+		"user_instructions":    "root user_instructions",
+		"last_agent_message":   "root last_agent_message",
+		"payload": map[string]any{
+			"message":            "payload message",
+			"display":            "payload display",
+			"text":               "payload text",
+			"prompt":             "payload prompt",
+			"output":             "payload output",
+			"user_instructions":  "payload user_instructions",
+			"last_agent_message": "payload last_agent_message",
+			"content": []any{
+				map[string]any{"text": "payload content item 1"},
+				map[string]any{"text": "payload content item 2"},
+			},
+		},
+	}
+
+	candidates := extractTextCandidates(payload)
+	// Collect all found texts.
+	found := make(map[string]bool)
+	for _, c := range candidates {
+		found[c.Text] = true
+	}
+
+	expected := []string{
+		"root message", "root display", "root text", "root prompt",
+		"root output", "root content",
+		"payload message", "payload display", "payload text", "payload prompt",
+		"payload output", "payload user_instructions", "payload last_agent_message",
+		"payload content item 1", "payload content item 2",
+		"root user_instructions", "root last_agent_message",
+	}
+	for _, e := range expected {
+		if !found[e] {
+			t.Errorf("missing candidate text %q from extractTextCandidates", e)
+		}
+	}
+}
+
+func TestExtractTextCandidatesMessageContentList(t *testing.T) {
+	// message.content as list of {text: ...} objects.
+	payload := map[string]any{
+		"message": map[string]any{
+			"content": []any{
+				map[string]any{"text": "item one"},
+				map[string]any{"text": "item two"},
+			},
+		},
+	}
+	candidates := extractTextCandidates(payload)
+	found := make(map[string]bool)
+	for _, c := range candidates {
+		found[c.Field+":"+c.Text] = true
+	}
+	for _, want := range []string{"message.content.text:item one", "message.content.text:item two"} {
+		if !found[want] {
+			t.Errorf("missing %q in candidates", want)
+		}
+	}
+}
+
+func TestExtractTextCandidatesMessageContentString(t *testing.T) {
+	// message.content as plain string.
+	payload := map[string]any{
+		"message": map[string]any{"content": "plain content string"},
+	}
+	candidates := extractTextCandidates(payload)
+	found := false
+	for _, c := range candidates {
+		if c.Field == "message.content" && c.Text == "plain content string" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("expected message.content plain string to be extracted")
+	}
+}
+
+func TestExtractTextCandidatesEmpty(t *testing.T) {
+	// Empty/whitespace strings must not be included.
+	payload := map[string]any{
+		"message": "  ",
+		"text":    "",
+	}
+	candidates := extractTextCandidates(payload)
+	if len(candidates) != 0 {
+		t.Fatalf("expected 0 candidates for empty strings, got %d: %v", len(candidates), candidates)
+	}
+}
+
+// ── extractSessionID ──────────────────────────────────────────────────────────
+
+func TestExtractSessionID(t *testing.T) {
+	cases := []struct {
+		name    string
+		payload map[string]any
+		want    string
+	}{
+		{
+			"payload.id",
+			map[string]any{"payload": map[string]any{"id": "pid-1"}},
+			"pid-1",
+		},
+		{
+			"root.sessionId",
+			map[string]any{"sessionId": "sid-2"},
+			"sid-2",
+		},
+		{
+			"root.session_id",
+			map[string]any{"session_id": "sid-3"},
+			"sid-3",
+		},
+		{
+			"no id",
+			map[string]any{"type": "event_msg"},
+			"",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := extractSessionID(tc.payload); got != tc.want {
+				t.Fatalf("extractSessionID = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// ── extractTimestamp ──────────────────────────────────────────────────────────
+
+func TestExtractTimestamp(t *testing.T) {
+	cases := []struct {
+		name    string
+		payload map[string]any
+		want    string
+	}{
+		{
+			"payload.timestamp",
+			map[string]any{"payload": map[string]any{"timestamp": "2025-01-01T00:00:00Z"}},
+			"2025-01-01T00:00:00Z",
+		},
+		{
+			"root.createdAt",
+			map[string]any{"createdAt": "2025-02-01T00:00:00Z"},
+			"2025-02-01T00:00:00Z",
+		},
+		{
+			"root.created_at",
+			map[string]any{"created_at": "2025-03-01T00:00:00Z"},
+			"2025-03-01T00:00:00Z",
+		},
+		{
+			"root.timestamp",
+			map[string]any{"timestamp": "2025-04-01T00:00:00Z"},
+			"2025-04-01T00:00:00Z",
+		},
+		{
+			"root.time",
+			map[string]any{"time": "2025-05-01T00:00:00Z"},
+			"2025-05-01T00:00:00Z",
+		},
+		{
+			"none",
+			map[string]any{"type": "event_msg"},
+			"",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := extractTimestamp(tc.payload); got != tc.want {
+				t.Fatalf("extractTimestamp = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// ── extractCwd ────────────────────────────────────────────────────────────────
+
+func TestExtractCwd(t *testing.T) {
+	cases := []struct {
+		name    string
+		payload map[string]any
+		want    string
+	}{
+		{
+			"payload.cwd",
+			map[string]any{"payload": map[string]any{"cwd": "/home/user/project"}},
+			"/home/user/project",
+		},
+		{
+			"root.cwd",
+			map[string]any{"cwd": "/home/user/other"},
+			"/home/user/other",
+		},
+		{
+			"none",
+			map[string]any{"type": "event_msg"},
+			"",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := extractCwd(tc.payload); got != tc.want {
+				t.Fatalf("extractCwd = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// ── normalizedCurrentWorkdir with env override ────────────────────────────────
+
+func TestNormalizedCurrentWorkdirEnvOverride(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CONTEXTGO_ACTIVE_WORKDIR", dir)
+	got := normalizedCurrentWorkdir()
+	if got == "" {
+		t.Fatal("expected non-empty result with CONTEXTGO_ACTIVE_WORKDIR set")
+	}
+	// The result should resolve to the same directory.
+	if !strings.HasSuffix(got, dir) && got != dir {
+		// Accept if it's the real path via symlink resolution.
+		if !strings.Contains(got, "tmp") && !strings.Contains(got, "var") {
+			t.Logf("normalizedCurrentWorkdir with env = %q, dir = %q", got, dir)
+		}
+	}
+}
+
+func TestNormalizedCurrentWorkdirNoEnv(t *testing.T) {
+	t.Setenv("CONTEXTGO_ACTIVE_WORKDIR", "")
+	got := normalizedCurrentWorkdir()
+	if got == "" {
+		t.Fatal("expected non-empty result from os.Getwd() fallback")
+	}
+}
+
+// ── normalizePath edge cases ──────────────────────────────────────────────────
+
+func TestNormalizePathEmpty(t *testing.T) {
+	if got := normalizePath(""); got != "" {
+		t.Fatalf("normalizePath(\"\") = %q, want \"\"", got)
+	}
+}
+
+func TestNormalizePathAbsolute(t *testing.T) {
+	dir := t.TempDir()
+	got := normalizePath(dir)
+	if got == "" {
+		t.Fatal("expected non-empty path")
+	}
+}
+
+// ── SnippetMatcher.Match empty text ──────────────────────────────────────────
+
+func TestSnippetMatcherMatchEmptyText(t *testing.T) {
+	m := NewSnippetMatcher("query", NewNoiseFilter(nil), 40)
+	_, ok := m.Match("   ")
+	if ok {
+		t.Fatal("expected no match on whitespace-only text")
+	}
+	_, ok2 := m.Match("")
+	if ok2 {
+		t.Fatal("expected no match on empty text")
+	}
+}
+
+// ── SnippetMatcher.Match no snippet limit ─────────────────────────────────────
+
+func TestSnippetMatcherNoLimit(t *testing.T) {
+	// limit=0 means clipSnippet is skipped (full text returned).
+	m := NewSnippetMatcher("hello", NewNoiseFilter(nil), 0)
+	text := "say hello to the world"
+	snippet, ok := m.Match(text)
+	if !ok {
+		t.Fatal("expected match")
+	}
+	if snippet != text {
+		t.Fatalf("expected full text %q, got %q", text, snippet)
+	}
+}
+
 // ── clipSnippet / SnippetMatcher Unicode correctness ─────────────────────────
 
 // TestSnippetMatcherToLowerByteShift verifies that Match handles text where
@@ -424,5 +1163,280 @@ func TestClipSnippetCJK(t *testing.T) {
 		if r == '\uFFFD' {
 			t.Fatalf("clipSnippet produced replacement character at rune index %d; snippet=%q", i, snippet)
 		}
+	}
+}
+
+// ── clipRuneWindow: match near end triggers backwards-extend path ─────────────
+
+// TestClipRuneWindowMatchAtEnd exercises the branch where the naively
+// computed end exceeds total and the window must be shifted backwards.
+// With text="abcdef" (6 runes), limit=5, match at byte offset 5 ('f'):
+//
+//	runeIdx=5, radius=2, start=3, end=8 → end>total → end=6, start=1
+func TestClipRuneWindowMatchAtEnd(t *testing.T) {
+	text := "abcdef" // 6 runes
+	// Match at the very last character.
+	start, end := clipRuneWindow(text, 5, 1, 5)
+	if end != 6 {
+		t.Fatalf("expected end=6, got %d", end)
+	}
+	if start != 1 {
+		t.Fatalf("expected start=1, got %d", start)
+	}
+	if end-start != 5 {
+		t.Fatalf("window size should be 5, got %d", end-start)
+	}
+}
+
+// TestClipRuneWindowMatchAtEndCJK verifies the backwards-extend path with
+// multi-byte (CJK) characters so the rune-vs-byte boundary is exercised.
+func TestClipRuneWindowMatchAtEndCJK(t *testing.T) {
+	// 8 CJK runes; match on the last 2.
+	text := "一二三四五六七八"
+	query := "七八"
+	idx := strings.Index(text, query)
+	if idx < 0 {
+		t.Fatal("test setup: query not in text")
+	}
+	// limit=5, runeIdx for "七" = 6, radius=2, start=4, end=9 > 8 → end=8, start=3
+	start, end := clipRuneWindow(text, idx, len(query), 5)
+	runes := []rune(text)
+	if end > len(runes) {
+		t.Fatalf("end %d exceeds rune count %d", end, len(runes))
+	}
+	if end-start > 5 {
+		t.Fatalf("window too large: %d", end-start)
+	}
+	snippet := string(runes[start:end])
+	if !strings.Contains(snippet, query) {
+		t.Fatalf("snippet %q does not contain query %q", snippet, query)
+	}
+}
+
+// ── ProcessFile: blank lines in input file ────────────────────────────────────
+
+// TestProcessFileBlankLines confirms that blank lines (after TrimSpace) are
+// skipped without incrementing the line counter, and that the subsequent
+// non-blank JSON line is still processed and matched.
+func TestProcessFileBlankLines(t *testing.T) {
+	tmp, err := os.CreateTemp(t.TempDir(), "blank*.jsonl")
+	if err != nil {
+		t.Fatalf("create temp file: %v", err)
+	}
+	defer tmp.Close()
+
+	// Write several blank lines followed by a matchable JSON record.
+	tmp.WriteString("\n   \n\t\n")
+	line, err := json.Marshal(map[string]any{
+		"type":    "event_msg",
+		"payload": map[string]any{"type": "agent_message", "message": "context keyword present here"},
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	tmp.Write(append(line, '\n'))
+
+	sc := NewSessionScanner(NewNoiseFilter(nil), defaultSnippetLimit)
+	summary, ok := sc.ProcessFile(WorkItem{Source: "test", Path: tmp.Name()}, "keyword")
+	if !ok {
+		t.Fatal("expected match after skipping blank lines")
+	}
+	// Only the non-blank JSON line should be counted.
+	if summary.Lines != 1 {
+		t.Fatalf("expected Lines=1, got %d", summary.Lines)
+	}
+}
+
+// ── ProcessFile: multiple candidates, best score wins ────────────────────────
+
+// TestProcessFileBestScoreWins verifies that when multiple records match,
+// the one with the highest candidateScore (field priority + hit frequency)
+// is kept as summary.Snippet.
+func TestProcessFileBestScoreWins(t *testing.T) {
+	tmp, err := os.CreateTemp(t.TempDir(), "score*.jsonl")
+	if err != nil {
+		t.Fatalf("create temp file: %v", err)
+	}
+	defer tmp.Close()
+
+	// Low-priority field (raw_line, score=10+25=35): single hit
+	tmp.WriteString("raw line with keyword once\n")
+
+	// High-priority field (message.content.text, score=120+50=170): two hits
+	high, err := json.Marshal(map[string]any{
+		"message": map[string]any{
+			"content": []any{
+				map[string]any{"text": "keyword appears here and again keyword"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	tmp.Write(append(high, '\n'))
+
+	sc := NewSessionScanner(NewNoiseFilter(nil), defaultSnippetLimit)
+	summary, ok := sc.ProcessFile(WorkItem{Source: "test", Path: tmp.Name()}, "keyword")
+	if !ok {
+		t.Fatal("expected a match")
+	}
+	if summary.MatchField != "message.content.text" {
+		t.Fatalf("expected best-scoring field message.content.text, got %q", summary.MatchField)
+	}
+}
+
+// ── candidateScore with empty queryLower ──────────────────────────────────────
+
+func TestCandidateScoreEmptyQuery(t *testing.T) {
+	// When queryLower is empty, hits must stay 0 and score == fieldPriority only.
+	score := candidateScore("message", "some text", "")
+	if score != fieldPriority("message") {
+		t.Fatalf("expected score=%d for empty query, got %d", fieldPriority("message"), score)
+	}
+}
+
+// ── NoiseFilter: empty marker list still applies prefix rules ─────────────────
+
+func TestNoiseFilterEmptyMarkers(t *testing.T) {
+	f := NewNoiseFilter([]string{})
+	// Prefix rules from DefaultNoisePrefixes still apply.
+	if !f.IsNoise("## heading") {
+		t.Fatal("expected ## prefix to be caught even with empty custom markers")
+	}
+	if !f.IsNoise("```code block") {
+		t.Fatal("expected ``` prefix to be caught even with empty custom markers")
+	}
+	// Clean line should pass.
+	if f.IsNoise("clean and useful content line") {
+		t.Fatal("expected clean line to pass empty-marker filter")
+	}
+}
+
+// ── NoiseFilter: whitespace-only markers are ignored ─────────────────────────
+
+func TestNoiseFilterWhitespaceMarkersIgnored(t *testing.T) {
+	// Whitespace-only markers must be dropped during normalisation.
+	f := NewNoiseFilter([]string{"  ", "\t", "", "real_marker"})
+	if !f.IsNoise("line with real_marker inside") {
+		t.Fatal("expected real_marker to be detected")
+	}
+	// A line that has no real marker and no noise prefix should pass.
+	if f.IsNoise("clean line without any marker") {
+		t.Fatal("expected clean line to pass whitespace-stripped marker filter")
+	}
+}
+
+// ── SnippetMatcher: very long line, snippet still within limit ────────────────
+
+// TestSnippetMatcherVeryLongLine ensures that a line much longer than
+// snippetLimit is correctly truncated to exactly snippetLimit runes.
+func TestSnippetMatcherVeryLongLine(t *testing.T) {
+	filter := NewNoiseFilter(nil)
+	limit := 50
+	m := NewSnippetMatcher("target", filter, limit)
+
+	// Build a 500-char ASCII line with "target" near the middle.
+	prefix := strings.Repeat("a", 250)
+	suffix := strings.Repeat("b", 244)
+	text := prefix + "target" + suffix // 500 runes
+
+	snippet, ok := m.Match(text)
+	if !ok {
+		t.Fatal("expected match in very long line")
+	}
+	runeCount := len([]rune(snippet))
+	if runeCount > limit {
+		t.Fatalf("snippet rune count %d exceeds limit %d", runeCount, limit)
+	}
+	if !strings.Contains(strings.ToLower(snippet), "target") {
+		t.Fatalf("snippet %q does not contain query", snippet)
+	}
+}
+
+// TestSnippetMatcherVeryLongLineCJK mirrors the above with CJK text to confirm
+// multi-byte characters are counted in runes, not bytes.
+func TestSnippetMatcherVeryLongLineCJK(t *testing.T) {
+	filter := NewNoiseFilter(nil)
+	limit := 20
+	m := NewSnippetMatcher("目标词", filter, limit)
+
+	// 60 CJK runes: 20 prefix + query(3) + 37 suffix
+	prefix := strings.Repeat("前", 20)
+	suffix := strings.Repeat("后", 37)
+	text := prefix + "目标词" + suffix
+
+	snippet, ok := m.Match(text)
+	if !ok {
+		t.Fatal("expected CJK match in long line")
+	}
+	runeCount := len([]rune(snippet))
+	if runeCount > limit {
+		t.Fatalf("CJK snippet rune count %d exceeds limit %d", runeCount, limit)
+	}
+	for i, r := range snippet {
+		if r == '\uFFFD' {
+			t.Fatalf("replacement character at rune %d in CJK snippet %q", i, snippet)
+		}
+	}
+}
+
+// ── ProcessFile: Unicode edge cases in raw (non-JSON) lines ──────────────────
+
+// TestProcessFileUnicodeLongRawLine confirms that a very long raw non-JSON
+// line with CJK content does not cause a panic or return garbage snippets.
+func TestProcessFileUnicodeLongRawLine(t *testing.T) {
+	tmp, err := os.CreateTemp(t.TempDir(), "unraw*.jsonl")
+	if err != nil {
+		t.Fatalf("create temp file: %v", err)
+	}
+	defer tmp.Close()
+
+	// 200 CJK runes + query + 200 more CJK runes — not valid JSON.
+	line := strings.Repeat("字", 200) + "搜索词" + strings.Repeat("符", 200)
+	tmp.WriteString(line + "\n")
+
+	sc := NewSessionScanner(NewNoiseFilter(nil), 30)
+	summary, ok := sc.ProcessFile(WorkItem{Source: "test", Path: tmp.Name()}, "搜索词")
+	if !ok {
+		t.Fatal("expected match in Unicode raw line")
+	}
+	if len([]rune(summary.Snippet)) > 30 {
+		t.Fatalf("snippet exceeds limit: %d runes", len([]rune(summary.Snippet)))
+	}
+	if summary.MatchField != "raw_line" {
+		t.Fatalf("expected raw_line field, got %q", summary.MatchField)
+	}
+	for i, r := range summary.Snippet {
+		if r == '\uFFFD' {
+			t.Fatalf("replacement character at rune %d in snippet %q", i, summary.Snippet)
+		}
+	}
+}
+
+// ── SnippetMatcher: exact snippet boundary (query fills the entire limit) ─────
+
+// TestSnippetMatcherQueryFillsLimit checks the boundary where the snippet
+// limit equals the query length.  The window is centred on the match so the
+// returned snippet will contain at least the central part of the query.
+// The returned snippet must not exceed limit runes.
+func TestSnippetMatcherQueryFillsLimit(t *testing.T) {
+	filter := NewNoiseFilter(nil)
+	// Use a query that is at most as long as the limit.
+	// With limit=10 and query="hello" (5 runes) the whole query always fits.
+	query := "hello"
+	limit := 10
+	m := NewSnippetMatcher(query, filter, limit)
+
+	text := "prefix hello suffix long enough to exceed the snippet limit value"
+	snippet, ok := m.Match(text)
+	if !ok {
+		t.Fatal("expected match")
+	}
+	runeCount := len([]rune(snippet))
+	if runeCount > limit {
+		t.Fatalf("snippet %q has %d runes, want <= %d", snippet, runeCount, limit)
+	}
+	if !strings.Contains(strings.ToLower(snippet), query) {
+		t.Fatalf("snippet %q does not contain query %q", snippet, query)
 	}
 }
