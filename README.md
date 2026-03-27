@@ -170,7 +170,7 @@ All configuration is via environment variables. Defaults work out of the box.
 | `CONTEXTGO_VIEWER_HOST` | `127.0.0.1` | Viewer bind address |
 | `CONTEXTGO_VIEWER_PORT` | `37677` | Viewer TCP port |
 | `CONTEXTGO_VIEWER_TOKEN` | _(empty)_ | Bearer token for non-loopback binding |
-| `CONTEXTGO_ENABLE_REMOTE_MEMORY_HTTP` | `false` | Enable remote sync (disabled by default) |
+| `CONTEXTGO_ENABLE_REMOTE_MEMORY_HTTP` | `0` | Enable remote sync (disabled by default) |
 
 Full reference: [docs/CONFIGURATION.md](docs/CONFIGURATION.md)
 
@@ -373,7 +373,7 @@ contextgo search "test" --limit 1       # 验证索引正常工作
 | `CONTEXTGO_VIEWER_HOST` | `127.0.0.1` | Viewer 绑定地址 |
 | `CONTEXTGO_VIEWER_PORT` | `37677` | Viewer TCP 端口 |
 | `CONTEXTGO_VIEWER_TOKEN` | _（空）_ | 非回环地址绑定时的 Bearer token |
-| `CONTEXTGO_ENABLE_REMOTE_MEMORY_HTTP` | `false` | 启用远程同步（默认关闭） |
+| `CONTEXTGO_ENABLE_REMOTE_MEMORY_HTTP` | `0` | 启用远程同步（默认关闭） |
 
 完整参考：[docs/CONFIGURATION.md](docs/CONFIGURATION.md)
 

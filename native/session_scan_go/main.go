@@ -211,7 +211,10 @@ func scan(items []WorkItem, threads int, query string, limit int, scanner *Sessi
 		close(resultCh)
 	}()
 
-	cap := min(len(items), limit*2)
+	cap := len(items)
+	if limit*2 < cap {
+		cap = limit * 2
+	}
 	if cap < 16 {
 		cap = 16
 	}

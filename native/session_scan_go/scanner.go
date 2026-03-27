@@ -378,7 +378,21 @@ func (m *SnippetMatcher) Match(text string) (string, bool) {
 	}
 	snippet := trimmed
 	if m.snippetLimit > 0 {
-		snippet = clipSnippet(trimmed, idx, len(m.queryLower), m.snippetLimit)
+		// clipSnippet converts byte offset to rune index internally.  Use
+		// lower as the source for offset conversion so the byte index idx
+		// (which was obtained from lower via strings.Index) is always valid,
+		// even when strings.ToLower changes the byte length of a character
+		// (e.g. Turkish İ U+0130 → i).  The rune window computed from lower
+		// is then applied to trimmed to preserve the original casing.
+		runeStart, runeEnd := clipRuneWindow(lower, idx, len(m.queryLower), m.snippetLimit)
+		runes := []rune(trimmed)
+		if runeEnd > len(runes) {
+			runeEnd = len(runes)
+		}
+		if runeStart > runeEnd {
+			runeStart = runeEnd
+		}
+		snippet = string(runes[runeStart:runeEnd])
 	}
 	// Re-use the already-lowercased snippet for the noise check.
 	snippetLower := strings.ToLower(snippet)
@@ -419,6 +433,54 @@ func candidateScore(field, text, queryLower string) int {
 	return fieldPriority(field) + hits*25
 }
 
+// clipRuneWindow computes the [start, end) rune index window of at most limit
+// runes centred on the match at byte position index within text.  It is the
+// building block used by both clipSnippet and SnippetMatcher.Match.
+//
+// index is the byte offset of the query match within text (as returned by
+// strings.Index).  queryLen is the byte length of the query term.  Both must
+// be non-negative; negative values are clamped to 0.
+func clipRuneWindow(text string, index, queryLen, limit int) (start, end int) {
+	if index < 0 {
+		index = 0
+	}
+	if queryLen < 0 {
+		queryLen = 0
+	}
+	runes := []rune(text)
+	total := len(runes)
+	if total <= limit {
+		return 0, total
+	}
+
+	// Convert the byte offset 'index' to a rune index by counting rune start
+	// positions that precede byte offset 'index'.
+	runeIdx := 0
+	for bytePos := range text {
+		if bytePos >= index {
+			break
+		}
+		runeIdx++
+	}
+
+	// Centre the window on the match.
+	radius := limit / 2
+	start = runeIdx - radius
+	if start < 0 {
+		start = 0
+	}
+	end = start + limit
+	if end > total {
+		end = total
+		// Extend backwards to fill the full window if possible.
+		start = end - limit
+		if start < 0 {
+			start = 0
+		}
+	}
+	return start, end
+}
+
 // clipSnippet returns a substring of text of at most limit runes, centred on
 // the match at byte position index.  It is rune-safe: all slicing is performed
 // on the []rune representation so that multi-byte UTF-8 characters (including
@@ -436,35 +498,7 @@ func clipSnippet(text string, index, queryLen, limit int) string {
 	if total <= limit {
 		return text
 	}
-	if queryLen < 0 {
-		queryLen = 0
-	}
-
-	// Convert the byte offset 'index' to a rune index by counting rune start
-	// positions that precede byte offset 'index'.
-	runeIdx := 0
-	for bytePos := range text {
-		if bytePos >= index {
-			break
-		}
-		runeIdx++
-	}
-
-	// Centre the window on the match.
-	radius := limit / 2
-	start := runeIdx - radius
-	if start < 0 {
-		start = 0
-	}
-	end := start + limit
-	if end > total {
-		end = total
-		// Extend backwards to fill the full window if possible.
-		start = end - limit
-		if start < 0 {
-			start = 0
-		}
-	}
+	start, end := clipRuneWindow(text, index, queryLen, limit)
 	return string(runes[start:end])
 }
 

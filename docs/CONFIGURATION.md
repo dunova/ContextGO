@@ -51,9 +51,9 @@ export CONTEXTGO_STORAGE_ROOT=/data/contextgo
 
 ## Viewer server
 
-The viewer is a local HTTP server started with `context_cli serve`. It binds to loopback by default.
+The viewer is a local HTTP server started with `contextgo serve`. It binds to loopback by default.
 
-Viewer 是由 `context_cli serve` 启动的本地 HTTP 服务，默认绑定回环地址。
+Viewer 是由 `contextgo serve` 启动的本地 HTTP 服务，默认绑定回环地址。
 
 | Variable | Default | Description / 说明 |
 |---|---|---|

@@ -15,6 +15,22 @@ _No unreleased changes._
 
 ---
 
+## [0.9.1] — 2026-03-27
+
+### Overview
+
+Documentation consistency audit and patch release. All documentation surfaces updated to reflect the current codebase; no Python source, test, or CI workflow files were changed.
+
+0.9.1 是文档一致性审查补丁版本。所有文档更新以反映当前代码库；未修改任何 Python 源码、测试或 CI 工作流文件。
+
+### Fixed
+
+- `CHANGELOG.md` — added 0.9.1 entry; bottom link table updated to reference `v0.9.1` as the latest released tag.
+- `docs/CONFIGURATION.md` — "Viewer server" section: corrected start command from `context_cli serve` to `contextgo serve` (matching the installed entry-point and the CLI reference in all other docs).
+- `docs/API.md` — server startup example now shows `contextgo serve` instead of `python3 scripts/context_cli.py serve` for consistency with the recommended installed workflow; programmatic Python example preserved unchanged.
+
+---
+
 ## [0.9.0] — 2026-03-26
 
 ### Overview
@@ -184,7 +200,8 @@ Foundational release of the local-first `contextgo` runtime. All context capture
 
 ---
 
-[Unreleased]: https://github.com/dunova/ContextGO/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/dunova/ContextGO/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/dunova/ContextGO/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/dunova/ContextGO/compare/v0.7.0...v0.9.0
 [0.7.0]: https://github.com/dunova/ContextGO/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/dunova/ContextGO/compare/v0.5.0...v0.6.1

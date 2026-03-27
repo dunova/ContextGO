@@ -83,9 +83,13 @@ All content written to the index passes through `strip_private_blocks()` (remove
 
 The memory viewer uses `hmac.compare_digest` for `X-Context-Token` header comparison to prevent timing-based token enumeration attacks.
 
+### CORS origin validation
+
+The memory viewer parses the `Origin` request header with `urllib.parse.urlparse` and checks only the **hostname** component against the loopback allowlist (`127.0.0.1`, `localhost`, `::1`). This prevents substring-bypass attacks such as `http://evil127.0.0.1.attacker.com` that would pass a naive `in`-based string check.
+
 ### SQL parameterization
 
-All SQLite queries use parameterized placeholders (`?`) for user-supplied values. WHERE clauses are constructed from hardcoded predicate strings; user input flows only through bind parameters.
+All SQLite queries use parameterized placeholders (`?`) for user-supplied values. WHERE clauses are constructed from hardcoded predicate strings; user input flows only through bind parameters. Dynamic `IN (...)` placeholders are built from `",".join("?" for _ in items)` so the number of `?` tokens always matches the bind arguments without interpolating any user data into the SQL string.
 
 ### subprocess safety
 
@@ -94,6 +98,10 @@ All `subprocess.run` / `subprocess.Popen` calls pass arguments as lists (never `
 ### Native build artifacts
 
 Rust and Go build artifacts default to `~/.cache/contextgo/target` (a user-owned directory) rather than a shared `/tmp` path to prevent TOCTOU races from other users on multi-tenant systems. Override with `CONTEXTGO_NATIVE_TARGET_DIR`.
+
+### Content-Security-Policy
+
+The HTML viewer page is served with a restrictive `Content-Security-Policy` header (`default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'none'; object-src 'none'; base-uri 'none'; form-action 'self'`). All JSON API endpoints receive `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, and `Referrer-Policy: no-referrer`.
 
 ## Contributor Guidelines
 

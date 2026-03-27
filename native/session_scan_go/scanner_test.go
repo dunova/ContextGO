@@ -370,7 +370,32 @@ func BenchmarkSnippetMatcherMatch(b *testing.B) {
 	}
 }
 
-// ── clipSnippet CJK correctness ───────────────────────────────────────────────
+// ── clipSnippet / SnippetMatcher Unicode correctness ─────────────────────────
+
+// TestSnippetMatcherToLowerByteShift verifies that Match handles text where
+// strings.ToLower changes the byte length of a character (e.g. Turkish İ
+// U+0130 → "i", 2 bytes → 1 byte).  A naive implementation that passes the
+// byte offset from the lowercased string directly to clipSnippet on the
+// original string would produce an invalid byte offset and either corrupt the
+// result or panic in the rune-conversion loop.
+func TestSnippetMatcherToLowerByteShift(t *testing.T) {
+	// "İstanbul" — İ (U+0130, 2 bytes UTF-8) lowercases to "i" (1 byte),
+	// so strings.ToLower shrinks the byte length by one.
+	// Query "istanbul" (all-lowercase) must still be found and the returned
+	// snippet must be valid UTF-8 with no replacement characters.
+	filter := NewNoiseFilter(nil)
+	m := NewSnippetMatcher("istanbul", filter, 20)
+	text := "İstanbul is a great city"
+	snippet, ok := m.Match(text)
+	if !ok {
+		t.Fatalf("expected match in %q, got none", text)
+	}
+	for i, r := range snippet {
+		if r == '\uFFFD' {
+			t.Fatalf("snippet contains replacement character at rune %d: %q", i, snippet)
+		}
+	}
+}
 
 func TestClipSnippetCJK(t *testing.T) {
 	// Each CJK character is 3 bytes in UTF-8.  Verify that the snippet window
