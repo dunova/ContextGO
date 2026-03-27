@@ -36,7 +36,7 @@ def check_cli_fixed_cases() -> list[Check]:
     """Run a set of fixed regression queries against the CLI and return results."""
     cases: list[Check] = []
     fixed_inputs = [
-        ("cli-health", ["health"], '"all_ok": true'),
+        ("cli-health", ["health"], '"all_ok"'),
         ("cli-keyword", ["search", "NotebookLM", "--limit", "5", "--literal"], "notebooklm"),
         (
             "cli-long-query",
@@ -49,7 +49,15 @@ def check_cli_fixed_cases() -> list[Check]:
         t0 = time.time()
         rc, out, err = run_cli(*args, timeout=60)
         text = (out + "\n" + err).lower()
-        passed = rc == 0 and marker.lower() in text
+        if name == "cli-health":
+            # Parse health output as JSON to avoid compact-vs-pretty formatting mismatches.
+            try:
+                health = json.loads(out)
+                passed = rc == 0 and health.get("all_ok") is True
+            except (json.JSONDecodeError, TypeError):
+                passed = False
+        else:
+            passed = rc == 0 and marker.lower() in text
         cases.append(Check(name, passed, f"rc={rc}, marker={marker}, tail={(out or err)[-220:]}", time.time() - t0))
     return cases
 

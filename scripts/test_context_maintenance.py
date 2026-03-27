@@ -585,12 +585,16 @@ class TestMainWithExistingPaths(unittest.TestCase):
     def test_skips_paths_already_in_db(self) -> None:
         """main() skips local files already recorded in the sessions table."""
         with tempfile.TemporaryDirectory() as tmp:
-            codex_root = Path(tmp) / "codex"
+            # Resolve the temp dir so the path stored in the DB matches the
+            # resolved path that collect_local_session_files() produces.
+            # On macOS ``/tmp`` is a symlink to ``/private/tmp``, causing a
+            # mismatch without this resolve().
+            codex_root = Path(tmp).resolve() / "codex"
             codex_root.mkdir()
             session_file = codex_root / "already.jsonl"
             session_file.write_text("{}", encoding="utf-8")
             # Use a non-existent claude_root so no system files are picked up.
-            claude_root = Path(tmp) / "no_claude"
+            claude_root = Path(tmp).resolve() / "no_claude"
 
             db_path = self._create_temp_db()
             try:

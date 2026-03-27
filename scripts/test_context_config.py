@@ -185,7 +185,10 @@ class TestStorageRoot(unittest.TestCase):
         self.assertNotIn("~", str(path))
 
     def test_too_short_path_raises_value_error(self) -> None:
-        with patch.dict(os.environ, {"CONTEXTGO_STORAGE_ROOT": "/tmp"}), self.assertRaises(ValueError):
+        # Use a single-component path that stays short even after macOS
+        # symlink resolution (``/tmp`` resolves to ``/private/tmp`` on macOS,
+        # gaining an extra component and no longer triggering the guard).
+        with patch.dict(os.environ, {"CONTEXTGO_STORAGE_ROOT": "/x"}), self.assertRaises(ValueError):
             storage_root()
 
     def test_root_path_raises_value_error(self) -> None:
@@ -193,9 +196,12 @@ class TestStorageRoot(unittest.TestCase):
             storage_root()
 
     def test_valid_deep_path_accepted(self) -> None:
-        with patch.dict(os.environ, {"CONTEXTGO_STORAGE_ROOT": "/home/user/.contextgo"}):
+        # Use the real home directory to avoid macOS ``/home`` -> ``/System/Volumes/Data/home``
+        # resolution which changes the expected string representation.
+        expected = str(Path.home() / ".contextgo_test_deep")
+        with patch.dict(os.environ, {"CONTEXTGO_STORAGE_ROOT": expected}):
             path = storage_root()
-        self.assertEqual(str(path), "/home/user/.contextgo")
+        self.assertEqual(str(path), expected)
 
     def test_custom_default_home_name(self) -> None:
         with patch.dict(os.environ, {}, clear=False):

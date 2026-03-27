@@ -169,7 +169,13 @@ class TestParseShellLine(unittest.TestCase):
         assert result is not None
         sid, cmd = result
         self.assertEqual(cmd, "git status")
-        self.assertIn("20240325", sid)  # 2024-03-25
+        # The timestamp 1711382400 is 2024-03-25T12:00:00 UTC.  In time zones
+        # east of UTC+12 this rolls over to 2024-03-26 local time, so we
+        # accept either date string in the session id.
+        self.assertTrue(
+            "20240325" in sid or "20240326" in sid,
+            f"Expected '20240325' or '20240326' in sid={sid!r}",
+        )
 
     def test_history_command_filtered(self) -> None:
         result = self.tracker._parse_shell_line("shell_zsh", "history")

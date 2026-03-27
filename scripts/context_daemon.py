@@ -149,7 +149,7 @@ try:
 except ImportError:
     _httpx = None  # type: ignore[assignment]
     _HTTPX_AVAILABLE = False
-    logger.warning("httpx not installed; remote sync disabled.")
+    logger.info("httpx not installed; remote sync disabled.")
 
 # Poll / timing configuration
 # Night-mode: off-hours (23:00-07:00) sleep is expanded to NIGHT_POLL_INTERVAL_SEC.

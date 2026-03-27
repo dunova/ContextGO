@@ -169,7 +169,15 @@ STOPWORDS: frozenset[str] = frozenset(
         "history",
         "continue",
         "find",
-        # Chinese stopwords
+    }
+)
+
+# Chinese stopwords are only applied when the query contains enough
+# non-stop CJK tokens (see ``build_query_terms``).  This avoids
+# over-filtering short Chinese queries like "搜索方案" where every
+# token would otherwise be discarded.
+CJK_STOPWORDS: frozenset[str] = frozenset(
+    {
         "继续",
         "搜索",
         "终端",
@@ -802,13 +810,21 @@ def sync_session_index(force: bool = False) -> dict[str, int]:
 
 
 def build_query_terms(query: str) -> list[str]:
-    """Decompose a query into at most 8 deduplicated, stopword-filtered search terms."""
+    """Decompose a query into at most 8 deduplicated, stopword-filtered search terms.
+
+    CJK stopwords are only applied when the query yields at least one
+    non-CJK-stop term, preventing short Chinese queries (e.g. "搜索方案")
+    from being entirely discarded.
+    """
     raw = (query or "").strip()
     if not raw:
         return []
 
     terms: list[str] = []
     seen: set[str] = set()
+    # Collect CJK tokens that matched a CJK stopword so we can add them
+    # back if the final term list would otherwise be empty.
+    cjk_stopped: list[str] = []
 
     def _add(term: str) -> None:
         clean = term.strip().strip("\"'")
@@ -816,6 +832,11 @@ def build_query_terms(query: str) -> list[str]:
             return
         lower = clean.lower()
         if lower in seen or lower in STOPWORDS:
+            return
+        if lower in CJK_STOPWORDS:
+            if lower not in seen:
+                cjk_stopped.append(clean)
+                seen.add(lower)
             return
         seen.add(lower)
         terms.append(clean)
@@ -829,7 +850,7 @@ def build_query_terms(query: str) -> list[str]:
     for token in re.findall(r"(?:~?/[A-Za-z0-9._/-]+)", raw):
         _add(Path(token).name or token)
     for token in re.findall(r"[A-Za-z][A-Za-z0-9._-]{2,40}", raw):
-        if token.lower() not in STOPWORDS:
+        if token.lower() not in STOPWORDS and token.lower() not in CJK_STOPWORDS:
             _add(token)
     for token in re.findall(r"[\u4e00-\u9fff]{2,12}", raw):
         _add(token)
@@ -843,7 +864,16 @@ def build_query_terms(query: str) -> list[str]:
                 _add(normalized[-4:])
 
     if not terms:
-        _add(raw)
+        # Re-add CJK-stopped tokens when no other terms survived filtering;
+        # fall back to the raw query as a last resort.
+        if cjk_stopped:
+            terms.extend(cjk_stopped)
+        else:
+            # Bypass stopword checks — the raw query itself is the only signal.
+            clean = raw.strip().strip("\"'")
+            if clean and len(clean) >= 2 and clean.lower() not in seen:
+                seen.add(clean.lower())
+                terms.append(clean)
     return terms[:8]
 
 

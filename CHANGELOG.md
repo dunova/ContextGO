@@ -15,6 +15,30 @@ _No unreleased changes._
 
 ---
 
+## [0.9.31] — 2026-03-27
+
+### Overview
+
+Bugfix and quality release. Fixes `contextgo serve` under pipx installation, improves Chinese short-query recall, and resolves 4 platform-specific test failures on macOS.
+
+修复版本。修复 pipx 安装下 `contextgo serve` 模块导入问题，改善中文短查询召回率，修复 macOS 平台上 4 个测试用例的兼容性问题。
+
+### Fixed
+
+- **`contextgo serve` ModuleNotFoundError under pipx** — `_load_module()` now falls back to package-relative import (`scripts.context_server`) when the top-level import fails, fixing the `contextgo serve` command in pipx-installed environments
+- **`test_too_short_path_raises_value_error`** — use `/x` instead of `/tmp` as test input; macOS resolves `/tmp` to `/private/tmp` (4 components), bypassing the `< 3` guard
+- **`test_valid_deep_path_accepted`** — use `Path.home()` based path instead of hard-coded `/home/user/.contextgo` which macOS resolves to `/System/Volumes/Data/home/...`
+- **`test_zsh_extended_history_format`** — accept both `20240325` and `20240326` in session id to handle UTC+N timezone rollover
+- **`test_skips_paths_already_in_db`** — resolve temp directory paths before inserting into DB, matching the resolved paths from `collect_local_session_files()`
+- **`cli-health` regression test** — parse health output as JSON instead of string-matching `"all_ok": true`, avoiding compact-vs-pretty JSON format mismatch
+
+### Improved
+
+- **Chinese short-query recall** — split CJK stopwords into a separate set (`CJK_STOPWORDS`); when all query terms are CJK stopwords (e.g. "搜索方案"), they are preserved as search terms instead of being discarded. Longer queries with mixed content still filter CJK stopwords normally
+- **Daemon httpx warning** — downgraded "httpx not installed" from `WARNING` to `INFO` level, reducing noise in daemon logs and launchd journals
+
+---
+
 ## [0.9.3] — 2026-03-27
 
 ### Overview

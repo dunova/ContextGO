@@ -169,7 +169,14 @@ def _load_module(name: str) -> ModuleType:
     """
     import importlib  # deferred: only needed for serve/maintain commands
 
-    return importlib.import_module(name)
+    try:
+        return importlib.import_module(name)
+    except ModuleNotFoundError:
+        # When installed as a package (e.g. via pipx), modules live under the
+        # ``scripts`` package.  Fall back to a package-relative import so that
+        # ``contextgo serve`` and ``contextgo maintain`` work in both dev
+        # (direct script execution) and installed-package modes.
+        return importlib.import_module(f".{name}", package=__package__)
 
 
 def _configure_viewer_module(module: ModuleType, host: str, port: int, token: str) -> None:
