@@ -136,7 +136,7 @@ This checklist must be completed in order for every release. Each step has a def
 - [ ] **Tag is visible on the repository.** `git ls-remote --tags origin` shows the new tag.
 - [ ] **README version reflects the new release.** The repository homepage shows the correct version after the release commit is merged to the default branch.
 - [ ] **Installed runtime re-validated on a clean environment.** On a machine that has not previously run the quality gate for this version, repeat Phase 3 through Phase 4 using the released artifacts to confirm reproducibility.
-- [ ] **Rollback path confirmed.** The previous release (`0.6.1`) artifacts are still available on GitHub Releases and the rollback procedure in `docs/TROUBLESHOOTING.md` has been verified to work.
+- [ ] **Rollback path confirmed.** The previous release (`0.9.32`) artifacts are still available on GitHub Releases and the rollback procedure in `docs/TROUBLESHOOTING.md` has been verified to work.
 
 ---
 

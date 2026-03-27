@@ -19,6 +19,9 @@ __all__ = [
     "strip_private_blocks",
     "sync_index_from_storage",
     "timeline_index",
+    "_retry_sqlite",
+    "_retry_sqlite_many",
+    "_retry_commit",
 ]
 
 import hashlib
@@ -26,12 +29,22 @@ import json
 import os
 import re
 import sqlite3
+import time
 from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+# ---------------------------------------------------------------------------
+# In-process search result cache (TTL-based)
+# ---------------------------------------------------------------------------
+# Cache TTL in seconds.  Set MEMORY_INDEX_SEARCH_CACHE_TTL=0 to disable.
+_SEARCH_CACHE_TTL: int = int(os.environ.get("MEMORY_INDEX_SEARCH_CACHE_TTL", "5") or "5")
+
+# Mapping of cache_key -> (expiry_epoch_float, results)
+_SEARCH_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 
 try:
     from context_config import storage_root
@@ -58,9 +71,17 @@ CREATE TABLE IF NOT EXISTS observations (
 """
 
 _DDL_INDEXES = [
-    "CREATE INDEX IF NOT EXISTS idx_obs_created ON observations(created_at_epoch DESC)",
-    "CREATE INDEX IF NOT EXISTS idx_obs_source  ON observations(source_type, created_at_epoch DESC)",
-    "CREATE INDEX IF NOT EXISTS idx_obs_session ON observations(session_id, created_at_epoch DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_obs_created  ON observations(created_at_epoch DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_obs_source   ON observations(source_type, created_at_epoch DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_obs_session  ON observations(session_id, created_at_epoch DESC)",
+    # Accelerates _SQL_FIND_BY_PATH (sync reconciliation) and file_path LIKE filters.
+    "CREATE INDEX IF NOT EXISTS idx_obs_filepath ON observations(file_path)",
+    # Accelerates _SQL_FIND_BY_FP (fingerprint dedup check).
+    # fingerprint already has a UNIQUE constraint but an explicit index name makes
+    # query plans clearer and is required for the IF NOT EXISTS guard on schema upgrades.
+    "CREATE INDEX IF NOT EXISTS idx_obs_fp       ON observations(fingerprint)",
+    # Accelerates combined source_type + epoch range scans that include updated_at.
+    "CREATE INDEX IF NOT EXISTS idx_obs_updated  ON observations(updated_at_epoch DESC)",
 ]
 
 _SQL_INSERT_OBS = """
@@ -182,10 +203,101 @@ def _open_db(db_path: Path) -> Generator[sqlite3.Connection, None, None]:
     conn = sqlite3.connect(db_path, timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("PRAGMA cache_size=-8000")
+    conn.execute("PRAGMA mmap_size=268435456")
+    conn.execute("PRAGMA temp_store=MEMORY")
     try:
         yield conn
     finally:
         conn.close()
+
+
+# SQLite retry helpers
+
+_SQLITE_RETRY_DELAYS: tuple[float, ...] = (0.1, 0.5, 2.0)
+
+
+def _retry_sqlite(
+    conn: sqlite3.Connection,
+    sql: str,
+    params: Any = None,
+    max_retries: int = 3,
+) -> sqlite3.Cursor:
+    """Execute *sql* on *conn* with retry-on-busy logic.
+
+    Retries up to *max_retries* times with exponential back-off (0.1 / 0.5 / 2 s)
+    when SQLite raises ``OperationalError: database is locked``.  All other
+    errors are re-raised immediately.
+
+    Args:
+        conn: An open :class:`sqlite3.Connection`.
+        sql: SQL statement to execute.
+        params: Optional bind parameters (sequence or mapping).
+        max_retries: Maximum number of retry attempts (default 3).
+
+    Returns:
+        The :class:`sqlite3.Cursor` returned by the final successful execute.
+
+    Raises:
+        sqlite3.OperationalError: When the database remains locked after all
+            retries are exhausted, or for any non-lock operational error.
+    """
+    last_exc: sqlite3.OperationalError | None = None
+    for attempt in range(max_retries + 1):
+        try:
+            if params is not None:
+                return conn.execute(sql, params)
+            return conn.execute(sql)
+        except sqlite3.OperationalError as exc:
+            if "database is locked" not in str(exc).lower():
+                raise
+            last_exc = exc
+            if attempt < max_retries:
+                delay = _SQLITE_RETRY_DELAYS[min(attempt, len(_SQLITE_RETRY_DELAYS) - 1)]
+                time.sleep(delay)
+    assert last_exc is not None
+    raise last_exc
+
+
+def _retry_sqlite_many(
+    conn: sqlite3.Connection,
+    sql: str,
+    params_seq: Any,
+    max_retries: int = 3,
+) -> sqlite3.Cursor:
+    """Like :func:`_retry_sqlite` but calls ``executemany`` instead of ``execute``."""
+    last_exc: sqlite3.OperationalError | None = None
+    for attempt in range(max_retries + 1):
+        try:
+            return conn.executemany(sql, params_seq)
+        except sqlite3.OperationalError as exc:
+            if "database is locked" not in str(exc).lower():
+                raise
+            last_exc = exc
+            if attempt < max_retries:
+                delay = _SQLITE_RETRY_DELAYS[min(attempt, len(_SQLITE_RETRY_DELAYS) - 1)]
+                time.sleep(delay)
+    assert last_exc is not None
+    raise last_exc
+
+
+def _retry_commit(conn: sqlite3.Connection, max_retries: int = 3) -> None:
+    """Commit *conn* with retry-on-busy logic."""
+    last_exc: sqlite3.OperationalError | None = None
+    for attempt in range(max_retries + 1):
+        try:
+            conn.commit()
+            return
+        except sqlite3.OperationalError as exc:
+            if "database is locked" not in str(exc).lower():
+                raise
+            last_exc = exc
+            if attempt < max_retries:
+                delay = _SQLITE_RETRY_DELAYS[min(attempt, len(_SQLITE_RETRY_DELAYS) - 1)]
+                time.sleep(delay)
+    assert last_exc is not None
+    raise last_exc
 
 
 # Domain model
@@ -287,10 +399,10 @@ def ensure_index_db() -> Path:
     db_path = get_index_db_path()
     db_path.parent.mkdir(parents=True, exist_ok=True)
     with _open_db(db_path) as conn:
-        conn.execute(_DDL_OBSERVATIONS)
+        _retry_sqlite(conn, _DDL_OBSERVATIONS)
         for idx_sql in _DDL_INDEXES:
-            conn.execute(idx_sql)
-        conn.commit()
+            _retry_sqlite(conn, idx_sql)
+        _retry_commit(conn)
     return db_path
 
 
@@ -319,15 +431,16 @@ def sync_index_from_storage() -> dict[str, int]:
                 if obs is None:
                     continue
 
-                same_path_rows = conn.execute(_SQL_FIND_BY_PATH, (obs.file_path,)).fetchall()
+                same_path_rows = _retry_sqlite(conn, _SQL_FIND_BY_PATH, (obs.file_path,)).fetchall()
 
                 if same_path_rows:
                     keep_id = int(same_path_rows[0]["id"])
                     for dup in same_path_rows[1:]:
-                        conn.execute(_SQL_DELETE_OBS, (int(dup["id"]),))
+                        _retry_sqlite(conn, _SQL_DELETE_OBS, (int(dup["id"]),))
                         removed += 1
                     if str(same_path_rows[0]["fingerprint"]) != obs.fingerprint:
-                        conn.execute(
+                        _retry_sqlite(
+                            conn,
                             _SQL_UPDATE_OBS_FULL,
                             (
                                 obs.fingerprint,
@@ -344,17 +457,18 @@ def sync_index_from_storage() -> dict[str, int]:
                         )
                         updated += 1
                     else:
-                        conn.execute(_SQL_TOUCH_OBS, (now_epoch, keep_id))
+                        _retry_sqlite(conn, _SQL_TOUCH_OBS, (now_epoch, keep_id))
                     continue
 
                 # Reconcile by fingerprint to handle renames.
-                row = conn.execute(_SQL_FIND_BY_FP, (obs.fingerprint,)).fetchone()
+                row = _retry_sqlite(conn, _SQL_FIND_BY_FP, (obs.fingerprint,)).fetchone()
                 if row:
                     if row["file_path"] != obs.file_path:
-                        conn.execute(_SQL_UPDATE_PATH, (obs.file_path, now_epoch, row["id"]))
+                        _retry_sqlite(conn, _SQL_UPDATE_PATH, (obs.file_path, now_epoch, row["id"]))
                         updated += 1
                 else:
-                    conn.execute(
+                    _retry_sqlite(
+                        conn,
                         _SQL_INSERT_OBS,
                         (
                             obs.fingerprint,
@@ -372,12 +486,12 @@ def sync_index_from_storage() -> dict[str, int]:
                     added += 1
 
         # Remove stale rows whose backing files have been deleted.
-        for row in conn.execute(_SQL_STALE_LOCAL).fetchall():
+        for row in _retry_sqlite(conn, _SQL_STALE_LOCAL).fetchall():
             if row["file_path"] not in seen_local_paths:
-                conn.execute(_SQL_DELETE_OBS, (row["id"],))
+                _retry_sqlite(conn, _SQL_DELETE_OBS, (row["id"],))
                 removed += 1
 
-        conn.commit()
+        _retry_commit(conn)
 
     return {"scanned": scanned, "added": added, "updated": updated, "removed": removed}
 
@@ -386,13 +500,24 @@ def sync_index_from_storage() -> dict[str, int]:
 
 
 def _obs_where_clause(query: str, source_type: str) -> tuple[str, list[Any]]:
-    """Build a WHERE clause and bind args for observation queries."""
+    """Build a WHERE clause and bind args for observation queries.
+
+    Uses ``COLLATE NOCASE`` for case-insensitive matching, which avoids
+    wrapping columns in ``lower()`` and allows SQLite to use column indexes
+    when the collation matches the index definition.
+    """
     where: list[str] = []
     args: list[Any] = []
     q = strip_private_blocks(query).strip()
     if q:
-        where.append("(lower(title) LIKE ? OR lower(content) LIKE ? OR lower(tags_json) LIKE ?)")
+        # COLLATE NOCASE lets SQLite skip the per-row lower() call and
+        # potentially leverage an index with the same collation.
         like_q = f"%{q.lower()}%"
+        where.append(
+            "(title LIKE ? COLLATE NOCASE"
+            " OR content LIKE ? COLLATE NOCASE"
+            " OR tags_json LIKE ? COLLATE NOCASE)"
+        )
         args.extend([like_q, like_q, like_q])
     if source_type and source_type != "all":
         where.append("source_type = ?")
@@ -435,7 +560,9 @@ def search_index(
     """Search the index and return matching observations as dicts.
 
     All user-supplied values flow through bind parameters; the WHERE clause
-    is assembled only from static predicate strings.
+    is assembled only from static predicate strings.  Results are cached
+    in-process for ``_SEARCH_CACHE_TTL`` seconds so that repeated identical
+    queries within a single CLI invocation avoid redundant I/O.
 
     Args:
         query: Free-text query matched against title, content, and tags.
@@ -448,7 +575,23 @@ def search_index(
     Returns:
         List of observation dicts ordered by ``created_at_epoch`` descending.
     """
+    clamped_limit = max(1, min(limit, 200))
+    clamped_offset = max(0, offset)
+
     db_path = ensure_index_db()
+
+    # Build a stable cache key that includes the DB path so results from
+    # different databases (e.g. per-test temp DBs) never cross-contaminate.
+    cache_key = json.dumps(
+        [str(db_path), query, clamped_limit, clamped_offset, source_type, date_start_epoch, date_end_epoch],
+        ensure_ascii=False,
+    )
+    if _SEARCH_CACHE_TTL > 0:
+        now = time.monotonic()
+        cached = _SEARCH_CACHE.get(cache_key)
+        if cached is not None and cached[0] > now:
+            return list(cached[1])
+
     with _open_db(db_path) as conn:
         where_clause, args = _obs_where_clause(query, source_type)
         if date_start_epoch is not None:
@@ -458,8 +601,13 @@ def search_index(
             where_clause = (where_clause + " AND" if where_clause else "WHERE") + " created_at_epoch <= ?"
             args.append(date_end_epoch)
         sql = f"SELECT * FROM observations {where_clause} ORDER BY created_at_epoch DESC LIMIT ? OFFSET ?"
-        args.extend([max(1, min(limit, 200)), max(0, offset)])
-        return [_row_to_dict(r) for r in conn.execute(sql, args).fetchall()]
+        args.extend([clamped_limit, clamped_offset])
+        results = [_row_to_dict(r) for r in conn.execute(sql, args).fetchall()]
+
+    if _SEARCH_CACHE_TTL > 0:
+        _SEARCH_CACHE[cache_key] = (time.monotonic() + _SEARCH_CACHE_TTL, results)
+
+    return results
 
 
 def timeline_index(
@@ -680,14 +828,17 @@ def import_observations_payload(
             # Batch-check which fingerprints already exist.
             fps = [c["fingerprint"] for c in candidates]
             qmarks = ",".join("?" for _ in fps)
-            existing = {row["fingerprint"] for row in conn.execute(_SQL_FIND_BY_FPS.format(qmarks), fps).fetchall()}
+            existing = {
+                row["fingerprint"]
+                for row in _retry_sqlite(conn, _SQL_FIND_BY_FPS.format(qmarks), fps).fetchall()
+            }
 
+            to_insert: list[tuple[Any, ...]] = []
             for obs in candidates:
                 if obs["fingerprint"] in existing:
                     skipped += 1
                     continue
-                conn.execute(
-                    _SQL_INSERT_OBS,
+                to_insert.append(
                     (
                         obs["fingerprint"],
                         obs["source_type"],
@@ -699,11 +850,14 @@ def import_observations_payload(
                         obs["created_at"],
                         obs["created_at_epoch"],
                         now_epoch,
-                    ),
+                    )
                 )
-                inserted += 1
 
-            conn.commit()
+            if to_insert:
+                _retry_sqlite_many(conn, _SQL_INSERT_OBS, to_insert)
+                inserted = len(to_insert)
+
+            _retry_commit(conn)
 
     if sync_from_storage:
         sync_index_from_storage()

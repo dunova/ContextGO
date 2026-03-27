@@ -18,6 +18,7 @@ Public API (stable):
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import sqlite3
@@ -54,6 +55,8 @@ SESSION_INDEX_SCHEMA_VERSION = "2026-03-26-search-noise-v5"
 #: Number of upsert rows per SQLite transaction batch during sync.
 _BATCH_COMMIT_SIZE: int = env_int("CONTEXTGO_INDEX_BATCH_SIZE", default=100, minimum=10)
 
+_logger = logging.getLogger(__name__)
+
 
 # SQL Constants
 
@@ -80,8 +83,12 @@ CREATE TABLE IF NOT EXISTS session_index_meta (
 """
 
 _DDL_INDEXES = [
-    "CREATE INDEX IF NOT EXISTS idx_session_created ON session_documents(created_at_epoch DESC)",
-    "CREATE INDEX IF NOT EXISTS idx_session_source  ON session_documents(source_type, created_at_epoch DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_session_created    ON session_documents(created_at_epoch DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_session_source     ON session_documents(source_type, created_at_epoch DESC)",
+    # Accelerates session_id look-ups in ranking and enrichment paths.
+    "CREATE INDEX IF NOT EXISTS idx_session_session_id ON session_documents(session_id)",
+    # Accelerates updated_at_epoch sorts used in health/stats queries.
+    "CREATE INDEX IF NOT EXISTS idx_session_updated    ON session_documents(updated_at_epoch DESC)",
 ]
 
 _SQL_META_GET = "SELECT value FROM session_index_meta WHERE key = ?"
@@ -203,6 +210,16 @@ SOURCE_WEIGHT: dict[str, int] = {
 
 # In-process cache for source-file discovery results.
 _SOURCE_CACHE: dict[str, Any] = {"expires_at": 0.0, "items": [], "home": None}
+
+# ---------------------------------------------------------------------------
+# In-process search result cache (TTL-based)
+# ---------------------------------------------------------------------------
+# Cache TTL in seconds.  Set CONTEXTGO_SESSION_SEARCH_CACHE_TTL=0 to disable.
+_SEARCH_RESULT_CACHE_TTL: int = int(
+    os.environ.get("CONTEXTGO_SESSION_SEARCH_CACHE_TTL", "5") or "5"
+)
+# Mapping of cache_key -> (expiry_monotonic_float, results_list)
+_SEARCH_RESULT_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 
 # Pre-compiled whitespace normalizer used throughout this module.
 _WHITESPACE_RE = re.compile(r"\s+")
@@ -427,8 +444,13 @@ def _finish_session_doc(
     created_at: str,
     pieces: list[str],
     mtime: int,
+    file_size: int | None = None,
 ) -> SessionDocument:
-    """Build a SessionDocument from already-parsed fields."""
+    """Build a SessionDocument from already-parsed fields.
+
+    *file_size* may be supplied from a pre-fetched ``os.stat`` result to avoid
+    an extra filesystem call; it is resolved via ``path.stat()`` when omitted.
+    """
     content = _truncate(pieces)
     if not title:
         title = path.parent.as_posix()
@@ -443,7 +465,7 @@ def _finish_session_doc(
         created_at=created_at or datetime.fromtimestamp(mtime).isoformat(),
         created_at_epoch=_iso_to_epoch(created_at, mtime),
         file_mtime=mtime,
-        file_size=path.stat().st_size,
+        file_size=file_size if file_size is not None else path.stat().st_size,
     )
 
 
@@ -460,13 +482,21 @@ def _iter_jsonl_objects(path: Path) -> Generator[dict[str, Any], None, None]:
                 continue
 
 
-def _parse_codex_session(path: Path) -> SessionDocument | None:
-    """Parse a Codex JSONL session file into a ``SessionDocument``."""
+def _parse_codex_session(
+    path: Path, file_stat: os.stat_result | None = None
+) -> SessionDocument | None:
+    """Parse a Codex JSONL session file into a ``SessionDocument``.
+
+    *file_stat* may be a pre-fetched ``os.stat_result`` to avoid a redundant
+    filesystem call; the file is re-stat'd when omitted.
+    """
     session_id = path.stem
     title = ""
     created_at = ""
     pieces: list[str] = []
-    mtime = int(path.stat().st_mtime)
+    st = file_stat if file_stat is not None else path.stat()
+    mtime = int(st.st_mtime)
+    file_size = st.st_size
     try:
         for obj in _iter_jsonl_objects(path):
             kind = obj.get("type")
@@ -489,16 +519,26 @@ def _parse_codex_session(path: Path) -> SessionDocument | None:
                             pieces.append(text)
     except (OSError, UnicodeDecodeError, ValueError):
         return None
-    return _finish_session_doc(path, "codex_session", session_id, title, created_at, pieces, mtime)
+    return _finish_session_doc(
+        path, "codex_session", session_id, title, created_at, pieces, mtime, file_size
+    )
 
 
-def _parse_claude_session(path: Path) -> SessionDocument | None:
-    """Parse a Claude JSONL session file into a ``SessionDocument``."""
+def _parse_claude_session(
+    path: Path, file_stat: os.stat_result | None = None
+) -> SessionDocument | None:
+    """Parse a Claude JSONL session file into a ``SessionDocument``.
+
+    *file_stat* may be a pre-fetched ``os.stat_result`` to avoid a redundant
+    filesystem call; the file is re-stat'd when omitted.
+    """
     session_id = path.stem
     title = ""
     created_at = ""
     pieces: list[str] = []
-    mtime = int(path.stat().st_mtime)
+    st = file_stat if file_stat is not None else path.stat()
+    mtime = int(st.st_mtime)
+    file_size = st.st_size
     try:
         for obj in _iter_jsonl_objects(path):
             kind = obj.get("type")
@@ -519,11 +559,23 @@ def _parse_claude_session(path: Path) -> SessionDocument | None:
                         pieces.append(text)
     except (OSError, UnicodeDecodeError, ValueError):
         return None
-    return _finish_session_doc(path, "claude_session", session_id, title, created_at, pieces, mtime)
+    return _finish_session_doc(
+        path, "claude_session", session_id, title, created_at, pieces, mtime, file_size
+    )
 
 
-def _make_flat_doc(path: Path, source_type: str, texts: list[str], mtime: int) -> SessionDocument | None:
-    """Build a flat ``SessionDocument`` from extracted text lines, or return ``None``."""
+def _make_flat_doc(
+    path: Path,
+    source_type: str,
+    texts: list[str],
+    mtime: int,
+    file_size: int | None = None,
+) -> SessionDocument | None:
+    """Build a flat ``SessionDocument`` from extracted text lines, or return ``None``.
+
+    *file_size* may be supplied from a pre-fetched ``os.stat`` result to avoid
+    an extra filesystem call; it is resolved via ``path.stat()`` when omitted.
+    """
     content = _truncate(texts)
     if not content:
         return None
@@ -536,13 +588,21 @@ def _make_flat_doc(path: Path, source_type: str, texts: list[str], mtime: int) -
         created_at=datetime.fromtimestamp(mtime).isoformat(),
         created_at_epoch=mtime,
         file_mtime=mtime,
-        file_size=path.stat().st_size,
+        file_size=file_size if file_size is not None else path.stat().st_size,
     )
 
 
-def _parse_history_jsonl(path: Path, source_type: str) -> SessionDocument | None:
-    """Parse a flat JSONL history file into a ``SessionDocument``."""
-    mtime = int(path.stat().st_mtime)
+def _parse_history_jsonl(
+    path: Path, source_type: str, file_stat: os.stat_result | None = None
+) -> SessionDocument | None:
+    """Parse a flat JSONL history file into a ``SessionDocument``.
+
+    *file_stat* may be a pre-fetched ``os.stat_result`` to avoid a redundant
+    filesystem call; the file is re-stat'd when omitted.
+    """
+    st = file_stat if file_stat is not None else path.stat()
+    mtime = int(st.st_mtime)
+    file_size = st.st_size
     texts: list[str] = []
     try:
         for obj in _iter_jsonl_objects(path):
@@ -555,12 +615,20 @@ def _parse_history_jsonl(path: Path, source_type: str) -> SessionDocument | None
                     break
     except (OSError, UnicodeDecodeError, ValueError):
         return None
-    return _make_flat_doc(path, source_type, texts, mtime)
+    return _make_flat_doc(path, source_type, texts, mtime, file_size)
 
 
-def _parse_shell_history(path: Path, source_type: str) -> SessionDocument | None:
-    """Parse a shell history file (zsh or bash) into a ``SessionDocument``."""
-    mtime = int(path.stat().st_mtime)
+def _parse_shell_history(
+    path: Path, source_type: str, file_stat: os.stat_result | None = None
+) -> SessionDocument | None:
+    """Parse a shell history file (zsh or bash) into a ``SessionDocument``.
+
+    *file_stat* may be a pre-fetched ``os.stat_result`` to avoid a redundant
+    filesystem call; the file is re-stat'd when omitted.
+    """
+    st = file_stat if file_stat is not None else path.stat()
+    mtime = int(st.st_mtime)
+    file_size = st.st_size
     texts: list[str] = []
     try:
         with path.open("r", encoding="utf-8", errors="ignore") as fh:
@@ -576,19 +644,25 @@ def _parse_shell_history(path: Path, source_type: str) -> SessionDocument | None
                     texts.append(line)
     except (OSError, UnicodeDecodeError, ValueError):
         return None
-    return _make_flat_doc(path, source_type, texts, mtime)
+    return _make_flat_doc(path, source_type, texts, mtime, file_size)
 
 
-def _parse_source(source_type: str, path: Path) -> SessionDocument | None:
-    """Dispatch a source file to the appropriate parser."""
+def _parse_source(
+    source_type: str, path: Path, file_stat: os.stat_result | None = None
+) -> SessionDocument | None:
+    """Dispatch a source file to the appropriate parser.
+
+    *file_stat* is forwarded to the individual parsers so they can reuse an
+    already-fetched ``os.stat_result`` rather than re-stat'ing the file.
+    """
     if source_type == "codex_session":
-        return _parse_codex_session(path)
+        return _parse_codex_session(path, file_stat)
     if source_type == "claude_session":
-        return _parse_claude_session(path)
+        return _parse_claude_session(path, file_stat)
     if source_type.endswith("_history") and path.suffix == ".jsonl":
-        return _parse_history_jsonl(path, source_type)
+        return _parse_history_jsonl(path, source_type, file_stat)
     if source_type.startswith("shell_"):
-        return _parse_shell_history(path, source_type)
+        return _parse_shell_history(path, source_type, file_stat)
     return None
 
 
@@ -689,6 +763,10 @@ def _open_db(db_path: Path) -> Generator[sqlite3.Connection, None, None]:
     conn = sqlite3.connect(db_path, timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("PRAGMA cache_size=-8000")
+    conn.execute("PRAGMA mmap_size=268435456")
+    conn.execute("PRAGMA temp_store=MEMORY")
     try:
         yield conn
     finally:
@@ -713,9 +791,15 @@ def sync_session_index(force: bool = False) -> dict[str, int]:
     """Scan source files and upsert changed documents (mtime+size based).
 
     Forces full re-index when the schema version changes or *force* is True.
+
+    Batch behaviour is controlled by ``_BATCH_COMMIT_SIZE`` (configurable via
+    the ``CONTEXTGO_INDEX_BATCH_SIZE`` env var): upsert rows are flushed to
+    SQLite in chunks of that size rather than accumulated indefinitely, which
+    bounds memory usage when indexing large collections.
     """
+    _t_start = time.monotonic()
     db_path = ensure_session_db()
-    added = updated = removed = scanned = batch_pending = 0
+    added = updated = removed = scanned = 0
     now_epoch = int(datetime.now().timestamp())
     seen_paths: set[str] = set()
 
@@ -731,6 +815,11 @@ def sync_session_index(force: bool = False) -> dict[str, int]:
         last_sync_epoch = int(last_sync_raw or "0")
         if not force and last_sync_epoch and (now_epoch - last_sync_epoch) < SYNC_MIN_INTERVAL_SEC:
             total = conn.execute(_SQL_COUNT_DOCS).fetchone()[0]
+            _logger.debug(
+                "sync_session_index skipped (last_sync %ds ago, threshold %ds)",
+                now_epoch - last_sync_epoch,
+                SYNC_MIN_INTERVAL_SEC,
+            )
             return {
                 "scanned": 0,
                 "added": 0,
@@ -741,10 +830,26 @@ def sync_session_index(force: bool = False) -> dict[str, int]:
                 "total_sessions": int(total or 0),
             }
 
+        _t_scan_start = time.monotonic()
+        upsert_batch: list[tuple[Any, ...]] = []
+        queued_paths: set[str] = set()
+
+        def _flush_upsert_batch() -> None:
+            """Flush the current upsert batch to the database and commit."""
+            if upsert_batch:
+                conn.executemany(_SQL_UPSERT_DOC, upsert_batch)
+                conn.commit()
+                _logger.debug("sync_session_index: flushed %d upsert rows", len(upsert_batch))
+                upsert_batch.clear()
+
         for source_type, path in _iter_sources():
             scanned += 1
             canonical_path = _normalize_file_path(path)
             seen_paths.add(canonical_path)
+
+            # Skip duplicates that resolve to the same canonical path.
+            if canonical_path in queued_paths:
+                continue
 
             try:
                 stat = path.stat()
@@ -755,12 +860,13 @@ def sync_session_index(force: bool = False) -> dict[str, int]:
             if row and int(row[0]) == int(stat.st_mtime) and int(row[1]) == int(stat.st_size):
                 continue
 
-            doc = _parse_source(source_type, path)
+            # Pass the already-fetched stat result to avoid redundant syscalls
+            # inside the parser (each parser would otherwise re-stat the file).
+            doc = _parse_source(source_type, path, file_stat=stat)
             if not doc:
                 continue
 
-            conn.execute(
-                _SQL_UPSERT_DOC,
+            upsert_batch.append(
                 (
                     canonical_path,
                     doc.source_type,
@@ -772,30 +878,67 @@ def sync_session_index(force: bool = False) -> dict[str, int]:
                     doc.file_mtime,
                     doc.file_size,
                     now_epoch,
-                ),
+                )
             )
+            queued_paths.add(canonical_path)
             updated += 1 if row else 0
             added += 0 if row else 1
 
-            batch_pending += 1
-            if batch_pending >= _BATCH_COMMIT_SIZE:
-                conn.commit()
-                batch_pending = 0
+            # Flush to DB when the batch reaches the configured threshold.
+            if len(upsert_batch) >= _BATCH_COMMIT_SIZE:
+                _flush_upsert_batch()
+
+        # Flush any remaining upsert rows.
+        _flush_upsert_batch()
+
+        _t_scan_elapsed = time.monotonic() - _t_scan_start
+        _logger.debug(
+            "sync_session_index: scanned %d sources in %.3fs (added=%d updated=%d)",
+            scanned,
+            _t_scan_elapsed,
+            added,
+            updated,
+        )
 
         # Remove index entries whose source files no longer exist.
+        _t_remove_start = time.monotonic()
+        delete_batch: list[tuple[str]] = []
         for (file_path,) in conn.execute(_SQL_ALL_PATHS).fetchall():
             if file_path not in seen_paths:
-                conn.execute(_SQL_DELETE_DOC, (file_path,))
+                delete_batch.append((file_path,))
                 removed += 1
-                batch_pending += 1
-                if batch_pending >= _BATCH_COMMIT_SIZE:
+                if len(delete_batch) >= _BATCH_COMMIT_SIZE:
+                    conn.executemany(_SQL_DELETE_DOC, delete_batch)
                     conn.commit()
-                    batch_pending = 0
+                    _logger.debug(
+                        "sync_session_index: flushed %d delete rows", len(delete_batch)
+                    )
+                    delete_batch.clear()
+
+        if delete_batch:
+            conn.executemany(_SQL_DELETE_DOC, delete_batch)
 
         _meta_set(conn, "last_sync_epoch", str(now_epoch))
         conn.commit()
         total = conn.execute(_SQL_COUNT_DOCS).fetchone()[0]
 
+        _t_remove_elapsed = time.monotonic() - _t_remove_start
+        _logger.debug(
+            "sync_session_index: removed %d stale entries in %.3fs",
+            removed,
+            _t_remove_elapsed,
+        )
+
+    _t_total = time.monotonic() - _t_start
+    _logger.debug(
+        "sync_session_index complete in %.3fs: total=%d scanned=%d added=%d updated=%d removed=%d",
+        _t_total,
+        int(total or 0),
+        scanned,
+        added,
+        updated,
+        removed,
+    )
     return {
         "scanned": scanned,
         "added": added,
@@ -1049,13 +1192,20 @@ def _fetch_rows(
     """Build and execute a LIKE-based SQL query for the given terms.
 
     Each term generates an OR predicate across title, content, and file_path.
-    All term values flow through bind parameters.
+    All term values flow through bind parameters.  ``COLLATE NOCASE`` is used
+    instead of wrapping columns in ``lower()`` so that SQLite avoids a
+    per-row function call and can potentially leverage an index with a
+    matching collation.
     """
     where_parts: list[str] = []
     args: list[Any] = []
     for term in active_terms:
         like_term = f"%{term.lower()}%"
-        where_parts.append("(lower(title) LIKE ? OR lower(content) LIKE ? OR lower(file_path) LIKE ?)")
+        where_parts.append(
+            "(title LIKE ? COLLATE NOCASE"
+            " OR content LIKE ? COLLATE NOCASE"
+            " OR file_path LIKE ? COLLATE NOCASE)"
+        )
         args.extend([like_term, like_term, like_term])
     where_clause = f"WHERE {' OR '.join(where_parts)}" if where_parts else ""
     sql = f"SELECT * FROM session_documents {where_clause} ORDER BY created_at_epoch DESC LIMIT ?"
@@ -1091,9 +1241,26 @@ def _rank_rows(
 
 
 def _search_rows(query: str, limit: int = 10, literal: bool = False) -> list[dict[str, Any]]:
-    """Execute a ranked LIKE search against the local session index."""
+    """Execute a ranked LIKE search against the local session index.
+
+    Results are cached in-process for ``_SEARCH_RESULT_CACHE_TTL`` seconds
+    so that repeated identical queries within a single CLI invocation avoid
+    redundant I/O and ranking work.
+    """
     max_results = max(1, min(limit, 100))
+
     db_path = ensure_session_db()
+
+    # Build a stable cache key that includes the DB path so results from
+    # different databases (e.g. per-test temp DBs) never cross-contaminate.
+    cache_key = json.dumps([str(db_path), query, max_results, literal], ensure_ascii=False)
+
+    if _SEARCH_RESULT_CACHE_TTL > 0:
+        now_mono = time.monotonic()
+        cached = _SEARCH_RESULT_CACHE.get(cache_key)
+        if cached is not None and cached[0] > now_mono:
+            return list(cached[1])
+
     sync_session_index()
 
     with _open_db(db_path) as conn:
@@ -1137,7 +1304,7 @@ def _search_rows(query: str, limit: int = 10, literal: bool = False) -> list[dic
 
         ranked.sort(key=lambda item: (item[0], item[1]["created_at_epoch"]), reverse=True)
 
-        return [
+        results = [
             {
                 "source_type": row["source_type"],
                 "session_id": row["session_id"],
@@ -1149,6 +1316,11 @@ def _search_rows(query: str, limit: int = 10, literal: bool = False) -> list[dic
             }
             for _, row in ranked[:max_results]
         ]
+
+    if _SEARCH_RESULT_CACHE_TTL > 0:
+        _SEARCH_RESULT_CACHE[cache_key] = (time.monotonic() + _SEARCH_RESULT_CACHE_TTL, results)
+
+    return results
 
 
 # Public API

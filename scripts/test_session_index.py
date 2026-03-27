@@ -1388,6 +1388,285 @@ if __name__ == "__main__":
 
 
 # ---------------------------------------------------------------------------
+# R5 CJK/Unicode edge case tests
+# ---------------------------------------------------------------------------
+
+
+class TestCJKUnicodeBuildQueryTerms(unittest.TestCase):
+    """Tests for CJK/Unicode edge cases in build_query_terms."""
+
+    def test_mixed_cjk_latin_query(self) -> None:
+        """Mixed CJK + Latin query like 'Python 代码' should yield both term types."""
+        terms = session_index.build_query_terms("Python 代码")
+        lowered = [t.lower() for t in terms]
+        self.assertTrue(any("python" in t for t in lowered))
+        # CJK token '代码' should be extracted
+        self.assertTrue(any("代码" in t for t in terms))
+
+    def test_mixed_cjk_latin_complex_query(self) -> None:
+        """'Python 代码 分析' should yield latin and CJK terms."""
+        terms = session_index.build_query_terms("Python 代码 分析")
+        lowered = [t.lower() for t in terms]
+        self.assertTrue(any("python" in t for t in lowered))
+        self.assertTrue(any("代码" in t or "分析" in t for t in terms))
+
+    def test_emoji_in_query_does_not_crash(self) -> None:
+        """Emoji characters in query should not raise exceptions."""
+        terms = session_index.build_query_terms("搜索 🔍 代码")
+        self.assertIsInstance(terms, list)
+
+    def test_emoji_only_query_does_not_crash(self) -> None:
+        """Query with only emoji should not raise exceptions."""
+        terms = session_index.build_query_terms("🎉🚀💡")
+        self.assertIsInstance(terms, list)
+
+    def test_zero_width_chars_in_query(self) -> None:
+        """Zero-width characters in query should be handled gracefully."""
+        # Zero-width joiner, non-joiner, and space
+        query = "Python\u200b代码\u200c分析\u200d"
+        terms = session_index.build_query_terms(query)
+        self.assertIsInstance(terms, list)
+
+    def test_very_long_cjk_string_query(self) -> None:
+        """Very long CJK string (>10000 chars) should not crash and returns at most 8 terms."""
+        long_cjk = "代码分析" * 3000  # ~12000 chars
+        terms = session_index.build_query_terms(long_cjk)
+        self.assertIsInstance(terms, list)
+        self.assertLessEqual(len(terms), 8)
+
+    def test_cjk_punctuation_in_query(self) -> None:
+        """CJK punctuation (、。《》) in query should not crash."""
+        query = "代码《分析》、调研。结论"
+        terms = session_index.build_query_terms(query)
+        self.assertIsInstance(terms, list)
+        # Should extract CJK character runs, ignoring punctuation
+        self.assertTrue(len(terms) > 0)
+
+    def test_full_cjk_punctuation_only(self) -> None:
+        """Query of only CJK punctuation should return empty or reasonable fallback."""
+        query = "、。《》【】"
+        terms = session_index.build_query_terms(query)
+        self.assertIsInstance(terms, list)
+
+    def test_arabic_script_query_does_not_crash(self) -> None:
+        """Arabic script in query should not raise exceptions."""
+        terms = session_index.build_query_terms("تحليل الكود")
+        self.assertIsInstance(terms, list)
+
+    def test_thai_script_query_does_not_crash(self) -> None:
+        """Thai script in query should not raise exceptions."""
+        terms = session_index.build_query_terms("วิเคราะห์โค้ด")
+        self.assertIsInstance(terms, list)
+
+    def test_mixed_scripts_query_does_not_crash(self) -> None:
+        """Mixed Arabic + Thai + CJK in query should not crash."""
+        query = "تحليل วิเคราะห์ 代码分析"
+        terms = session_index.build_query_terms(query)
+        self.assertIsInstance(terms, list)
+
+
+class TestCJKUnicodeSessionIndexing(unittest.TestCase):
+    """Tests for CJK/Unicode edge cases in session indexing and search."""
+
+    def _write_session(self, path: Path, session_id: str, cwd: str, message: str) -> None:
+        path.write_text(
+            "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "type": "session_meta",
+                            "payload": {
+                                "id": session_id,
+                                "cwd": cwd,
+                                "timestamp": "2026-03-25T00:00:00Z",
+                            },
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "type": "event_msg",
+                            "payload": {"type": "user_message", "message": message},
+                        }
+                    ),
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+    def test_mixed_cjk_latin_search_roundtrip(self) -> None:
+        """Session with mixed CJK+Latin content is found by mixed query."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            session_root = root / ".codex" / "sessions" / "2026" / "03" / "25"
+            session_root.mkdir(parents=True)
+            self._write_session(
+                session_root / "mixed.jsonl",
+                "mixed-cjk-latin-session",
+                "/tmp/project",
+                "Python 代码分析完成，结果已保存",
+            )
+            db_path = root / "session_index.db"
+            with (
+                mock.patch.object(session_index, "_home", return_value=root),
+                mock.patch.dict(os.environ, {session_index.SESSION_DB_PATH_ENV: str(db_path)}, clear=False),
+            ):
+                session_index.sync_session_index(force=True)
+                rows = session_index._search_rows("Python 代码", limit=5)
+            self.assertTrue(any(r["session_id"] == "mixed-cjk-latin-session" for r in rows))
+
+    def test_emoji_in_session_content_is_indexed(self) -> None:
+        """Session containing emoji in content should be indexed without errors."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            session_root = root / ".codex" / "sessions" / "2026" / "03" / "25"
+            session_root.mkdir(parents=True)
+            self._write_session(
+                session_root / "emoji.jsonl",
+                "emoji-session",
+                "/tmp/emoji-project",
+                "部署成功 🚀 所有测试通过 ✅ 代码审查完成",
+            )
+            db_path = root / "session_index.db"
+            with (
+                mock.patch.object(session_index, "_home", return_value=root),
+                mock.patch.dict(os.environ, {session_index.SESSION_DB_PATH_ENV: str(db_path)}, clear=False),
+            ):
+                stats = session_index.sync_session_index(force=True)
+            self.assertGreaterEqual(stats["added"], 1)
+
+    def test_zero_width_chars_in_session_content(self) -> None:
+        """Session containing zero-width characters should be indexed without errors."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            session_root = root / ".codex" / "sessions" / "2026" / "03" / "25"
+            session_root.mkdir(parents=True)
+            # Zero-width space embedded in content
+            self._write_session(
+                session_root / "zw.jsonl",
+                "zerowidth-session",
+                "/tmp/zw-project",
+                "代\u200b码\u200c分\u200d析结果已完成",
+            )
+            db_path = root / "session_index.db"
+            with (
+                mock.patch.object(session_index, "_home", return_value=root),
+                mock.patch.dict(os.environ, {session_index.SESSION_DB_PATH_ENV: str(db_path)}, clear=False),
+            ):
+                stats = session_index.sync_session_index(force=True)
+            self.assertGreaterEqual(stats["added"], 1)
+
+    def test_very_long_cjk_session_content_is_truncated(self) -> None:
+        """Session with very long CJK content (>10000 chars) is indexed with truncation."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            session_root = root / ".codex" / "sessions" / "2026" / "03" / "25"
+            session_root.mkdir(parents=True)
+            long_content = "这是很长的中文内容，包含代码分析结果。" * 700  # ~14000+ chars
+            self._write_session(
+                session_root / "longcjk.jsonl",
+                "longcjk-session",
+                "/tmp/long-cjk-project",
+                long_content,
+            )
+            db_path = root / "session_index.db"
+            with (
+                mock.patch.object(session_index, "_home", return_value=root),
+                mock.patch.dict(os.environ, {session_index.SESSION_DB_PATH_ENV: str(db_path)}, clear=False),
+            ):
+                stats = session_index.sync_session_index(force=True)
+            self.assertGreaterEqual(stats["added"], 1)
+            # Verify content was stored (possibly truncated)
+            conn = sqlite3.connect(db_path)
+            try:
+                row = conn.execute(
+                    "SELECT content FROM session_documents WHERE session_id = ?", ("longcjk-session",)
+                ).fetchone()
+                self.assertIsNotNone(row)
+                # Content should be stored (and truncated if > MAX_CONTENT_CHARS)
+                self.assertGreater(len(row[0]), 0)
+            finally:
+                conn.close()
+
+    def test_cjk_punctuation_in_session_content(self) -> None:
+        """Session with CJK punctuation (、。《》) in content is indexed without errors."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            session_root = root / ".codex" / "sessions" / "2026" / "03" / "25"
+            session_root.mkdir(parents=True)
+            self._write_session(
+                session_root / "cjkpunct.jsonl",
+                "cjkpunct-session",
+                "/tmp/cjkpunct-project",
+                "研究报告《代码质量分析》：结论、建议及后续步骤。",
+            )
+            db_path = root / "session_index.db"
+            with (
+                mock.patch.object(session_index, "_home", return_value=root),
+                mock.patch.dict(os.environ, {session_index.SESSION_DB_PATH_ENV: str(db_path)}, clear=False),
+            ):
+                stats = session_index.sync_session_index(force=True)
+            self.assertGreaterEqual(stats["added"], 1)
+
+    def test_cjk_punctuation_search_finds_content(self) -> None:
+        """Search for CJK content strips punctuation and still finds relevant sessions."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            session_root = root / ".codex" / "sessions" / "2026" / "03" / "25"
+            session_root.mkdir(parents=True)
+            self._write_session(
+                session_root / "cjkpunct2.jsonl",
+                "cjkpunct2-session",
+                "/tmp/cjkpunct2-project",
+                "代码质量报告完成，分析结果已汇总",
+            )
+            db_path = root / "session_index.db"
+            with (
+                mock.patch.object(session_index, "_home", return_value=root),
+                mock.patch.dict(os.environ, {session_index.SESSION_DB_PATH_ENV: str(db_path)}, clear=False),
+            ):
+                session_index.sync_session_index(force=True)
+                # Search with CJK punctuation in query
+                rows = session_index._search_rows("代码质量、报告。", limit=5)
+            self.assertTrue(any(r["session_id"] == "cjkpunct2-session" for r in rows))
+
+
+class TestBuildSnippetCJKUnicode(unittest.TestCase):
+    """Tests for CJK/Unicode edge cases in _build_snippet."""
+
+    def test_snippet_with_emoji_content(self) -> None:
+        """_build_snippet should handle emoji in content without crashing."""
+        text = "项目部署完成 🚀 代码审查通过 ✅ 测试全部通过"
+        snippet = session_index._build_snippet(text, ["部署"])
+        self.assertIsInstance(snippet, str)
+
+    def test_snippet_with_cjk_punctuation(self) -> None:
+        """_build_snippet should handle CJK punctuation in content."""
+        text = "研究报告《代码质量分析》：结论已确认、建议已记录。"
+        snippet = session_index._build_snippet(text, ["结论"])
+        self.assertIsInstance(snippet, str)
+        self.assertIn("结论", snippet)
+
+    def test_snippet_with_zero_width_chars(self) -> None:
+        """_build_snippet should handle zero-width characters in content."""
+        text = "代\u200b码分析\u200c完成，结\u200d论已确认"
+        snippet = session_index._build_snippet(text, ["分析"])
+        self.assertIsInstance(snippet, str)
+
+    def test_snippet_with_very_long_cjk_content(self) -> None:
+        """_build_snippet should return reasonable snippet from very long CJK content."""
+        long_text = "代码分析结果如下：" + "详细内容分析报告。" * 500 + "最终结论：分析完成"
+        snippet = session_index._build_snippet(long_text, ["结论"])
+        self.assertIsInstance(snippet, str)
+        self.assertGreater(len(snippet), 0)
+
+    def test_snippet_with_mixed_scripts(self) -> None:
+        """_build_snippet should handle mixed Arabic, Thai, CJK scripts."""
+        text = "تحليل الكود 代码分析 วิเคราะห์โค้ด complete"
+        snippet = session_index._build_snippet(text, ["代码"])
+        self.assertIsInstance(snippet, str)
+
+
+# ---------------------------------------------------------------------------
 # R6 coverage push – targets uncovered lines identified by coverage analysis
 # ---------------------------------------------------------------------------
 

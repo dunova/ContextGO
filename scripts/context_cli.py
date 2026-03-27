@@ -4,12 +4,28 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import sys
-from datetime import datetime
 from pathlib import Path
 from types import ModuleType
+
+__all__ = [
+    "build_parser",
+    "cmd_export",
+    "cmd_health",
+    "cmd_import",
+    "cmd_maintain",
+    "cmd_native_scan",
+    "cmd_save",
+    "cmd_search",
+    "cmd_semantic",
+    "cmd_serve",
+    "cmd_smoke",
+    "export_observations_payload",
+    "import_observations_payload",
+    "main",
+    "run",
+]
 
 try:
     from context_config import env_bool, env_int, env_str, storage_root
@@ -142,6 +158,7 @@ def _save_local_memory(title: str, content: str, tags: list[str]) -> str:
     if _remote_host not in ("127.0.0.1", "localhost", "::1") and not REMOTE_MEMORY_URL.startswith("https://"):
         return f"Saved locally: {path} (remote indexing skipped: HTTPS required for non-localhost URL)"
 
+    import json  # deferred: only needed when remote HTTP sync is active
     import urllib.request  # deferred: only needed for remote HTTP sync
 
     payload = json.dumps(
@@ -225,6 +242,8 @@ def _compact_smoke_payload(payload: dict[str, object]) -> dict[str, object]:
 
 def _print_json(payload: object, *, pretty: bool = False) -> None:
     """Serialize *payload* to stdout as compact or pretty-printed JSON."""
+    import json  # deferred: only needed when a command emits JSON output
+
     if pretty:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
@@ -233,6 +252,8 @@ def _print_json(payload: object, *, pretty: bool = False) -> None:
 
 def _source_freshness() -> dict[str, dict[str, object]]:
     """Return a mapping of known history source names to their path and mtime."""
+    from datetime import datetime  # deferred: only needed for health/freshness output
+
     _core = _get_context_core()
     antigravity_candidates = sorted(
         (HOME / ".gemini" / "antigravity" / "brain").glob("*/walkthrough.md"),
@@ -304,6 +325,8 @@ def cmd_semantic(args: argparse.Namespace) -> int:
         return 2
     matches = _local_memory_matches(args.query, limit=args.limit)
     if matches:
+        import json  # deferred: only needed when memory matches are found
+
         print("--- LOCAL MEMORY MATCHES ---")
         for item in matches:
             print(json.dumps(item, ensure_ascii=False, indent=2))
@@ -342,6 +365,8 @@ def cmd_export(args: argparse.Namespace) -> int:
     if output_path.is_dir():
         print(f"Error: output path '{output_path}' is a directory, not a file.", file=sys.stderr)
         return 2
+    import json  # deferred: only needed for export serialisation
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"exported observations={payload['total_observations']} -> {output_path}")
@@ -350,6 +375,8 @@ def cmd_export(args: argparse.Namespace) -> int:
 
 def cmd_import(args: argparse.Namespace) -> int:
     """Import observations from a previously exported JSON file."""
+    import json  # deferred: only needed for import deserialisation
+
     input_path = Path(args.input).expanduser()
     try:
         payload = json.loads(input_path.read_text(encoding="utf-8"))
@@ -468,6 +495,8 @@ def cmd_smoke(args: argparse.Namespace) -> int:
 
 def cmd_health(args: argparse.Namespace) -> int:
     """Check context system health and print a JSON status payload."""
+    from datetime import datetime  # deferred: only needed for health timestamp
+
     recall = _get_session_index().health_payload()
     db_ok = bool(recall.get("session_index_db_exists"))
     payload: dict[str, object] = {

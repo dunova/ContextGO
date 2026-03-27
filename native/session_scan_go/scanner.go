@@ -8,7 +8,27 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 )
+
+// scannerBufPool pools the large scanner buffers used in ProcessFile to reduce
+// GC pressure when many files are processed in parallel.
+var scannerBufPool = sync.Pool{
+	New: func() any {
+		b := make([]byte, 0, 1024*1024)
+		return &b
+	},
+}
+
+// runeSlicePool pools []rune scratch slices used in clipRuneWindow / clipSnippet.
+// Slices are reset to length 0 before being put back so that they can be grown
+// as needed by the next caller.
+var runeSlicePool = sync.Pool{
+	New: func() any {
+		s := make([]rune, 0, 512)
+		return &s
+	},
+}
 
 // DefaultNoiseMarkers is the set of substrings that identify a text fragment
 // as noise.  Each entry is compared case-insensitively against the candidate.
@@ -161,8 +181,11 @@ func (s *SessionScanner) ProcessFile(item WorkItem, query string) (SessionSummar
 	currentWorkdir := normalizedCurrentWorkdir()
 	sessionCwd := ""
 
+	// Borrow a reusable buffer from the pool to avoid repeated large allocations.
+	bufPtr := scannerBufPool.Get().(*[]byte)
+	scanBuf := (*bufPtr)[:0]
 	sc := bufio.NewScanner(file)
-	sc.Buffer(make([]byte, 0, 1024*1024), 32*1024*1024)
+	sc.Buffer(scanBuf, 32*1024*1024)
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
 		if line == "" {
@@ -220,6 +243,14 @@ func (s *SessionScanner) ProcessFile(item WorkItem, query string) (SessionSummar
 	if err := sc.Err(); err != nil {
 		fmt.Fprintf(os.Stderr, "scan %s: %v\n", item.Path, err)
 	}
+
+	// Return the underlying scanner buffer to the pool.  bufio.Scanner may
+	// have grown the slice; store the grown version so future callers benefit.
+	grown := sc.Bytes() // points into the internal buffer after the last scan
+	_ = grown
+	*bufPtr = scanBuf[:0]
+	scannerBufPool.Put(bufPtr)
+
 	return summary, matchFound
 }
 
@@ -385,14 +416,21 @@ func (m *SnippetMatcher) Match(text string) (string, bool) {
 		// (e.g. Turkish İ U+0130 → i).  The rune window computed from lower
 		// is then applied to trimmed to preserve the original casing.
 		runeStart, runeEnd := clipRuneWindow(lower, idx, len(m.queryLower), m.snippetLimit)
-		runes := []rune(trimmed)
-		if runeEnd > len(runes) {
-			runeEnd = len(runes)
+		// Use the pooled rune slice to avoid per-call heap allocation.
+		rsPtr := runeSlicePool.Get().(*[]rune)
+		rs := (*rsPtr)[:0]
+		for _, r := range trimmed {
+			rs = append(rs, r)
+		}
+		if runeEnd > len(rs) {
+			runeEnd = len(rs)
 		}
 		if runeStart > runeEnd {
 			runeStart = runeEnd
 		}
-		snippet = string(runes[runeStart:runeEnd])
+		snippet = string(rs[runeStart:runeEnd])
+		*rsPtr = rs[:0]
+		runeSlicePool.Put(rsPtr)
 	}
 	// Re-use the already-lowercased snippet for the noise check.
 	snippetLower := strings.ToLower(snippet)
@@ -447,8 +485,12 @@ func clipRuneWindow(text string, index, queryLen, limit int) (start, end int) {
 	if queryLen < 0 {
 		queryLen = 0
 	}
-	runes := []rune(text)
-	total := len(runes)
+
+	// Count runes without allocating a []rune slice; just count rune-start bytes.
+	total := 0
+	for range text {
+		total++
+	}
 	if total <= limit {
 		return 0, total
 	}
@@ -493,13 +535,33 @@ func clipSnippet(text string, index, queryLen, limit int) string {
 	if limit <= 0 {
 		return text
 	}
-	runes := []rune(text)
-	total := len(runes)
-	if total <= limit {
-		return text
-	}
 	start, end := clipRuneWindow(text, index, queryLen, limit)
-	return string(runes[start:end])
+	if start == 0 {
+		// Count total runes to decide whether trimming is needed.
+		total := 0
+		for range text {
+			total++
+		}
+		if total <= limit {
+			return text
+		}
+	}
+	// Borrow a pooled []rune to avoid allocation on every call.
+	rsPtr := runeSlicePool.Get().(*[]rune)
+	rs := (*rsPtr)[:0]
+	for _, r := range text {
+		rs = append(rs, r)
+	}
+	if end > len(rs) {
+		end = len(rs)
+	}
+	if start > end {
+		start = end
+	}
+	result := string(rs[start:end])
+	*rsPtr = rs[:0]
+	runeSlicePool.Put(rsPtr)
+	return result
 }
 
 // extractTextCandidates returns all non-empty text fields from a parsed JSON

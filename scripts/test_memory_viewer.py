@@ -909,5 +909,264 @@ class TestMainFunction(unittest.TestCase):
             memory_viewer.VIEWER_TOKEN = original_token
 
 
+# ---------------------------------------------------------------------------
+# Edge-case Tests: R6 hardening
+# ---------------------------------------------------------------------------
+
+
+class TestHandlerSearchEdgeCases(unittest.TestCase):
+    """Edge cases for _handle_search: empty query, XSS, large page numbers."""
+
+    def setUp(self) -> None:
+        memory_viewer.VIEWER_TOKEN = ""
+
+    def tearDown(self) -> None:
+        memory_viewer.VIEWER_TOKEN = ""
+
+    def test_empty_query_returns_ok(self) -> None:
+        """Empty search query string should be forwarded to search_index unchanged."""
+        h, wfile = _make_handler(path="/api/search?query=")
+        with (
+            patch("memory_viewer._maybe_sync_index", return_value={}),
+            patch("memory_viewer.search_index", return_value=[]) as m,
+        ):
+            h._handle_search("query=")
+        m.assert_called_once_with(query="", limit=20, offset=0, source_type="all")
+        payload = _parse_json_response(wfile)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["count"], 0)
+
+    def test_blank_query_whitespace_only_treated_as_empty(self) -> None:
+        """Whitespace-only query is stripped to empty string."""
+        h, wfile = _make_handler(path="/api/search?query=+++")
+        with (
+            patch("memory_viewer._maybe_sync_index", return_value={}),
+            patch("memory_viewer.search_index", return_value=[]),
+        ):
+            h._handle_search("query=+++")
+        # _qs_str strips whitespace; URL-encoded spaces become empty after strip
+        # The query is passed through; it will be stripped to "" or remain spaces
+        # depending on URL decoding — the key assertion is no exception was raised.
+        payload = _parse_json_response(wfile)
+        self.assertTrue(payload["ok"])
+
+    def test_xss_attempt_in_query_not_reflected_as_html(self) -> None:
+        """XSS payload in query is treated as plain text; response is JSON, not HTML."""
+        xss = "<script>alert('xss')</script>"
+        h, wfile = _make_handler(path=f"/api/search?query={xss}")
+        with (
+            patch("memory_viewer._maybe_sync_index", return_value={}),
+            patch("memory_viewer.search_index", return_value=[]),
+        ):
+            h._handle_search(f"query={xss}")
+        payload = _parse_json_response(wfile)
+        # Response must be valid JSON (no raw HTML injection in the response body)
+        self.assertTrue(payload["ok"])
+        # The XSS string must NOT appear verbatim in the JSON response body
+        wfile.seek(0)
+        raw = wfile.read().decode("utf-8")
+        self.assertNotIn("<script>", raw)
+
+    def test_xss_in_query_forwarded_safely_to_search_index(self) -> None:
+        """The XSS string is forwarded to search_index as a plain string (not executed)."""
+        xss = "<img src=x onerror=alert(1)>"
+        h, wfile = _make_handler()
+        with (
+            patch("memory_viewer._maybe_sync_index", return_value={}),
+            patch("memory_viewer.search_index", return_value=[]) as m,
+        ):
+            h._handle_search(f"query={xss}")
+        # search_index received the raw query string (URL-decoded) as text
+        self.assertTrue(m.called)
+
+    def test_very_large_offset_clamped_to_max(self) -> None:
+        """An extremely large offset value is clamped to max_v=100_000."""
+        h, wfile = _make_handler()
+        with (
+            patch("memory_viewer._maybe_sync_index", return_value={}),
+            patch("memory_viewer.search_index", return_value=[]) as m,
+        ):
+            h._handle_search("query=hello&offset=999999999")
+        call_offset = m.call_args[1]["offset"]
+        self.assertEqual(call_offset, 100_000)
+
+    def test_very_large_limit_clamped_to_max(self) -> None:
+        """An extremely large limit value is clamped to max_v=200."""
+        h, wfile = _make_handler()
+        with (
+            patch("memory_viewer._maybe_sync_index", return_value={}),
+            patch("memory_viewer.search_index", return_value=[]) as m,
+        ):
+            h._handle_search("query=hello&limit=99999")
+        call_limit = m.call_args[1]["limit"]
+        self.assertEqual(call_limit, 200)
+
+    def test_negative_offset_clamped_to_zero(self) -> None:
+        """Negative offset is clamped to min_v=0."""
+        h, wfile = _make_handler()
+        with (
+            patch("memory_viewer._maybe_sync_index", return_value={}),
+            patch("memory_viewer.search_index", return_value=[]) as m,
+        ):
+            h._handle_search("query=test&offset=-50")
+        call_offset = m.call_args[1]["offset"]
+        self.assertEqual(call_offset, 0)
+
+    def test_non_numeric_limit_falls_back_to_default(self) -> None:
+        """Non-numeric limit falls back to default=20."""
+        h, wfile = _make_handler()
+        with (
+            patch("memory_viewer._maybe_sync_index", return_value={}),
+            patch("memory_viewer.search_index", return_value=[]) as m,
+        ):
+            h._handle_search("query=test&limit=abc")
+        call_limit = m.call_args[1]["limit"]
+        self.assertEqual(call_limit, 20)
+
+
+class TestHandlerAuthEdgeCases(unittest.TestCase):
+    """Edge cases for auth token handling."""
+
+    def test_empty_token_header_value_is_not_authorized(self) -> None:
+        """An empty string X-Context-Token header is rejected when token is set."""
+        original = memory_viewer.VIEWER_TOKEN
+        try:
+            memory_viewer.VIEWER_TOKEN = "mysecret"
+            h, _ = _make_handler(headers={"X-Context-Token": ""})
+            self.assertFalse(h._authorized())
+        finally:
+            memory_viewer.VIEWER_TOKEN = original
+
+    def test_whitespace_only_token_is_not_authorized(self) -> None:
+        """Whitespace-only token header is rejected."""
+        original = memory_viewer.VIEWER_TOKEN
+        try:
+            memory_viewer.VIEWER_TOKEN = "mysecret"
+            h, _ = _make_handler(headers={"X-Context-Token": "   "})
+            self.assertFalse(h._authorized())
+        finally:
+            memory_viewer.VIEWER_TOKEN = original
+
+    def test_token_with_extra_whitespace_is_compared_after_strip(self) -> None:
+        """Token header with surrounding whitespace is stripped before comparison."""
+        original = memory_viewer.VIEWER_TOKEN
+        try:
+            memory_viewer.VIEWER_TOKEN = "mysecret"
+            # Token in header has surrounding whitespace — strip() normalises it
+            h, _ = _make_handler(headers={"X-Context-Token": "  mysecret  "})
+            # After strip the token is "mysecret" which matches VIEWER_TOKEN
+            self.assertTrue(h._authorized())
+        finally:
+            memory_viewer.VIEWER_TOKEN = original
+
+    def test_invalid_auth_token_returns_401_on_api_endpoint(self) -> None:
+        """An invalid auth token causes the API endpoint to return 401."""
+        original = memory_viewer.VIEWER_TOKEN
+        try:
+            memory_viewer.VIEWER_TOKEN = "correcttoken"
+            h, wfile = _make_handler(
+                method="GET",
+                path="/api/health",
+                headers={"X-Context-Token": "wrongtoken"},
+            )
+            h.do_GET()
+        finally:
+            memory_viewer.VIEWER_TOKEN = original
+        self.assertEqual(h._status_code, 401)
+        payload = _parse_json_response(wfile)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["error"], "unauthorized")
+
+    def test_no_token_header_returns_401_on_post_endpoint(self) -> None:
+        """Missing auth token on POST returns 401."""
+        original = memory_viewer.VIEWER_TOKEN
+        try:
+            memory_viewer.VIEWER_TOKEN = "required"
+            h, wfile = _make_handler(
+                method="POST",
+                path="/api/observations/batch",
+            )
+            h.do_POST()
+        finally:
+            memory_viewer.VIEWER_TOKEN = original
+        self.assertEqual(h._status_code, 401)
+
+    def test_sql_injection_like_token_rejected(self) -> None:
+        """A SQL-injection-style token string is treated as a plain string comparison."""
+        original = memory_viewer.VIEWER_TOKEN
+        try:
+            memory_viewer.VIEWER_TOKEN = "correcttoken"
+            h, _ = _make_handler(headers={"X-Context-Token": "' OR '1'='1"})
+            self.assertFalse(h._authorized())
+        finally:
+            memory_viewer.VIEWER_TOKEN = original
+
+
+class TestHandlerTimelineEdgeCases(unittest.TestCase):
+    """Edge cases for _handle_timeline: large anchor values."""
+
+    def test_very_large_anchor_clamped_to_max(self) -> None:
+        """Anchor value exceeding max_v=10_000_000 is clamped."""
+        h, wfile = _make_handler()
+        with (
+            patch("memory_viewer._maybe_sync_index", return_value={}),
+            patch("memory_viewer.timeline_index", return_value=[]) as m,
+        ):
+            h._handle_timeline("anchor=999999999")
+        # Should be clamped to 10_000_000 and timeline_index called (anchor > 0)
+        m.assert_called_once_with(anchor_id=10_000_000, depth_before=3, depth_after=3)
+
+    def test_negative_anchor_treated_as_zero(self) -> None:
+        """Negative anchor is clamped to 0, so timeline_index is NOT called."""
+        h, wfile = _make_handler()
+        with (
+            patch("memory_viewer._maybe_sync_index", return_value={}),
+            patch("memory_viewer.timeline_index", return_value=[]) as m,
+        ):
+            h._handle_timeline("anchor=-1")
+        m.assert_not_called()
+        payload = _parse_json_response(wfile)
+        self.assertEqual(payload["timeline"], [])
+
+    def test_depth_values_clamped_to_range(self) -> None:
+        """depth_before and depth_after values beyond 20 are clamped to 20."""
+        h, wfile = _make_handler()
+        with (
+            patch("memory_viewer._maybe_sync_index", return_value={}),
+            patch("memory_viewer.timeline_index", return_value=[]) as m,
+        ):
+            h._handle_timeline("anchor=5&depth_before=999&depth_after=999")
+        m.assert_called_once_with(anchor_id=5, depth_before=20, depth_after=20)
+
+
+class TestHandlerSearchDoGetXss(unittest.TestCase):
+    """Integration: XSS query routed through do_GET pipeline."""
+
+    def setUp(self) -> None:
+        memory_viewer.VIEWER_TOKEN = ""
+
+    def tearDown(self) -> None:
+        memory_viewer.VIEWER_TOKEN = ""
+
+    def test_xss_via_do_get_search_route(self) -> None:
+        """XSS payload in the full do_GET /api/search path produces valid JSON."""
+        import urllib.parse
+
+        xss = "<script>alert('xss')</script>"
+        encoded = urllib.parse.quote(xss)
+        h, wfile = _make_handler(path=f"/api/search?query={encoded}")
+        with (
+            patch("memory_viewer._maybe_sync_index", return_value={}),
+            patch("memory_viewer.search_index", return_value=[]),
+        ):
+            h.do_GET()
+        payload = _parse_json_response(wfile)
+        self.assertTrue(payload["ok"])
+        # Response body must not contain a raw <script> tag
+        wfile.seek(0)
+        raw = wfile.read().decode("utf-8")
+        self.assertNotIn("<script>", raw)
+
+
 if __name__ == "__main__":
     unittest.main()

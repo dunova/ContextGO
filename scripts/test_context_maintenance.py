@@ -826,5 +826,274 @@ class TestMainEntryPoint(unittest.TestCase):
         self.assertEqual(ctx.exception.code, 0)
 
 
+# ---------------------------------------------------------------------------
+# Edge-case Tests: R6 hardening
+# ---------------------------------------------------------------------------
+
+
+class TestRepairQueueEmptyDatabase(unittest.TestCase):
+    """Edge cases: repair_queue and enqueue_missing on an empty database."""
+
+    def test_repair_queue_on_empty_jobs_table_returns_zero(self) -> None:
+        """repair_queue on a DB with no jobs returns 0 (nothing to release)."""
+        conn, cur = _make_db()
+        count = repair_queue(cur, stale_minutes=15, dry_run=False)
+        conn.close()
+        self.assertEqual(count, 0)
+
+    def test_repair_queue_dry_run_on_empty_returns_zero(self) -> None:
+        """repair_queue dry_run on empty DB returns 0."""
+        conn, cur = _make_db()
+        count = repair_queue(cur, stale_minutes=15, dry_run=True)
+        conn.close()
+        self.assertEqual(count, 0)
+
+    def test_enqueue_missing_on_empty_missing_list(self) -> None:
+        """enqueue_missing with an empty missing list inserts nothing."""
+        conn, cur = _make_db()
+        inserted, revived = enqueue_missing(cur, [], max_enqueue=100, dry_run=False)
+        conn.close()
+        self.assertEqual(inserted, 0)
+        self.assertEqual(revived, 0)
+
+    def test_fetch_existing_paths_on_empty_sessions(self) -> None:
+        """fetch_existing_session_paths on an empty sessions table returns empty set."""
+        conn, cur = _make_db()
+        result = fetch_existing_session_paths(cur)
+        conn.close()
+        self.assertEqual(result, set())
+
+    def test_collect_session_files_both_roots_nonexistent(self) -> None:
+        """collect_local_session_files returns empty list when both roots don't exist."""
+        result = collect_local_session_files(
+            Path("/nonexistent/codex_root_xyz"),
+            Path("/nonexistent/claude_root_xyz"),
+            include_subagents=False,
+        )
+        self.assertEqual(result, [])
+
+    def test_collect_session_files_empty_existing_dirs(self) -> None:
+        """collect_local_session_files returns empty list for existing but empty dirs."""
+        with tempfile.TemporaryDirectory() as tmp:
+            codex_root = Path(tmp) / "codex"
+            claude_root = Path(tmp) / "claude"
+            codex_root.mkdir()
+            claude_root.mkdir()
+            result = collect_local_session_files(codex_root, claude_root, include_subagents=False)
+        self.assertEqual(result, [])
+
+
+class TestCorruptedIndexEntries(unittest.TestCase):
+    """Edge cases: corrupted / malformed DB entries."""
+
+    def test_fetch_existing_session_paths_with_none_values_filtered(self) -> None:
+        """fetch_existing_session_paths excludes NULL session_file_path entries."""
+        conn, cur = _make_db()
+        cur.execute("INSERT INTO sessions (id, session_file_path) VALUES (?, ?)", ("s-null", None))
+        cur.execute("INSERT INTO sessions (id, session_file_path) VALUES (?, ?)", ("s-valid", "/path/to/file.jsonl"))
+        result = fetch_existing_session_paths(cur)
+        conn.close()
+        self.assertNotIn(None, result)
+        self.assertIn("/path/to/file.jsonl", result)
+
+    def test_enqueue_missing_with_path_containing_special_chars(self) -> None:
+        """enqueue_missing handles paths with special characters without crashing."""
+        conn, cur = _make_db()
+        special_path = Path("/tmp/session with spaces & symbols !@#$.jsonl")
+        missing = [("codex", special_path, "special-session")]
+        inserted, revived = enqueue_missing(cur, missing, max_enqueue=10, dry_run=False)
+        conn.commit()
+        self.assertEqual(inserted, 1)
+        row = cur.execute("SELECT payload FROM jobs").fetchone()
+        conn.close()
+        payload = json.loads(row[0])
+        self.assertEqual(payload["session_file_path"], str(special_path))
+
+    def test_enqueue_missing_with_unicode_session_id(self) -> None:
+        """enqueue_missing handles session IDs with Unicode characters."""
+        conn, cur = _make_db()
+        unicode_sid = "会话-边缘案例-2026"
+        missing = [("claude", Path(f"/tmp/{unicode_sid}.jsonl"), unicode_sid)]
+        inserted, revived = enqueue_missing(cur, missing, max_enqueue=10, dry_run=False)
+        conn.commit()
+        self.assertEqual(inserted, 1)
+        row = cur.execute("SELECT payload FROM jobs").fetchone()
+        conn.close()
+        payload = json.loads(row[0])
+        self.assertEqual(payload["session_id"], unicode_sid)
+
+    def test_enqueue_missing_payload_source_event_field(self) -> None:
+        """enqueue_missing includes source_event=manual_full_backfill in payload."""
+        conn, cur = _make_db()
+        missing = [("codex", Path("/tmp/s.jsonl"), "s")]
+        enqueue_missing(cur, missing, max_enqueue=10, dry_run=False)
+        conn.commit()
+        row = cur.execute("SELECT payload FROM jobs").fetchone()
+        conn.close()
+        payload = json.loads(row[0])
+        self.assertEqual(payload["source_event"], "manual_full_backfill")
+
+    def test_repair_queue_with_null_locked_until(self) -> None:
+        """repair_queue treats NULL locked_until as stale when updated_at is old."""
+        conn, cur = _make_db()
+        cur.execute(
+            """INSERT INTO jobs (id, kind, dedupe_key, payload, status, updated_at, locked_until)
+               VALUES ('j-null-lock', 'session_process', 'key:null', '{}', 'processing',
+                       '1970-01-01 00:00:00', NULL)"""
+        )
+        conn.commit()
+        count = repair_queue(cur, stale_minutes=15, dry_run=False)
+        row = cur.execute("SELECT status FROM jobs WHERE id='j-null-lock'").fetchone()
+        conn.close()
+        self.assertGreaterEqual(count, 1)
+        self.assertEqual(row[0], "queued")
+
+    def test_repair_queue_releases_locked_until_in_past(self) -> None:
+        """repair_queue releases jobs whose locked_until has already expired."""
+        conn, cur = _make_db()
+        cur.execute(
+            """INSERT INTO jobs (id, kind, dedupe_key, payload, status, updated_at, locked_until)
+               VALUES ('j-expired', 'session_process', 'key:expired', '{}', 'processing',
+                       datetime('now'), datetime('now', '-1 hour'))"""
+        )
+        conn.commit()
+        count = repair_queue(cur, stale_minutes=15, dry_run=False)
+        row = cur.execute("SELECT status FROM jobs WHERE id='j-expired'").fetchone()
+        conn.close()
+        self.assertGreaterEqual(count, 1)
+        self.assertEqual(row[0], "queued")
+
+
+class TestConcurrentMaintenanceOperations(unittest.TestCase):
+    """Edge cases: concurrent and re-entrant maintenance calls."""
+
+    def _create_temp_db(self) -> Path:
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+            tmp_name = tmp.name
+        conn = sqlite3.connect(tmp_name)
+        conn.executescript(_DDL)
+        conn.close()
+        return Path(tmp_name)
+
+    def test_enqueue_missing_idempotent_on_second_call(self) -> None:
+        """Running enqueue_missing twice on the same sessions does not double-insert."""
+        conn, cur = _make_db()
+        missing = [("codex", Path("/tmp/sess1.jsonl"), "sess1")]
+        inserted1, _ = enqueue_missing(cur, missing, max_enqueue=10, dry_run=False)
+        conn.commit()
+        # Second call — job already exists as 'queued' → should be skipped (not inserted/revived)
+        inserted2, revived2 = enqueue_missing(cur, missing, max_enqueue=10, dry_run=False)
+        conn.commit()
+        count = cur.execute("SELECT count(*) FROM jobs").fetchone()[0]
+        conn.close()
+        self.assertEqual(inserted1, 1)
+        self.assertEqual(inserted2, 0)
+        self.assertEqual(revived2, 0)
+        self.assertEqual(count, 1)
+
+    def test_repair_queue_called_twice_is_idempotent(self) -> None:
+        """Calling repair_queue twice releases stale jobs only once (second call returns 0)."""
+        conn, cur = _make_db()
+        cur.execute(
+            """INSERT INTO jobs (id, kind, dedupe_key, payload, status, updated_at, locked_until)
+               VALUES ('j-stale2', 'session_process', 'key:stale2', '{}', 'processing',
+                       '1970-01-01 00:00:00', NULL)"""
+        )
+        conn.commit()
+        count1 = repair_queue(cur, stale_minutes=15, dry_run=False)
+        conn.commit()
+        count2 = repair_queue(cur, stale_minutes=15, dry_run=False)
+        conn.close()
+        self.assertGreaterEqual(count1, 1)
+        self.assertEqual(count2, 0)  # second call: no more 'processing' stale jobs
+
+    def test_enqueue_missing_with_large_batch(self) -> None:
+        """enqueue_missing handles a large batch (1000 items) without error."""
+        conn, cur = _make_db()
+        missing = [("codex", Path(f"/tmp/s{i}.jsonl"), f"s{i}") for i in range(1000)]
+        inserted, revived = enqueue_missing(cur, missing, max_enqueue=1000, dry_run=False)
+        conn.commit()
+        count = cur.execute("SELECT count(*) FROM jobs").fetchone()[0]
+        conn.close()
+        self.assertEqual(inserted, 1000)
+        self.assertEqual(count, 1000)
+
+    def test_main_repair_and_enqueue_together(self) -> None:
+        """Running both --repair-queue and --enqueue-missing together returns 0."""
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = self._create_temp_db()
+            codex_root = Path(tmp) / "codex"
+            codex_root.mkdir()
+            (codex_root / "sess.jsonl").write_text("{}", encoding="utf-8")
+            try:
+                result = context_maintenance.main([
+                    "--db", str(db_path),
+                    "--repair-queue",
+                    "--enqueue-missing",
+                    "--codex-root", str(codex_root),
+                    "--claude-root", str(Path(tmp) / "no_claude"),
+                ])
+            finally:
+                db_path.unlink(missing_ok=True)
+        self.assertEqual(result, 0)
+
+    def test_main_commit_path_writes_to_db(self) -> None:
+        """Running main() without --dry-run actually commits inserts to the DB."""
+        with tempfile.TemporaryDirectory() as tmp:
+            codex_root = Path(tmp) / "codex"
+            codex_root.mkdir()
+            (codex_root / "newfile.jsonl").write_text("{}", encoding="utf-8")
+            db_path = self._create_temp_db()
+            try:
+                result = context_maintenance.main([
+                    "--db", str(db_path),
+                    "--enqueue-missing",
+                    "--codex-root", str(codex_root),
+                    "--claude-root", str(Path(tmp) / "no_claude"),
+                ])
+                # Verify the job was actually committed
+                conn = sqlite3.connect(str(db_path))
+                count = conn.execute("SELECT count(*) FROM jobs").fetchone()[0]
+                conn.close()
+            finally:
+                db_path.unlink(missing_ok=True)
+        self.assertEqual(result, 0)
+        self.assertEqual(count, 1)
+
+    def test_main_dry_run_does_not_commit(self) -> None:
+        """Running main() with --dry-run does NOT commit inserts to the DB."""
+        with tempfile.TemporaryDirectory() as tmp:
+            codex_root = Path(tmp) / "codex"
+            codex_root.mkdir()
+            (codex_root / "drysess.jsonl").write_text("{}", encoding="utf-8")
+            db_path = self._create_temp_db()
+            try:
+                result = context_maintenance.main([
+                    "--db", str(db_path),
+                    "--enqueue-missing",
+                    "--dry-run",
+                    "--codex-root", str(codex_root),
+                    "--claude-root", str(Path(tmp) / "no_claude"),
+                ])
+                conn = sqlite3.connect(str(db_path))
+                count = conn.execute("SELECT count(*) FROM jobs").fetchone()[0]
+                conn.close()
+            finally:
+                db_path.unlink(missing_ok=True)
+        self.assertEqual(result, 0)
+        self.assertEqual(count, 0)
+
+    def test_negative_max_enqueue_inserts_nothing(self) -> None:
+        """enqueue_missing with negative max_enqueue inserts nothing (max clamps to 0)."""
+        conn, cur = _make_db()
+        missing = [("codex", Path("/tmp/s.jsonl"), "s")]
+        inserted, revived = enqueue_missing(cur, missing, max_enqueue=-5, dry_run=False)
+        count = cur.execute("SELECT count(*) FROM jobs").fetchone()[0]
+        conn.close()
+        self.assertEqual(inserted, 0)
+        self.assertEqual(revived, 0)
+        self.assertEqual(count, 0)
+
+
 if __name__ == "__main__":
     unittest.main()

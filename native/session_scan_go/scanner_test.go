@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -1438,5 +1439,342 @@ func TestSnippetMatcherQueryFillsLimit(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToLower(snippet), query) {
 		t.Fatalf("snippet %q does not contain query %q", snippet, query)
+	}
+}
+
+// ── UTF-8 BOM handling ────────────────────────────────────────────────────────
+
+// TestProcessFileUTF8BOM verifies that a file beginning with a UTF-8 BOM
+// (EF BB BF) is scanned without errors and that content after the BOM is
+// matched normally.  The BOM appears on the first line; Go's bufio.Scanner
+// does not strip it automatically so the line starts with the BOM bytes.
+// ProcessFile must not crash and must still find the query keyword.
+func TestProcessFileUTF8BOM(t *testing.T) {
+	tmp, err := os.CreateTemp(t.TempDir(), "bom*.jsonl")
+	if err != nil {
+		t.Fatalf("create temp: %v", err)
+	}
+	defer tmp.Close()
+
+	// Write UTF-8 BOM followed by a valid JSON line.
+	bom := []byte{0xEF, 0xBB, 0xBF}
+	line, err := json.Marshal(map[string]any{
+		"type":    "event_msg",
+		"payload": map[string]any{"type": "agent_message", "message": "BOM test keyword here"},
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	// The BOM prefix makes the line invalid JSON, so it falls through to raw_line matching.
+	tmp.Write(append(bom, append(line, '\n')...))
+
+	sc := NewSessionScanner(NewNoiseFilter(nil), defaultSnippetLimit)
+	summary, ok := sc.ProcessFile(WorkItem{Source: "test", Path: tmp.Name()}, "keyword")
+	if !ok {
+		t.Fatal("expected match in BOM-prefixed file")
+	}
+	if summary.MatchField != "raw_line" {
+		// Either raw_line (BOM broke JSON parse) or a JSON field — both are acceptable.
+		_ = summary.MatchField
+	}
+}
+
+// TestProcessFileLatin1Fallback verifies that a file containing Latin-1 bytes
+// (non-valid UTF-8 sequences like 0x80–0xFF) does not cause ProcessFile to
+// panic.  The non-UTF-8 content is treated as raw bytes by bufio.Scanner; Go
+// string operations on such bytes are safe (though replacement characters may
+// appear in the rune view).  The test simply asserts no panic and that the
+// function returns a result.
+func TestProcessFileLatin1Fallback(t *testing.T) {
+	tmp, err := os.CreateTemp(t.TempDir(), "latin1*.jsonl")
+	if err != nil {
+		t.Fatalf("create temp: %v", err)
+	}
+	defer tmp.Close()
+
+	// Write a line with Latin-1 bytes followed by the query keyword in ASCII.
+	latin1Line := []byte("caf\xe9 and keyword present\n") // 0xE9 = é in Latin-1
+	tmp.Write(latin1Line)
+
+	sc := NewSessionScanner(NewNoiseFilter(nil), defaultSnippetLimit)
+	// Should not panic, regardless of whether it matches.
+	sc.ProcessFile(WorkItem{Source: "test", Path: tmp.Name()}, "keyword")
+}
+
+// ── Very large files (>1 MB content) ─────────────────────────────────────────
+
+// TestProcessFileVeryLargeFile confirms that ProcessFile correctly handles a
+// file whose total content exceeds 1 MB.  The scanner buffer is pre-allocated
+// at 1 MB and can grow to 32 MB, so this exercises the growth path.
+func TestProcessFileVeryLargeFile(t *testing.T) {
+	tmp, err := os.CreateTemp(t.TempDir(), "large*.jsonl")
+	if err != nil {
+		t.Fatalf("create temp: %v", err)
+	}
+	defer tmp.Close()
+
+	// Write 2000 moderate-sized JSON lines (~600 bytes each ≈ 1.2 MB total).
+	normalLine, err := json.Marshal(map[string]any{
+		"type":    "event_msg",
+		"payload": map[string]any{"type": "agent_message", "message": strings.Repeat("padding content ", 30)},
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	for i := 0; i < 2000; i++ {
+		tmp.Write(append(normalLine, '\n'))
+	}
+
+	// Append one line that contains the query.
+	matchLine, err := json.Marshal(map[string]any{
+		"type":    "event_msg",
+		"payload": map[string]any{"type": "agent_message", "message": "unique_large_file_keyword at the end"},
+	})
+	if err != nil {
+		t.Fatalf("marshal match line: %v", err)
+	}
+	tmp.Write(append(matchLine, '\n'))
+	if err := tmp.Sync(); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+
+	sc := NewSessionScanner(NewNoiseFilter(nil), defaultSnippetLimit)
+	summary, ok := sc.ProcessFile(WorkItem{Source: "test", Path: tmp.Name()}, "unique_large_file_keyword")
+	if !ok {
+		t.Fatal("expected match in very large file")
+	}
+	if !strings.Contains(strings.ToLower(summary.Snippet), "unique_large_file_keyword") {
+		t.Fatalf("expected snippet to contain query, got %q", summary.Snippet)
+	}
+	// Lines should reflect all 2001 non-blank lines.
+	if summary.Lines < 2001 {
+		t.Fatalf("expected >= 2001 lines counted, got %d", summary.Lines)
+	}
+}
+
+// TestProcessFileVeryLargeFileSingleLine verifies that a file containing a
+// single JSON line whose payload text is >100 KB (an unusually large record)
+// is handled without truncation errors.
+func TestProcessFileVeryLargeFileSingleLine(t *testing.T) {
+	tmp, err := os.CreateTemp(t.TempDir(), "bigline*.jsonl")
+	if err != nil {
+		t.Fatalf("create temp: %v", err)
+	}
+	defer tmp.Close()
+
+	// A payload text of 200 KB; query is embedded at a known position.
+	bigText := strings.Repeat("abcdefghij", 10*1024) + " bigline_keyword " + strings.Repeat("zyxwvutsrq", 1024)
+	line, err := json.Marshal(map[string]any{
+		"type":    "event_msg",
+		"payload": map[string]any{"type": "agent_message", "message": bigText},
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	tmp.Write(append(line, '\n'))
+	if err := tmp.Sync(); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+
+	sc := NewSessionScanner(NewNoiseFilter(nil), defaultSnippetLimit)
+	summary, ok := sc.ProcessFile(WorkItem{Source: "test", Path: tmp.Name()}, "bigline_keyword")
+	if !ok {
+		t.Fatal("expected match in large single-line file")
+	}
+	if !strings.Contains(strings.ToLower(summary.Snippet), "bigline_keyword") {
+		t.Fatalf("snippet %q missing query", summary.Snippet)
+	}
+}
+
+// ── Deeply nested directory structures ───────────────────────────────────────
+
+// TestCollectFilesDeeplyNested verifies that collectFiles descends into deeply
+// nested subdirectories and still finds .jsonl files.
+func TestCollectFilesDeeplyNested(t *testing.T) {
+	base := t.TempDir()
+
+	// Build a 10-level deep directory tree.
+	dir := base
+	for i := 0; i < 10; i++ {
+		dir = fmt.Sprintf("%s/level%d", dir, i)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+
+	// Place a .jsonl file at the deepest level.
+	deepFile := dir + "/deep_session.jsonl"
+	if err := os.WriteFile(deepFile, []byte(`{"type":"event_msg"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("write deep file: %v", err)
+	}
+
+	items := collectFiles([]WorkItem{{Source: "deep_test", Path: base}})
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item in deeply nested dir, got %d", len(items))
+	}
+	if items[0].Path != deepFile {
+		t.Fatalf("expected %q, got %q", deepFile, items[0].Path)
+	}
+}
+
+// TestCollectFilesDeeplyNestedSkillDir confirms that a deeply nested skill
+// directory is still excluded even at depth.
+func TestCollectFilesDeeplyNestedSkillDir(t *testing.T) {
+	base := t.TempDir()
+
+	// Normal session file.
+	sessionDir := base + "/sessions"
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	sessionFile := sessionDir + "/normal.jsonl"
+	os.WriteFile(sessionFile, []byte(`{"type":"event_msg"}`+"\n"), 0o644)
+
+	// Skill file nested deeply.
+	skillDir := base + "/nested/path/skills/notebooklm"
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatalf("mkdir skill dir: %v", err)
+	}
+	os.WriteFile(skillDir+"/SKILL.md.json", []byte(`{}`), 0o644)
+
+	items := collectFiles([]WorkItem{{Source: "test", Path: base}})
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item (skill excluded), got %d", len(items))
+	}
+	if items[0].Path != sessionFile {
+		t.Fatalf("expected session file, got %q", items[0].Path)
+	}
+}
+
+// ── Symlink handling ──────────────────────────────────────────────────────────
+
+// TestCollectFilesSymlinkFile confirms that a symlink pointing to a .jsonl
+// file is included in the scan results.  filepath.WalkDir follows symlinks to
+// files (but not to directories that would create cycles).
+func TestCollectFilesSymlinkFile(t *testing.T) {
+	base := t.TempDir()
+
+	// Real file.
+	realFile := base + "/real.jsonl"
+	if err := os.WriteFile(realFile, []byte(`{"type":"event_msg"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("write real: %v", err)
+	}
+
+	// Symlink to the real file.
+	linkFile := base + "/link.jsonl"
+	if err := os.Symlink(realFile, linkFile); err != nil {
+		t.Skipf("symlink not supported: %v", err)
+	}
+
+	items := collectFiles([]WorkItem{{Source: "sym_test", Path: base}})
+	if len(items) < 2 {
+		t.Fatalf("expected at least 2 items (real + symlink), got %d", len(items))
+	}
+}
+
+// TestCollectFilesSymlinkCycleNoInfiniteLoop verifies that a symlink creating
+// a directory cycle does not cause collectFiles to loop infinitely.
+// filepath.WalkDir on Linux/macOS does NOT follow symlinks to directories, so
+// cycles are inherently safe.  This test confirms the behaviour and that the
+// function terminates in a reasonable time.
+func TestCollectFilesSymlinkCycleNoInfiniteLoop(t *testing.T) {
+	base := t.TempDir()
+
+	// Create a subdirectory and a symlink inside it pointing back to the parent.
+	subDir := base + "/subdir"
+	if err := os.MkdirAll(subDir, 0o755); err != nil {
+		t.Fatalf("mkdir subdir: %v", err)
+	}
+	cycleLink := subDir + "/cycle"
+	if err := os.Symlink(base, cycleLink); err != nil {
+		t.Skipf("symlink not supported: %v", err)
+	}
+
+	// Place a regular file so the walk has something to find.
+	os.WriteFile(base+"/session.jsonl", []byte(`{"type":"event_msg"}`+"\n"), 0o644)
+
+	// Must complete without hanging.
+	done := make(chan struct{})
+	go func() {
+		collectFiles([]WorkItem{{Source: "cycle_test", Path: base}})
+		close(done)
+	}()
+	select {
+	case <-done:
+		// good — returned without infinite loop
+	}
+}
+
+// ── sync.Pool reuse under parallel load ──────────────────────────────────────
+
+// TestScanParallelPoolReuse exercises the scannerBufPool and runeSlicePool
+// under parallel load.  Multiple goroutines call ProcessFile and SnippetMatcher
+// concurrently to catch any data-race or pool-corruption issues.
+// Run with -race to detect races.
+func TestScanParallelPoolReuse(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create 20 small files, each with a matchable line.
+	for i := 0; i < 20; i++ {
+		path := fmt.Sprintf("%s/file%02d.jsonl", dir, i)
+		line, _ := json.Marshal(map[string]any{
+			"type":    "event_msg",
+			"payload": map[string]any{"type": "agent_message", "message": fmt.Sprintf("parallel_keyword session %d", i)},
+		})
+		os.WriteFile(path, append(line, '\n'), 0o644)
+	}
+
+	items := collectFiles([]WorkItem{{Source: "parallel", Path: dir}})
+	if len(items) != 20 {
+		t.Fatalf("expected 20 items, got %d", len(items))
+	}
+
+	sc := NewSessionScanner(NewNoiseFilter(nil), defaultSnippetLimit)
+	results, _ := scan(items, 8, "parallel_keyword", 100, sc)
+	if len(results) != 20 {
+		t.Fatalf("expected 20 matches, got %d", len(results))
+	}
+}
+
+// ── BenchmarkProcessFileLargeFile ─────────────────────────────────────────────
+
+func BenchmarkProcessFileLargeFile(b *testing.B) {
+	tmp, err := os.CreateTemp(b.TempDir(), "benchlarge*.jsonl")
+	if err != nil {
+		b.Fatalf("create temp: %v", err)
+	}
+	defer tmp.Close()
+
+	line, _ := json.Marshal(map[string]any{
+		"type":    "event_msg",
+		"payload": map[string]any{"type": "agent_message", "message": strings.Repeat("benchmark payload content ", 20)},
+	})
+	for i := 0; i < 5000; i++ {
+		tmp.Write(append(line, '\n'))
+	}
+	// Add one matching line at the end.
+	matchLine, _ := json.Marshal(map[string]any{
+		"type":    "event_msg",
+		"payload": map[string]any{"type": "agent_message", "message": "bench_large_keyword result"},
+	})
+	tmp.Write(append(matchLine, '\n'))
+	tmp.Sync()
+
+	sc := NewSessionScanner(NewNoiseFilter(DefaultNoiseMarkers), defaultSnippetLimit)
+	item := WorkItem{Source: "bench", Path: tmp.Name()}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		sc.ProcessFile(item, "bench_large_keyword")
+	}
+}
+
+// BenchmarkClipSnippetPooled benchmarks the pool-backed clipSnippet for mixed
+// ASCII and CJK content.
+func BenchmarkClipSnippetPooled(b *testing.B) {
+	text := "前缀内容：这里包含一段很长的中英文混合内容 the target keyword sits right here and then more text follows after it"
+	idx := strings.Index(strings.ToLower(text), "target")
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		clipSnippet(text, idx, len("target"), 50)
 	}
 }

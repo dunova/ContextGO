@@ -726,5 +726,248 @@ class TestMain(unittest.TestCase):
         self.assertEqual(cli_path.parent, qg_path.parent)
 
 
+# ---------------------------------------------------------------------------
+# Edge-case Tests: R6 hardening
+# ---------------------------------------------------------------------------
+
+
+class TestWriteNativeFixtureMissingDir(unittest.TestCase):
+    """Edge cases for _write_native_fixture with missing / unusual directories."""
+
+    def test_creates_directory_structure_when_missing(self) -> None:
+        """_write_native_fixture creates nested codex date dirs from scratch."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "deep" / "nested" / "root"
+            # root does NOT exist yet — _write_native_fixture must create it
+            codex_root, claude_root = context_smoke._write_native_fixture(root, "edge-marker")
+            self.assertTrue(codex_root.exists())
+            self.assertTrue(claude_root.exists())
+            jsonl_files = list(codex_root.rglob("*.jsonl"))
+            self.assertEqual(len(jsonl_files), 1)
+
+    def test_fixture_content_valid_jsonl_lines(self) -> None:
+        """Every line written by _write_native_fixture is valid JSON."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            codex_root, _ = context_smoke._write_native_fixture(Path(tmpdir), "marker-xyz")
+            files = list(codex_root.rglob("*.jsonl"))
+            lines = files[0].read_text(encoding="utf-8").splitlines()
+            self.assertGreater(len(lines), 0)
+            for line in lines:
+                try:
+                    json.loads(line)
+                except json.JSONDecodeError as exc:
+                    self.fail(f"Invalid JSON line in fixture: {exc!r}: {line!r}")
+
+    def test_fixture_marker_present_in_file(self) -> None:
+        """The marker string appears in the written fixture file."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            marker = "unique-edge-case-marker-99"
+            codex_root, _ = context_smoke._write_native_fixture(Path(tmpdir), marker)
+            files = list(codex_root.rglob("*.jsonl"))
+            content = files[0].read_text(encoding="utf-8")
+            self.assertIn(marker, content)
+
+    def test_fixture_unicode_marker(self) -> None:
+        """Unicode markers (CJK) are written correctly to the fixture file."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            marker = "测试标记-unicode-边缘案例"
+            codex_root, _ = context_smoke._write_native_fixture(Path(tmpdir), marker)
+            files = list(codex_root.rglob("*.jsonl"))
+            content = files[0].read_text(encoding="utf-8")
+            self.assertIn(marker, content)
+
+
+class TestRunCmdEdgeCases(unittest.TestCase):
+    """Edge cases for run_cmd: timeout, encoding errors, empty output."""
+
+    def test_empty_stdout_and_stderr_returns_empty_strings(self) -> None:
+        """run_cmd returns empty strings when both stdout and stderr are empty."""
+        with mock.patch("context_smoke.subprocess.run") as mock_run:
+            mock_run.return_value = mock.Mock(stdout=b"", stderr=b"", returncode=0)
+            rc, out, err = context_smoke.run_cmd(["echo"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(out, "")
+        self.assertEqual(err, "")
+
+    def test_non_utf8_bytes_decoded_with_replacement(self) -> None:
+        """run_cmd decodes non-UTF8 bytes using errors='replace' (no exception)."""
+        bad_bytes = b"hello \xff\xfe world"
+        with mock.patch("context_smoke.subprocess.run") as mock_run:
+            mock_run.return_value = mock.Mock(stdout=bad_bytes, stderr=b"", returncode=0)
+            rc, out, err = context_smoke.run_cmd(["cmd"])
+        self.assertEqual(rc, 0)
+        self.assertIn("hello", out)
+        # Replacement character should appear (or the bytes silently replaced)
+        self.assertIsInstance(out, str)
+
+    def test_env_merges_with_existing_os_environ(self) -> None:
+        """run_cmd merges custom env on top of os.environ, not replacing it entirely."""
+        import os
+
+        with mock.patch("context_smoke.subprocess.run") as mock_run:
+            mock_run.return_value = mock.Mock(stdout=b"", stderr=b"", returncode=0)
+            context_smoke.run_cmd(["cmd"], env={"CUSTOM_KEY": "custom_val"})
+            call_env = mock_run.call_args.kwargs["env"]
+        # os.environ keys should still be present
+        for key in list(os.environ.keys())[:3]:
+            self.assertIn(key, call_env)
+        self.assertEqual(call_env["CUSTOM_KEY"], "custom_val")
+
+    def test_none_stdout_handled_gracefully(self) -> None:
+        """run_cmd handles None stdout/stderr without raising AttributeError."""
+        with mock.patch("context_smoke.subprocess.run") as mock_run:
+            mock_run.return_value = mock.Mock(stdout=None, stderr=None, returncode=1)
+            rc, out, err = context_smoke.run_cmd(["cmd"])
+        self.assertEqual(rc, 1)
+        self.assertEqual(out, "")
+        self.assertEqual(err, "")
+
+
+class TestHealthcheckPermissionDenied(unittest.TestCase):
+    """Edge cases: permission denied when running healthcheck script."""
+
+    def test_healthcheck_returns_failure_on_permission_denied(self) -> None:
+        """test_healthcheck records failure when script exits with permission-denied rc."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            script = Path(tmpdir) / "context_healthcheck.sh"
+            script.write_text("#!/usr/bin/env bash\nexit 126\n", encoding="utf-8")
+            with mock.patch.object(context_smoke, "run_cmd", return_value=(126, "", "Permission denied")):
+                result = context_smoke.test_healthcheck(script)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["rc"], 126)
+
+    def test_healthcheck_script_with_empty_output(self) -> None:
+        """test_healthcheck with rc=0 but empty output is still reported as ok."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            script = Path(tmpdir) / "context_healthcheck.sh"
+            script.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+            with mock.patch.object(context_smoke, "run_cmd", return_value=(0, "", "")):
+                result = context_smoke.test_healthcheck(script)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["rc"], 0)
+
+    def test_healthcheck_truncates_long_stdout(self) -> None:
+        """test_healthcheck truncates stdout/stderr detail to 400 chars."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            script = Path(tmpdir) / "context_healthcheck.sh"
+            script.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+            long_output = "x" * 1000
+            with mock.patch.object(context_smoke, "run_cmd", return_value=(0, long_output, "")):
+                result = context_smoke.test_healthcheck(script)
+        self.assertTrue(result["ok"])
+        self.assertLessEqual(len(result["detail"]["stdout"]), 400)
+
+
+class TestNativeScanEdgeCases(unittest.TestCase):
+    """Edge cases for native scan: AGENTS.md filter, missing matches."""
+
+    def test_snippet_with_agents_md_instruction_marked_as_fail(self) -> None:
+        """A snippet containing '# AGENTS.md instructions' causes ok=False."""
+
+        def fake_run_cmd(args: list[str], timeout: int = 60, env: dict | None = None) -> tuple[int, str, str]:
+            if "health" in args:
+                payload = {"native_backends": {"available_backends": ["rust"]}}
+                return 0, json.dumps(payload), ""
+            query = args[10] if len(args) > 10 else "marker"
+            payload = {
+                "matches": [
+                    {
+                        "session_id": "native-fixture-session",
+                        # Contains the forbidden prefix — should cause ok=False
+                        "snippet": f"# AGENTS.md instructions for root {query}",
+                    }
+                ]
+            }
+            return 0, json.dumps(payload), ""
+
+        with mock.patch.object(context_smoke, "run_cmd", side_effect=fake_run_cmd):
+            result = context_smoke.test_native_scan_contract(Path("/tmp/context_cli.py"))
+
+        self.assertFalse(result["ok"])
+
+    def test_empty_matches_list_marks_backend_as_fail(self) -> None:
+        """An empty matches list in backend response marks that backend as failed."""
+
+        def fake_run_cmd(args: list[str], timeout: int = 60, env: dict | None = None) -> tuple[int, str, str]:
+            if "health" in args:
+                payload = {"native_backends": {"available_backends": ["go"]}}
+                return 0, json.dumps(payload), ""
+            return 0, json.dumps({"matches": []}), ""
+
+        with mock.patch.object(context_smoke, "run_cmd", side_effect=fake_run_cmd):
+            result = context_smoke.test_native_scan_contract(Path("/tmp/context_cli.py"))
+
+        self.assertFalse(result["ok"])
+        backend = result["detail"]["backends"][0]
+        self.assertEqual(backend["match_count"], 0)
+        self.assertFalse(backend["ok"])
+
+    def test_wrong_session_id_marks_backend_as_fail(self) -> None:
+        """A match with wrong session_id causes backend ok=False."""
+
+        def fake_run_cmd(args: list[str], timeout: int = 60, env: dict | None = None) -> tuple[int, str, str]:
+            if "health" in args:
+                payload = {"native_backends": {"available_backends": ["rust"]}}
+                return 0, json.dumps(payload), ""
+            query = args[10] if len(args) > 10 else "marker"
+            payload = {
+                "matches": [
+                    {
+                        "session_id": "wrong-session-id",
+                        "snippet": f"ContextGO native smoke marker {query} verified",
+                    }
+                ]
+            }
+            return 0, json.dumps(payload), ""
+
+        with mock.patch.object(context_smoke, "run_cmd", side_effect=fake_run_cmd):
+            result = context_smoke.test_native_scan_contract(Path("/tmp/context_cli.py"))
+
+        self.assertFalse(result["ok"])
+
+    def test_nonzero_rc_without_transient_error_marks_fail(self) -> None:
+        """Non-zero rc without 'resource temporarily unavailable' marks backend as failed."""
+
+        def fake_run_cmd(args: list[str], timeout: int = 60, env: dict | None = None) -> tuple[int, str, str]:
+            if "health" in args:
+                payload = {"native_backends": {"available_backends": ["rust"]}}
+                return 0, json.dumps(payload), ""
+            return 1, "", "fatal: unexpected error"
+
+        with mock.patch.object(context_smoke, "run_cmd", side_effect=fake_run_cmd):
+            result = context_smoke.test_native_scan_contract(Path("/tmp/context_cli.py"))
+
+        self.assertFalse(result["ok"])
+
+
+class TestSummarizeResultsEdgeCases(unittest.TestCase):
+    """Edge cases for summarize_results."""
+
+    def test_all_failed(self) -> None:
+        """summarize_results reports all tests failed."""
+        results = [
+            {"name": "a", "ok": False},
+            {"name": "b", "ok": False},
+            {"name": "c", "ok": False},
+        ]
+        summary = context_smoke.summarize_results(results)
+        self.assertEqual(summary["status"], "fail")
+        self.assertEqual(summary["failed"], 3)
+        self.assertEqual(sorted(summary["failed_names"]), ["a", "b", "c"])
+
+    def test_missing_ok_key_treated_as_fail(self) -> None:
+        """Items without an 'ok' key are treated as failed (falsy)."""
+        results = [{"name": "x"}]  # no 'ok' key
+        summary = context_smoke.summarize_results(results)
+        self.assertEqual(summary["status"], "fail")
+        self.assertEqual(summary["failed"], 1)
+
+    def test_result_with_ok_none_treated_as_fail(self) -> None:
+        """ok=None is falsy, so treated as failure."""
+        results = [{"name": "x", "ok": None}]
+        summary = context_smoke.summarize_results(results)
+        self.assertEqual(summary["status"], "fail")
+
+
 if __name__ == "__main__":
     unittest.main()

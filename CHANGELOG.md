@@ -15,6 +15,55 @@ _No unreleased changes._
 
 ---
 
+## [0.9.35] — 2026-03-27
+
+### Overview
+
+"轻稳快" (Lightweight, Stable, Fast) optimization release. 11-round AutoResearch cycle targeting the global memory system. CLI cold-start further reduced via deeper lazy imports, daemon memory bounded with chunked reads and cursor eviction, SQLite queries accelerated with PRAGMA tuning and secondary indexes, retry-on-busy resilience added to all database operations, and 151 new tests (including CJK/Unicode edge cases) push coverage from 97.9% to 98.1%.
+
+"轻稳快"优化版本。11轮AutoResearch循环针对全局记忆系统：CLI冷启动深度懒加载、daemon内存有界化(分块读取+cursor淘汰)、SQLite PRAGMA调优+二级索引加速、全数据库操作retry-on-busy韧性、151个新测试(含CJK/Unicode边缘用例)，覆盖率从97.9%提升至98.1%。
+
+### Added
+
+- 151 new tests across 5 new test files (test_coverage_boost_r10, test_context_smoke, test_memory_viewer, test_context_maintenance, test_session_index CJK)
+- SQLite retry helpers: `_retry_sqlite()`, `_retry_sqlite_many()`, `_retry_commit()` with exponential backoff (0.1/0.5/2s)
+- SQLite secondary indexes on `session_documents(source_type)`, `session_documents(session_id)`, `session_documents(file_mtime)`
+- Search result caching with TTL in both session_index and memory_index
+- Go scanner: `sync.Pool` for reusable buffers, 8 new edge-case tests (BOM, large files, symlinks, deep nesting)
+- Daemon: bounded `_TAIL_CHUNK_BYTES` (1MB) for chunked file reads
+- Daemon: cursor eviction policy (oldest third evicted when over `MAX_FILE_CURSORS`)
+
+### Changed
+
+- CLI: `json`, `datetime`, `types.ModuleType` imports deferred to point of use
+- SQLite PRAGMAs: `synchronous=NORMAL`, `cache_size=-8000` (8MB), `mmap_size=268435456` (256MB), `temp_store=MEMORY` on all connections
+- memory_index: `import_observations_payload()` uses `executemany()` for batch inserts
+- session_index: `sync_session_index()` uses batch upsert with `executemany()` and timing instrumentation
+- Daemon: glob cache uses generator for large result sets, avoiding full materialization
+- Daemon: `_tail_file()` reads binary and decodes, avoiding `UnicodeDecodeError` in file handle
+- Go scanner: pre-allocated rune slices, parallel directory walks with bounded goroutine pool
+- Test count: 1131 -> 1282, Coverage: 97.9% -> 98.1%
+
+### Fixed
+
+- Daemon `maybe_sync_index()` catches `sqlite3.OperationalError` (database locked) gracefully, retries next cycle
+- `MAX_PENDING_FILES` hard-capped at 50 to bound disk scan cost
+- Documentation: CONFIGURATION.md updated with new env vars (`TAIL_CHUNK_BYTES`, `PENDING_HARD_LIMIT`)
+
+### Performance
+
+- CLI cold-start: further reduced by deferring 3 stdlib imports
+- SQLite queries: secondary indexes reduce LIKE scan from full-table to index-assisted
+- SQLite writes: `synchronous=NORMAL` with WAL reduces fsync overhead ~50%
+- Memory index: batch inserts via `executemany()` reduce Python-SQLite round-trips
+- Session index: batch upserts and cached path normalization reduce sync time
+- Daemon: chunked reads cap peak memory during large file tailing
+
+### Stats / 统计
+- Tests: 1282 passed, Coverage: 98.1%, Go: all passed, ruff: clean, go vet: clean
+
+---
+
 ## [0.9.32] — 2026-03-27
 
 ### Overview
@@ -320,7 +369,12 @@ Foundational release of the local-first `contextgo` runtime. All context capture
 
 ---
 
-[Unreleased]: https://github.com/dunova/ContextGO/compare/v0.9.1...HEAD
+[Unreleased]: https://github.com/dunova/ContextGO/compare/v0.9.35...HEAD
+[0.9.35]: https://github.com/dunova/ContextGO/compare/v0.9.32...v0.9.35
+[0.9.32]: https://github.com/dunova/ContextGO/compare/v0.9.31...v0.9.32
+[0.9.31]: https://github.com/dunova/ContextGO/compare/v0.9.3...v0.9.31
+[0.9.3]: https://github.com/dunova/ContextGO/compare/v0.9.2...v0.9.3
+[0.9.2]: https://github.com/dunova/ContextGO/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/dunova/ContextGO/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/dunova/ContextGO/compare/v0.7.0...v0.9.0
 [0.7.0]: https://github.com/dunova/ContextGO/compare/v0.6.1...v0.7.0

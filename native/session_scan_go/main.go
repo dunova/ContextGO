@@ -141,18 +141,21 @@ func main() {
 
 // collectFiles walks each root directory and returns WorkItems for all .json
 // and .jsonl files, skipping skill directories.
+// filepath.WalkDir is used in preference to filepath.Walk because it passes
+// a lightweight os.DirEntry instead of a fully-populated os.FileInfo, avoiding
+// a stat(2) syscall per entry on most platforms.
 func collectFiles(roots []WorkItem) []WorkItem {
 	items := make([]WorkItem, 0, 64)
 	for _, root := range roots {
 		if _, err := os.Stat(root.Path); err != nil {
 			continue
 		}
-		walkErr := filepath.Walk(root.Path, func(path string, info os.FileInfo, err error) error {
+		walkErr := filepath.WalkDir(root.Path, func(path string, d os.DirEntry, err error) error {
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "warning: skipping %s: %v\n", path, err)
 				return nil
 			}
-			if info == nil || info.IsDir() {
+			if d == nil || d.IsDir() {
 				return nil
 			}
 			if shouldSkipPath(path) {

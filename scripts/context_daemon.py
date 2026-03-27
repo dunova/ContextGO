@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import atexit
 import contextlib
+import gc
 import glob as _glob
 import hashlib
 import json
@@ -27,6 +28,7 @@ import os
 import random
 import re
 import signal
+import sqlite3
 import stat
 import subprocess
 import sys
@@ -182,11 +184,15 @@ LOOP_JITTER_SEC: float = _cfg_float("LOOP_JITTER_SEC", default=0.7, minimum=0.0)
 INDEX_SYNC_MIN_INTERVAL_SEC: int = _cfg_int("INDEX_SYNC_MIN_INTERVAL_SEC", default=20, minimum=5)
 
 # Capacity limits / HTTP timeouts
-MAX_TRACKED_SESSIONS: int = _cfg_int("MAX_TRACKED_SESSIONS", default=240)
+MAX_TRACKED_SESSIONS: int = _cfg_int("MAX_TRACKED_SESSIONS", default=500)
 MAX_FILE_CURSORS: int = _cfg_int("MAX_FILE_CURSORS", default=800)
 SESSION_TTL_SEC: int = _cfg_int("SESSION_TTL_SEC", default=7200)
 MAX_MESSAGES_PER_SESSION: int = _cfg_int("MAX_MESSAGES_PER_SESSION", default=500)
-MAX_PENDING_FILES: int = max(200, _cfg_int("MAX_PENDING_FILES", default=5000))
+# Hard cap on pending-queue files to bound disk and scan cost.
+_PENDING_HARD_LIMIT: int = 50
+MAX_PENDING_FILES: int = min(_PENDING_HARD_LIMIT, max(1, _cfg_int("MAX_PENDING_FILES", default=50)))
+# Maximum bytes read per _tail_file call to avoid large single-read allocations.
+_TAIL_CHUNK_BYTES: int = _cfg_int("TAIL_CHUNK_BYTES", default=1 * 1024 * 1024, minimum=65536)
 EXPORT_HTTP_TIMEOUT_SEC: int = _cfg_int("EXPORT_HTTP_TIMEOUT_SEC", default=30, minimum=5)
 PENDING_HTTP_TIMEOUT_SEC: int = _cfg_int("PENDING_HTTP_TIMEOUT_SEC", default=15, minimum=5)
 
@@ -423,10 +429,15 @@ def _refresh_glob_cache(
         return cached, last_refresh, False
 
     try:
-        results = [Path(p) for p in _glob.glob(pattern, recursive=True)]
-        if len(results) > max_results:
-            results.sort(key=lambda p: p.stat().st_mtime if p.exists() else 0.0, reverse=True)
-            results = results[:max_results]
+        raw = _glob.glob(pattern, recursive=True)
+        if len(raw) > max_results:
+            results = sorted(
+                (Path(p) for p in raw),
+                key=lambda p: p.stat().st_mtime if p.exists() else 0.0,
+                reverse=True,
+            )[:max_results]
+        else:
+            results = [Path(p) for p in raw]
         logger.debug("%s cache refreshed: %d entries.", error_context, len(results))
         return results, now, False
     except OSError as exc:
@@ -574,6 +585,15 @@ class SessionTracker:
         except OSError:
             return
         self.file_cursors[cursor_key] = (inode, offset)
+        # Enforce cursor map upper bound on every write so the periodic
+        # cleanup_cursors() call is a safety net, not the primary guard.
+        if len(self.file_cursors) > MAX_FILE_CURSORS:
+            # Evict the lexicographically oldest third of keys (cheap, stable).
+            keys = sorted(self.file_cursors.keys())
+            remove_n = max(1, len(keys) // 3)
+            for k in keys[:remove_n]:
+                del self.file_cursors[k]
+            logger.debug("_set_cursor: evicted %d stale cursors (cap=%d).", remove_n, MAX_FILE_CURSORS)
 
     @staticmethod
     def _is_safe_source(path: Path) -> bool:
@@ -596,7 +616,11 @@ class SessionTracker:
     # Shared incremental-read helper
 
     def _tail_file(self, cursor_key: str, path: Path, error_label: str) -> tuple[int, list[str]] | None:
-        """Return (cur_size, new_lines) if the file has grown, else None."""
+        """Return (cur_size, new_lines) if the file has grown, else None.
+
+        Reads at most _TAIL_CHUNK_BYTES of new content per call to avoid
+        loading very large files entirely into memory in one shot.
+        """
         if not self._is_safe_source(path):
             return None
         try:
@@ -608,12 +632,17 @@ class SessionTracker:
             self._set_cursor(cursor_key, path, cur_size)
             return None
         try:
-            with path.open(encoding="utf-8", errors="replace") as fh:
+            read_end = min(cur_size, last + _TAIL_CHUNK_BYTES)
+            with path.open("rb") as fh:
                 fh.seek(last)
-                lines = list(fh)
-            self._set_cursor(cursor_key, path, cur_size)
+                raw = fh.read(read_end - last)
+            # Decode with replacement and split into lines; preserve trailing
+            # newline behaviour consistent with the previous list(fh) approach.
+            text = raw.decode("utf-8", errors="replace")
+            lines = text.splitlines(keepends=True)
+            self._set_cursor(cursor_key, path, last + len(raw))
             return cur_size, lines
-        except (OSError, UnicodeDecodeError) as exc:
+        except OSError as exc:
             self._error_count += 1
             logger.error("%s: %s", error_label, exc)
             return None
@@ -711,8 +740,11 @@ class SessionTracker:
                 ptype = payload.get("type")
                 text = ""
                 if ptype == "message":
-                    texts = [c.get("text", "") for c in payload.get("content", []) if c.get("type") == "output_text"]
-                    text = "\n".join(t for t in texts if t)
+                    text = "\n".join(
+                        c.get("text", "")
+                        for c in payload.get("content", [])
+                        if c.get("type") == "output_text" and c.get("text", "")
+                    )
                 elif ptype == "reasoning":
                     text = payload.get("text", "")
                 text = self._sanitize_text(text)
@@ -784,14 +816,14 @@ class SessionTracker:
                 if isinstance(content, str):
                     text = content.strip()
                 elif isinstance(content, list):
-                    parts = [
-                        block.get("text", "").strip()
+                    text = " ".join(
+                        block["text"].strip()
                         for block in content
                         if isinstance(block, dict)
                         and block.get("type") == "text"
                         and isinstance(block.get("text"), str)
-                    ]
-                    text = " ".join(p for p in parts if p)
+                        and block["text"].strip()
+                    )
                 elif isinstance(content, dict):
                     raw_text = content.get("text", "")
                     text = raw_text.strip() if isinstance(raw_text, str) else ""
@@ -923,13 +955,18 @@ class SessionTracker:
 
         # Evict oldest unseen entries when the tracking map exceeds its limit.
         if len(self.antigravity_sessions) > MAX_ANTIGRAVITY_SESSIONS:
-            stale = [
-                (sid, meta.get("mtime", 0.0)) for sid, meta in self.antigravity_sessions.items() if sid not in seen_sids
-            ]
-            stale.sort(key=lambda x: x[1])
+            stale = sorted(
+                (
+                    (sid, meta.get("mtime", 0.0))
+                    for sid, meta in self.antigravity_sessions.items()
+                    if sid not in seen_sids
+                ),
+                key=lambda x: x[1],
+            )
             remove_n = len(self.antigravity_sessions) - MAX_ANTIGRAVITY_SESSIONS
             for sid, _ in stale[:remove_n]:
                 self.antigravity_sessions.pop(sid, None)
+            gc.collect()
 
     # Parsing helpers
 
@@ -949,13 +986,12 @@ class SessionTracker:
         # Fallback for structured part arrays (e.g., OpenCode format).
         parts = data.get("parts")
         if isinstance(parts, list):
-            text_parts: list[str] = [
-                part.get("text", "").strip()
+            text_parts = [
+                t
                 for part in parts
-                if isinstance(part, dict)
-                and part.get("type") == "text"
-                and isinstance(part.get("text"), str)
-                and part.get("text", "").strip()
+                if isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str)
+                for t in (part["text"].strip(),)
+                if t
             ]
             if text_parts:
                 prefix = data.get("input")
@@ -1043,13 +1079,14 @@ class SessionTracker:
         self._last_activity_ts = now
 
         if len(sess["messages"]) > MAX_MESSAGES_PER_SESSION:
-            sess["messages"] = sess["messages"][-200:]
+            del sess["messages"][:-200]
 
     def _evict_oldest(self) -> None:
         """Remove the oldest session from the tracking map to make room."""
-        exported = [(k, v) for k, v in self.sessions.items() if v["exported"]]
-        if exported:
-            del self.sessions[min(exported, key=lambda x: x[1]["last_seen"])[0]]
+        exported = ((k, v) for k, v in self.sessions.items() if v["exported"])
+        oldest_exported = min(exported, key=lambda x: x[1]["last_seen"], default=None)
+        if oldest_exported is not None:
+            del self.sessions[oldest_exported[0]]
             return
         del self.sessions[min(self.sessions, key=lambda k: self.sessions[k]["last_seen"])]
 
@@ -1077,6 +1114,8 @@ class SessionTracker:
 
         for sid in to_remove:
             del self.sessions[sid]
+        if to_remove:
+            gc.collect()
 
     def cleanup_cursors(self) -> None:
         """Evict the oldest third of cursor entries when the map is over-full."""
@@ -1087,6 +1126,7 @@ class SessionTracker:
         for key in keys[:remove_n]:
             del self.file_cursors[key]
         logger.info("Evicted %d stale file cursors.", remove_n)
+        gc.collect()
 
     def maybe_sync_index(self, force: bool = False) -> None:
         """Flush the memory index to storage if dirty and the min interval has elapsed."""
@@ -1099,6 +1139,10 @@ class SessionTracker:
             sync_index_from_storage()
             self._index_dirty = False
             self._last_index_sync = now
+        except sqlite3.OperationalError as exc:
+            # Graceful degradation: SQLite busy/locked — will retry on next cycle.
+            self._error_count += 1
+            logger.warning("sync_index_from_storage sqlite busy: %s", exc)
         except OSError as exc:
             self._error_count += 1
             logger.warning("sync_index_from_storage failed: %s", exc)
@@ -1245,15 +1289,21 @@ class SessionTracker:
                 break
 
     def _prune_pending_files(self) -> None:
-        """Remove the oldest pending files when the queue exceeds MAX_PENDING_FILES."""
+        """Remove the oldest pending files when the queue exceeds MAX_PENDING_FILES.
+
+        The hard cap (_PENDING_HARD_LIMIT) is enforced unconditionally so that
+        the pending directory never grows without bound even if MAX_PENDING_FILES
+        was raised via env-var.
+        """
         try:
             files = [p for p in PENDING_DIR.glob("*.md") if p.is_file()]
         except OSError:
             return
-        if len(files) < MAX_PENDING_FILES:
+        limit = min(MAX_PENDING_FILES, _PENDING_HARD_LIMIT)
+        if len(files) <= limit:
             return
         files.sort(key=self._pending_mtime)
-        for old in files[: len(files) - MAX_PENDING_FILES + 1]:
+        for old in files[: len(files) - limit]:
             with contextlib.suppress(OSError):
                 old.unlink(missing_ok=True)
 
@@ -1340,7 +1390,7 @@ class SessionTracker:
                 pass
 
         pending_count = sum(1 for _ in PENDING_DIR.glob("*.md")) if PENDING_DIR.exists() else 0
-        active_sources = list(self.active_jsonl.keys()) + list(self.active_shell.keys())
+        active_sources = [*self.active_jsonl.keys(), *self.active_shell.keys()]
 
         logger.info(
             "heartbeat sessions=%d cursors=%d exported=%d errors=%d pending=%d mem_mb=%.1f active_sources=%s",

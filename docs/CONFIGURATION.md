@@ -120,11 +120,12 @@ These variables tune polling frequency, memory limits, and error handling. The d
 
 | Variable | Default | Description / 说明 |
 |---|---|---|
-| `CONTEXTGO_MAX_TRACKED_SESSIONS` | `240` | Maximum in-memory tracked sessions. / 内存中最大跟踪会话数。 |
+| `CONTEXTGO_MAX_TRACKED_SESSIONS` | `500` | Maximum in-memory tracked sessions. / 内存中最大跟踪会话数。 |
 | `CONTEXTGO_MAX_FILE_CURSORS` | `800` | Maximum file byte-offset cursors in memory. / 内存中最大文件游标数。 |
 | `CONTEXTGO_SESSION_TTL_SEC` | `7200` | TTL for inactive sessions in memory (seconds). / 内存中不活跃会话的生存时间（秒）。 |
 | `CONTEXTGO_MAX_MESSAGES_PER_SESSION` | `500` | Maximum messages extracted per session. / 每个会话最大提取消息数。 |
-| `CONTEXTGO_MAX_PENDING_FILES` | `5000` | Maximum pending outbound files queued in memory. / 内存中待发送文件队列上限。 |
+| `CONTEXTGO_MAX_PENDING_FILES` | `50` | Maximum pending outbound files queued in memory (hard-capped at 50). / 内存中待发送文件队列上限（硬上限为 50）。 |
+| `CONTEXTGO_TAIL_CHUNK_BYTES` | `1048576` | Maximum bytes read per `_tail_file` call (minimum 65536). Reduce if memory is constrained. / 每次 `_tail_file` 调用的最大读取字节数（最小 65536）。 |
 | `CONTEXTGO_TRANSCRIPTS_LOOKBACK_DAYS` | `7` | Days to look back when scanning Claude transcript files. / 扫描 Claude 转录文件的回溯天数。 |
 
 ### Codex session scanning / Codex 会话扫描
@@ -166,6 +167,8 @@ These variables tune polling frequency, memory limits, and error handling. The d
 | `CONTEXTGO_INDEX_BATCH_SIZE` | `100` | Rows per SQLite transaction batch during sync. Increase for bulk imports; decrease if memory is constrained. Minimum: 10. / 同步时每次 SQLite 事务的批量行数。批量导入时可增大，内存受限时可减小，最小值为 10。 |
 | `CONTEXTGO_EXPERIMENTAL_SEARCH_BACKEND` | _(empty)_ | Enable an experimental search backend by name. / 按名称启用实验性搜索后端。 |
 | `CONTEXTGO_EXPERIMENTAL_SYNC_BACKEND` | _(empty)_ | Enable an experimental sync backend by name. / 按名称启用实验性同步后端。 |
+| `CONTEXTGO_SESSION_SEARCH_CACHE_TTL` | `5` | TTL (seconds) for the session index search result cache. Set to `0` to disable. / 会话索引搜索结果缓存的生存时间（秒），设为 `0` 可禁用缓存。 |
+| `MEMORY_INDEX_SEARCH_CACHE_TTL` | `5` | TTL (seconds) for the memory index search result cache. Set to `0` to disable. / 记忆索引搜索结果缓存的生存时间（秒），设为 `0` 可禁用缓存。 |
 
 ---
 
@@ -173,8 +176,8 @@ These variables tune polling frequency, memory limits, and error handling. The d
 
 | Variable | Default | Description / 说明 |
 |---|---|---|
-| `CONTEXTGO_LOCAL_SCAN_MAX_FILES` | `300` | Maximum local files scanned per `context_cli` search invocation. / 每次 `context_cli` 搜索调用扫描的最大本地文件数。 |
-| `CONTEXTGO_LOCAL_SCAN_READ_BYTES` | `120000` | Maximum bytes read per file during local scanning. / 本地扫描时每个文件的最大读取字节数。 |
+| `CONTEXT_CLI_LOCAL_SCAN_MAX_FILES` | `300` | Maximum local files scanned per `context_cli` search invocation. Alias `CONTEXTGO_LOCAL_SCAN_MAX_FILES` is also accepted. / 每次 `context_cli` 搜索调用扫描的最大本地文件数，也接受别名 `CONTEXTGO_LOCAL_SCAN_MAX_FILES`。 |
+| `CONTEXT_CLI_LOCAL_SCAN_READ_BYTES` | `120000` | Maximum bytes read per file during local scanning. Alias `CONTEXTGO_LOCAL_SCAN_READ_BYTES` is also accepted. / 本地扫描时每个文件的最大读取字节数，也接受别名 `CONTEXTGO_LOCAL_SCAN_READ_BYTES`。 |
 
 ---
 
@@ -209,6 +212,7 @@ Remote sync is disabled by default. Enable only when a ContextGO sync server is 
 | Variable | Default | Description / 说明 |
 |---|---|---|
 | `CONTEXTGO_INSTALL_ROOT` | `~/.local/share/contextgo` | Root directory for installed ContextGO scripts. The installed smoke test reads this path to locate `context_cli.py` and `e2e_quality_gate.py`. / 已安装脚本的根目录，installed smoke 测试通过此路径定位脚本。 |
+| `CONTEXTGO_SMOKE_SKIP_SANDBOX` | `0` | Set to `1` to skip sandbox isolation in the installed runtime smoke test. / 设为 `1` 可跳过 installed runtime smoke 测试的沙箱隔离。 |
 | `PATCH_LAUNCHD` | `1` | Patch the launchd plist during install (macOS only). / 安装时更新 launchd plist（仅 macOS）。 |
 | `RELOAD_LAUNCHD` | `1` | Reload the launchd service after patching (macOS only). / 更新后重载 launchd 服务（仅 macOS）。 |
 
