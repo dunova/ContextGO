@@ -74,33 +74,40 @@ REMOTE_SYNC_URL: str = _cfg_str("REMOTE_URL", default="http://127.0.0.1:8090/api
 REMOTE_RESOURCE_ENDPOINT: str = f"{REMOTE_SYNC_URL.rstrip('/')}/resources"
 REMOTE_HISTORY_TARGET: str = "contextgo://resources/shared/history"
 
-# Security: non-localhost URLs must use HTTPS to prevent MITM attacks.
-_remote_host = REMOTE_SYNC_URL.split("://", 1)[-1].split("/", 1)[0].split(":")[0]
-if _remote_host not in ("127.0.0.1", "localhost", "::1") and not REMOTE_SYNC_URL.startswith("https://"):
-    print(
-        f"FATAL: CONTEXTGO_REMOTE_URL must use https:// for non-localhost targets. Got: {REMOTE_SYNC_URL}",
-        file=sys.stderr,
-    )
-    raise SystemExit(1)
-
 # Storage paths
 
 LOCAL_STORAGE_ROOT: Path = storage_root().expanduser()
 
-# Security: storage root must be owned by the current user; symlinks are warned.
-if LOCAL_STORAGE_ROOT.exists():
-    _storage_stat = LOCAL_STORAGE_ROOT.lstat()
-    if _storage_stat.st_uid != os.getuid():
+
+def _validate_startup() -> None:
+    """Validate security invariants at daemon startup (not at import time).
+
+    Called from ``main()`` to avoid ``SystemExit`` side-effects when the module
+    is merely imported (e.g. by tests).
+    """
+    # Security: non-localhost URLs must use HTTPS to prevent MITM attacks.
+    remote_host = REMOTE_SYNC_URL.split("://", 1)[-1].split("/", 1)[0].split(":")[0]
+    if remote_host not in ("127.0.0.1", "localhost", "::1") and not REMOTE_SYNC_URL.startswith("https://"):
         print(
-            f"FATAL: {LOCAL_STORAGE_ROOT} is not owned by current user (uid={_storage_stat.st_uid})",
+            f"FATAL: CONTEXTGO_REMOTE_URL must use https:// for non-localhost targets. Got: {REMOTE_SYNC_URL}",
             file=sys.stderr,
         )
         raise SystemExit(1)
-    if LOCAL_STORAGE_ROOT.is_symlink():
-        print(
-            f"WARNING: {LOCAL_STORAGE_ROOT} is a symlink — following cautiously",
-            file=sys.stderr,
-        )
+
+    # Security: storage root must be owned by the current user.
+    if LOCAL_STORAGE_ROOT.exists():
+        _storage_stat = LOCAL_STORAGE_ROOT.lstat()
+        if hasattr(os, "getuid") and _storage_stat.st_uid != os.getuid():
+            print(
+                f"FATAL: {LOCAL_STORAGE_ROOT} is not owned by current user (uid={_storage_stat.st_uid})",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+        if LOCAL_STORAGE_ROOT.is_symlink():
+            print(
+                f"WARNING: {LOCAL_STORAGE_ROOT} is a symlink — following cautiously",
+                file=sys.stderr,
+            )
 
 PENDING_DIR: Path = LOCAL_STORAGE_ROOT / "resources" / "shared" / "history" / ".pending"
 LOG_DIR: Path = LOCAL_STORAGE_ROOT / "logs"
@@ -112,26 +119,13 @@ _DAEMON_LOCK_NAME = "contextgo_daemon.lock"
 _LOGGER_NAME = "contextgo.daemon"
 _LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 
-# Logging setup (runs once at import; logger is module-scoped)
-
-LOG_DIR.mkdir(parents=True, exist_ok=True)
-with contextlib.suppress(OSError):
-    os.chmod(LOG_DIR, 0o700)
+# Logging — logger object is available at import time but file handler is
+# added lazily in ``_setup_logging()`` to avoid creating directories on import.
 
 logger = logging.getLogger(_LOGGER_NAME)
 logger.setLevel(logging.INFO)
 
-# Rotating file handler — 5 MB x 3 backups
-_rfh = logging.handlers.RotatingFileHandler(
-    LOG_DIR / _DAEMON_LOG_NAME,
-    maxBytes=5 * 1024 * 1024,
-    backupCount=3,
-    encoding="utf-8",
-)
-_rfh.setFormatter(logging.Formatter(_LOG_FORMAT))
-logger.addHandler(_rfh)
-
-# Console handler — warnings and above only (keeps launchd/systemd journals clean)
+# Console handler — always present (warnings and above only).
 _sh = logging.StreamHandler(sys.stderr)
 _sh.setLevel(logging.WARNING)
 _sh.setFormatter(logging.Formatter(_LOG_FORMAT))
@@ -139,6 +133,26 @@ logger.addHandler(_sh)
 
 LOCK_FILE: Path = LOG_DIR / _DAEMON_LOCK_NAME
 _LOCK_FD: int | None = None
+_logging_initialized: bool = False
+
+
+def _setup_logging() -> None:
+    """Create log directory and attach the rotating file handler (once)."""
+    global _logging_initialized  # noqa: PLW0603
+    if _logging_initialized:
+        return
+    _logging_initialized = True
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    with contextlib.suppress(OSError):
+        os.chmod(LOG_DIR, 0o700)
+    rfh = logging.handlers.RotatingFileHandler(
+        LOG_DIR / _DAEMON_LOG_NAME,
+        maxBytes=5 * 1024 * 1024,
+        backupCount=3,
+        encoding="utf-8",
+    )
+    rfh.setFormatter(logging.Formatter(_LOG_FORMAT))
+    logger.addHandler(rfh)
 
 # Optional httpx (remote-sync transport)
 
@@ -571,7 +585,7 @@ class SessionTracker:
         if path.is_symlink():
             logger.warning("Skipping symlinked source: %s", path)
             return False
-        if st.st_uid != os.getuid():
+        if hasattr(os, "getuid") and st.st_uid != os.getuid():
             logger.warning("Skipping source not owned by current user: %s (uid=%d)", path, st.st_uid)
             return False
         if not stat.S_ISREG(st.st_mode):
@@ -1345,6 +1359,8 @@ class SessionTracker:
 
 def main() -> None:
     """Start the ContextGO sync daemon."""
+    _validate_startup()
+    _setup_logging()
     os.umask(0o077)
 
     if not _acquire_single_instance_lock():

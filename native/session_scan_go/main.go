@@ -211,14 +211,14 @@ func scan(items []WorkItem, threads int, query string, limit int, scanner *Sessi
 		close(resultCh)
 	}()
 
-	cap := len(items)
-	if limit*2 < cap {
-		cap = limit * 2
+	initialCap := len(items)
+	if limit*2 < initialCap {
+		initialCap = limit * 2
 	}
-	if cap < 16 {
-		cap = 16
+	if initialCap < 16 {
+		initialCap = 16
 	}
-	results := make([]SessionSummary, 0, cap)
+	results := make([]SessionSummary, 0, initialCap)
 	for result := range resultCh {
 		results = append(results, result)
 	}

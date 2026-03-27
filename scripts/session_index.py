@@ -685,9 +685,10 @@ def ensure_session_db() -> Path:
 
 @contextmanager
 def _open_db(db_path: Path) -> Generator[sqlite3.Connection, None, None]:
-    """Open a SQLite connection and ensure it is closed on exit."""
-    conn = sqlite3.connect(db_path)
+    """Open a SQLite connection with WAL mode and ensure it is closed on exit."""
+    conn = sqlite3.connect(db_path, timeout=30)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
     try:
         yield conn
     finally:
@@ -1153,15 +1154,24 @@ def _search_rows(query: str, limit: int = 10, literal: bool = False) -> list[dic
 # Public API
 
 
+_VALID_SEARCH_TYPES = frozenset({"all", "codex", "claude", "shell", "event", "session", "turn", "content"})
+
+
 def format_search_results(
     query: str,
     *,
-    search_type: str = "all",  # noqa: ARG001  (reserved for future filtering)
+    search_type: str = "all",
     limit: int = 10,
     literal: bool = False,
 ) -> str:
-    """Format session search results as a human-readable multi-line string."""
+    """Format session search results as a human-readable multi-line string.
+
+    *search_type* filters results by source type (e.g. ``"codex"``, ``"claude"``).
+    ``"all"`` returns every source type.
+    """
     results = _search_rows(query, limit=limit, literal=literal)
+    if search_type != "all" and search_type in _VALID_SEARCH_TYPES:
+        results = [r for r in results if r.get("source_type", "") == search_type]
     if not results:
         return "No matches found in local session index."
 

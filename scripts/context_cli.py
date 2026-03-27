@@ -137,6 +137,11 @@ def _save_local_memory(title: str, content: str, tags: list[str]) -> str:
     if not ENABLE_REMOTE_MEMORY_HTTP:
         return f"Saved locally: {path}"
 
+    # Security: non-localhost remote URLs must use HTTPS.
+    _remote_host = REMOTE_MEMORY_URL.split("://", 1)[-1].split("/", 1)[0].split(":")[0]
+    if _remote_host not in ("127.0.0.1", "localhost", "::1") and not REMOTE_MEMORY_URL.startswith("https://"):
+        return f"Saved locally: {path} (remote indexing skipped: HTTPS required for non-localhost URL)"
+
     import urllib.request  # deferred: only needed for remote HTTP sync
 
     payload = json.dumps(

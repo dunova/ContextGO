@@ -275,6 +275,9 @@ _SECURITY_HEADERS: list[tuple[str, str]] = [
 ]
 
 # CSP for the HTML viewer page.
+# Note: unsafe-inline is required because the HTML template embeds <style> and
+# <script> blocks directly.  This is acceptable because the viewer binds to
+# 127.0.0.1 only and requires an auth token on every request.
 _CSP_HTML = (
     "default-src 'self'; "
     "script-src 'unsafe-inline'; "

@@ -178,9 +178,10 @@ def _to_epoch(ts: str, fallback: int) -> int:
 
 @contextmanager
 def _open_db(db_path: Path) -> Generator[sqlite3.Connection, None, None]:
-    """Open a SQLite connection with Row factory and ensure it is closed."""
-    conn = sqlite3.connect(db_path)
+    """Open a SQLite connection with WAL mode and ensure it is closed."""
+    conn = sqlite3.connect(db_path, timeout=30)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
     try:
         yield conn
     finally:
