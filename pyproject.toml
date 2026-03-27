@@ -57,6 +57,7 @@ dev = [
     "pytest-cov>=5.0",
     "ruff==0.15.7",
     "bandit>=1.8",
+    "safety>=3.3",
     "mypy>=1.10",
 ]
 all = ["contextgo[remote,dev]"]
@@ -111,6 +112,9 @@ ignore = [
 ]
 unfixable = ["B"]  # keep B-violations visible; fix manually
 
+[tool.ruff.lint.per-file-ignores]
+"scripts/test_*.py" = ["SIM117", "SIM105", "E741"]
+
 [tool.ruff.lint.isort]
 known-first-party = ["scripts"]
 
@@ -130,7 +134,7 @@ addopts = [
     "--cov=scripts",
     "--cov-report=term-missing",
     "--cov-report=xml",
-    "--cov-fail-under=45",
+    "--cov-fail-under=50",
     "-v",
 ]
 

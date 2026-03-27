@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import atexit
 import contextlib
+import glob as _glob
 import hashlib
 import json
 import logging
@@ -151,60 +152,31 @@ except ImportError:
     logger.warning("httpx not installed; remote sync disabled.")
 
 # Poll / timing configuration
-
-# Night-mode: during off-hours (default 23:00-07:00) the daemon expands its
-# sleep interval to NIGHT_POLL_INTERVAL_SEC when no sessions are pending export.
+# Night-mode: off-hours (23:00-07:00) sleep is expanded to NIGHT_POLL_INTERVAL_SEC.
 NIGHT_POLL_START_HOUR: int = _cfg_int("NIGHT_POLL_START_HOUR", default=23)
 NIGHT_POLL_END_HOUR: int = _cfg_int("NIGHT_POLL_END_HOUR", default=7)
 NIGHT_POLL_INTERVAL_SEC: int = _cfg_int("NIGHT_POLL_INTERVAL_SEC", default=600, minimum=1)
-
-# Normal poll: base interval between full scan cycles.
 POLL_INTERVAL_SEC: int = _cfg_int("POLL_INTERVAL_SEC", default=30, minimum=1)
-
-# Fast poll: used when sessions are near the idle-export deadline or when
-# pending files are waiting for remote retry.
 FAST_POLL_INTERVAL_SEC: int = _cfg_int("FAST_POLL_INTERVAL_SEC", default=3, minimum=1)
-
-# Upper bound on the sleep interval when no work is pending.
 IDLE_SLEEP_CAP_SEC: int = max(POLL_INTERVAL_SEC, _cfg_int("IDLE_SLEEP_CAP_SEC", default=180))
-
-# A session is eligible for export after this many seconds of inactivity.
 IDLE_TIMEOUT_SEC: int = _cfg_int("IDLE_TIMEOUT_SEC", default=300)
-
-# How often to attempt flushing the pending-export queue.
 PENDING_RETRY_INTERVAL_SEC: int = _cfg_int("PENDING_RETRY_INTERVAL_SEC", default=60, minimum=5)
-
-# Periodic heartbeat log interval.
 HEARTBEAT_INTERVAL_SEC: int = _cfg_int("HEARTBEAT_INTERVAL_SEC", default=600, minimum=10)
-
-# Maximum wall time allocated to one scan cycle before skipping lower-priority
-# monitors (Codex sessions, Claude transcripts, Antigravity).
 CYCLE_BUDGET_SEC: int = _cfg_int("CYCLE_BUDGET_SEC", default=8, minimum=1)
-
-# Exponential back-off ceiling for error recovery.
 ERROR_BACKOFF_MAX_SEC: int = _cfg_int("ERROR_BACKOFF_MAX_SEC", default=30, minimum=2)
-
-# Random jitter added to each sleep interval to desynchronise co-located daemons.
 LOOP_JITTER_SEC: float = _cfg_float("LOOP_JITTER_SEC", default=0.7, minimum=0.0)
-
-# Minimum gap between consecutive index-sync calls.
 INDEX_SYNC_MIN_INTERVAL_SEC: int = _cfg_int("INDEX_SYNC_MIN_INTERVAL_SEC", default=20, minimum=5)
 
-# Capacity limits
-
+# Capacity limits / HTTP timeouts
 MAX_TRACKED_SESSIONS: int = _cfg_int("MAX_TRACKED_SESSIONS", default=240)
 MAX_FILE_CURSORS: int = _cfg_int("MAX_FILE_CURSORS", default=800)
 SESSION_TTL_SEC: int = _cfg_int("SESSION_TTL_SEC", default=7200)
 MAX_MESSAGES_PER_SESSION: int = _cfg_int("MAX_MESSAGES_PER_SESSION", default=500)
 MAX_PENDING_FILES: int = max(200, _cfg_int("MAX_PENDING_FILES", default=5000))
-
-# HTTP timeouts
-
 EXPORT_HTTP_TIMEOUT_SEC: int = _cfg_int("EXPORT_HTTP_TIMEOUT_SEC", default=30, minimum=5)
 PENDING_HTTP_TIMEOUT_SEC: int = _cfg_int("PENDING_HTTP_TIMEOUT_SEC", default=15, minimum=5)
 
 # Feature flags
-
 ENABLE_REMOTE_SYNC: bool = _cfg_bool("ENABLE_REMOTE_SYNC", default=False)
 ENABLE_SHELL_MONITOR: bool = _cfg_bool("ENABLE_SHELL_MONITOR", default=True)
 ENABLE_CLAUDE_HISTORY_MONITOR: bool = _cfg_bool("ENABLE_CLAUDE_HISTORY_MONITOR", default=True)
@@ -216,57 +188,40 @@ ENABLE_CLAUDE_TRANSCRIPTS_MONITOR: bool = _cfg_bool("ENABLE_CLAUDE_TRANSCRIPTS_M
 ENABLE_ANTIGRAVITY_MONITOR: bool = _cfg_bool("ENABLE_ANTIGRAVITY_MONITOR", default=True)
 
 # Antigravity (Gemini) configuration
-
+# ANTIGRAVITY_INGEST_MODE: "final_only" (wait for quiet) or "live" (export on every change).
 ANTIGRAVITY_BRAIN: Path = Path.home() / ".gemini" / "antigravity" / "brain"
-
-# "final_only": wait for the document to be quiet before exporting.
-# "live": export on every detected change.
 _raw_ingest_mode = _cfg_str("ANTIGRAVITY_INGEST_MODE", default="final_only").strip().lower()
 ANTIGRAVITY_INGEST_MODE: str = _raw_ingest_mode if _raw_ingest_mode in {"final_only", "live"} else "final_only"
-
-# How long (seconds) a brain doc must be unchanged before final_only export.
 ANTIGRAVITY_QUIET_SEC: int = max(30, _cfg_int("ANTIGRAVITY_QUIET_SEC", default=180))
-
-# Minimum document size (bytes) to be worth exporting.
 ANTIGRAVITY_MIN_DOC_BYTES: int = max(120, _cfg_int("ANTIGRAVITY_MIN_DOC_BYTES", default=400))
-
-# Skip Antigravity polling while the Gemini language server is active
-# (prevents contention on macOS ARM devices).
+# Skip Antigravity polling while the Gemini language server is active (macOS ARM).
 SUSPEND_ANTIGRAVITY_WHEN_BUSY: bool = _cfg_bool("SUSPEND_ANTIGRAVITY_WHEN_BUSY", default=True)
 ANTIGRAVITY_BUSY_LS_THRESHOLD: int = max(2, _cfg_int("ANTIGRAVITY_BUSY_LS_THRESHOLD", default=3))
-
 MAX_ANTIGRAVITY_SESSIONS: int = max(100, _cfg_int("MAX_ANTIGRAVITY_SESSIONS", default=500))
 ANTIGRAVITY_SCAN_INTERVAL_SEC: int = max(15, _cfg_int("ANTIGRAVITY_SCAN_INTERVAL_SEC", default=120))
 MAX_ANTIGRAVITY_DIRS_PER_SCAN: int = max(50, _cfg_int("MAX_ANTIGRAVITY_DIRS_PER_SCAN", default=400))
 
-# Codex session configuration
-
+# Codex session / Claude transcript configuration
 CODEX_SESSIONS: Path = Path.home() / ".codex" / "sessions"
 CODEX_SESSION_SCAN_INTERVAL_SEC: int = max(10, _cfg_int("CODEX_SESSION_SCAN_INTERVAL_SEC", default=90))
 MAX_CODEX_SESSION_FILES_PER_SCAN: int = max(100, _cfg_int("MAX_CODEX_SESSION_FILES_PER_SCAN", default=1200))
-
-# Claude transcript configuration
-
 CLAUDE_TRANSCRIPTS_DIR: Path = Path.home() / ".claude" / "transcripts"
-
-# On first startup, skip transcript files older than this many days to avoid
-# replaying months of history into the index.
+# Skip transcript files older than this many days on first startup (avoid history replay).
 CLAUDE_TRANSCRIPTS_LOOKBACK_DAYS: int = _cfg_int("TRANSCRIPTS_LOOKBACK_DAYS", default=7)
-
-CLAUDE_TRANSCRIPT_SCAN_INTERVAL_SEC: int = max(
-    30,
-    _cfg_int("CLAUDE_TRANSCRIPT_SCAN_INTERVAL_SEC", default=180),
-)
-MAX_CLAUDE_TRANSCRIPT_FILES_PER_POLL: int = max(
-    50,
-    _cfg_int("MAX_CLAUDE_TRANSCRIPT_FILES_PER_POLL", default=500),
-)
+CLAUDE_TRANSCRIPT_SCAN_INTERVAL_SEC: int = max(30, _cfg_int("CLAUDE_TRANSCRIPT_SCAN_INTERVAL_SEC", default=180))
+MAX_CLAUDE_TRANSCRIPT_FILES_PER_POLL: int = max(50, _cfg_int("MAX_CLAUDE_TRANSCRIPT_FILES_PER_POLL", default=500))
 
 # JSONL and shell source definitions
-
 # Each entry maps a logical source name to one or more candidate Path objects.
 # The first existing path wins; sources are re-evaluated every 120 seconds.
 _HOME = Path.home()
+_IPT_KEYS = ["input", "prompt", "text"]  # common sid/text keys for generic tools
+_SID_IPT = ["session_id", "sessionId", "id"]
+
+
+def _ipt_src(path: Path) -> dict[str, Any]:
+    return {"path": path, "sid_keys": _SID_IPT, "text_keys": _IPT_KEYS}
+
 
 JSONL_SOURCES: dict[str, list[dict[str, Any]]] = {
     "claude_code": [
@@ -284,33 +239,13 @@ JSONL_SOURCES: dict[str, list[dict[str, Any]]] = {
         },
     ],
     "opencode": [
-        {
-            "path": _HOME / ".local" / "state" / "opencode" / "prompt-history.jsonl",
-            "sid_keys": ["session_id", "sessionId", "id"],
-            "text_keys": ["input", "prompt", "text"],
-        },
-        {
-            "path": _HOME / ".config" / "opencode" / "prompt-history.jsonl",
-            "sid_keys": ["session_id", "sessionId", "id"],
-            "text_keys": ["input", "prompt", "text"],
-        },
-        {
-            "path": _HOME / ".opencode" / "prompt-history.jsonl",
-            "sid_keys": ["session_id", "sessionId", "id"],
-            "text_keys": ["input", "prompt", "text"],
-        },
+        _ipt_src(_HOME / ".local" / "state" / "opencode" / "prompt-history.jsonl"),
+        _ipt_src(_HOME / ".config" / "opencode" / "prompt-history.jsonl"),
+        _ipt_src(_HOME / ".opencode" / "prompt-history.jsonl"),
     ],
     "kilo": [
-        {
-            "path": _HOME / ".local" / "state" / "kilo" / "prompt-history.jsonl",
-            "sid_keys": ["session_id", "sessionId", "id"],
-            "text_keys": ["input", "prompt", "text"],
-        },
-        {
-            "path": _HOME / ".config" / "kilo" / "prompt-history.jsonl",
-            "sid_keys": ["session_id", "sessionId", "id"],
-            "text_keys": ["input", "prompt", "text"],
-        },
+        _ipt_src(_HOME / ".local" / "state" / "kilo" / "prompt-history.jsonl"),
+        _ipt_src(_HOME / ".config" / "kilo" / "prompt-history.jsonl"),
     ],
 }
 
@@ -351,11 +286,8 @@ _SECRET_REPLACEMENTS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\bghp_[A-Za-z0-9]{20,}\b"), "ghp_***"),
     (re.compile(r"\bgho_[A-Za-z0-9]{20,}\b"), "gho_***"),
     (re.compile(r"\bAIza[A-Za-z0-9_-]{20,}\b"), "AIza***"),
-    # Slack tokens
     (re.compile(r"\bxox[bprs]-[A-Za-z0-9\-]{10,}\b"), "xox?-***"),
-    # AWS access keys
     (re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{12,}\b"), "AKIA***"),
-    # PEM private key blocks
     (
         re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----"),
         "***PEM_KEY_REDACTED***",
@@ -403,12 +335,7 @@ def _release_single_instance_lock() -> None:
 
 
 def _acquire_single_instance_lock() -> bool:
-    """Atomically create the PID lock file.
-
-    If a stale lock is found (process no longer running), it is removed and
-    acquisition is retried once.  Returns False if another live instance
-    is already running.
-    """
+    """Atomically create the PID lock file; removes stale lock and retries once."""
     global _LOCK_FD
     LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
 
@@ -445,11 +372,7 @@ def _acquire_single_instance_lock() -> bool:
 
 
 def _count_antigravity_language_servers() -> int:
-    """Return the number of running Gemini language-server processes.
-
-    Used to decide whether to suspend Antigravity polling on busy macOS ARM
-    devices.  Returns 0 on any error.
-    """
+    """Return the number of running Gemini language-server processes (0 on error)."""
     try:
         proc = subprocess.run(
             ["pgrep", "-f", "language_server_macos_arm"],
@@ -474,30 +397,26 @@ def _refresh_glob_cache(
     interval_sec: int,
     cached: list[Path],
     error_context: str,
-    error_count_ref: list[int],
-) -> tuple[list[Path], float]:
+) -> tuple[list[Path], float, bool]:
     """Refresh a glob result list if the interval has elapsed.
 
-    Returns (file_list, new_last_refresh).  On OSError the previous cache is
-    preserved and the error counter is incremented.
+    Returns (file_list, new_last_refresh, had_error).  On OSError the previous
+    cache is preserved and had_error is True.
     """
     now = time.time()
     if cached and now - last_refresh < interval_sec:
-        return cached, last_refresh
+        return cached, last_refresh, False
 
     try:
-        import glob as _glob
-
         results = [Path(p) for p in _glob.glob(pattern, recursive=True)]
         if len(results) > max_results:
             results.sort(key=lambda p: p.stat().st_mtime if p.exists() else 0.0, reverse=True)
             results = results[:max_results]
         logger.debug("%s cache refreshed: %d entries.", error_context, len(results))
-        return results, now
+        return results, now, False
     except OSError as exc:
-        error_count_ref[0] += 1
         logger.error("glob %s: %s", error_context, exc)
-        return cached, last_refresh
+        return cached, last_refresh, True
 
 
 # SessionTracker
@@ -560,16 +479,10 @@ class SessionTracker:
 
         self.refresh_sources(force=True)
 
-    # ------------------------------------------------------------------
     # Source discovery
-    # ------------------------------------------------------------------
 
     def refresh_sources(self, force: bool = False) -> None:
-        """Re-scan the filesystem for enabled JSONL and shell source files.
-
-        The scan is skipped unless *force* is True or at least 120 seconds
-        have elapsed since the last refresh, keeping steady-state overhead low.
-        """
+        """Re-scan the filesystem for enabled JSONL and shell source files (throttled to 120s)."""
         now = time.time()
         if not force and now - self._last_source_refresh < 120:
             return
@@ -616,21 +529,14 @@ class SessionTracker:
                     logger.info("Source offline: %s", source_name)
                     del self.active_shell[source_name]
 
-    # ------------------------------------------------------------------
     # Cursor management
-    # ------------------------------------------------------------------
 
     def _cursor_key(self, kind: str, source_name: str, path: Path | str) -> str:
         digest = hashlib.sha256(str(path).encode("utf-8")).hexdigest()[:10]
         return f"{kind}:{source_name}:{digest}"
 
     def _get_cursor(self, cursor_key: str, path: Path) -> int:
-        """Return the current read offset for *path*.
-
-        Returns 0 when the file has been rotated (inode changed) or truncated.
-        Returns the current file size on first encounter, so we only process
-        new content appended after the daemon started.
-        """
+        """Return the current read offset for *path* (0 on rotation/truncation, size on first encounter)."""
         try:
             st = path.stat()
         except OSError:
@@ -656,10 +562,7 @@ class SessionTracker:
 
     @staticmethod
     def _is_safe_source(path: Path) -> bool:
-        """Return True only if *path* is a regular file owned by the current user.
-
-        Symlinked or foreign-owned files are skipped and a warning is logged.
-        """
+        """Return True if *path* is a regular file owned by the current user."""
         try:
             st = path.lstat()
         except OSError:
@@ -675,16 +578,10 @@ class SessionTracker:
             return False
         return True
 
-    # ------------------------------------------------------------------
     # Shared incremental-read helper
-    # ------------------------------------------------------------------
 
     def _tail_file(self, cursor_key: str, path: Path, error_label: str) -> tuple[int, list[str]] | None:
-        """Return (cur_size, new_lines) if the file has grown, else None.
-
-        Handles safety check, cursor lookup, file open, and error logging.
-        Returns None when the file is safe but unchanged, or on any error.
-        """
+        """Return (cur_size, new_lines) if the file has grown, else None."""
         if not self._is_safe_source(path):
             return None
         try:
@@ -706,9 +603,7 @@ class SessionTracker:
             logger.error("%s: %s", error_label, exc)
             return None
 
-    # ------------------------------------------------------------------
     # Polling — JSONL sources
-    # ------------------------------------------------------------------
 
     def poll_jsonl_sources(self) -> None:
         """Read new lines from all active JSONL history files."""
@@ -733,9 +628,7 @@ class SessionTracker:
                 if text:
                     self._upsert_session(sid, source_name, text, now)
 
-    # ------------------------------------------------------------------
     # Polling — shell history
-    # ------------------------------------------------------------------
 
     def poll_shell_sources(self) -> None:
         """Read new lines from active shell history files."""
@@ -754,9 +647,7 @@ class SessionTracker:
                     sid, text = parsed
                     self._upsert_session(sid, source_name, text, now)
 
-    # ------------------------------------------------------------------
     # Polling — Codex session files
-    # ------------------------------------------------------------------
 
     def poll_codex_sessions(self) -> None:
         """Tail Codex session JSONL files under ~/.codex/sessions/."""
@@ -764,17 +655,16 @@ class SessionTracker:
             return
 
         now = time.time()
-        error_ref = [self._error_count]
-        self._cached_codex_session_files, self._last_codex_scan = _refresh_glob_cache(
+        self._cached_codex_session_files, self._last_codex_scan, _err = _refresh_glob_cache(
             pattern=str(CODEX_SESSIONS / "**" / "*.jsonl"),
             max_results=MAX_CODEX_SESSION_FILES_PER_SCAN,
             last_refresh=self._last_codex_scan,
             interval_sec=CODEX_SESSION_SCAN_INTERVAL_SEC,
             cached=self._cached_codex_session_files,
             error_context="codex_sessions",
-            error_count_ref=error_ref,
         )
-        self._error_count = error_ref[0]
+        if _err:
+            self._error_count += 1
 
         for path in self._cached_codex_session_files:
             if not self._is_safe_source(path):
@@ -814,36 +704,26 @@ class SessionTracker:
                 if text:
                     self._upsert_session(path.name, "codex_session", text, now)
 
-    # ------------------------------------------------------------------
     # Polling — Claude transcript files
-    # ------------------------------------------------------------------
 
     def poll_claude_transcripts(self) -> None:
-        """Scan ~/.claude/transcripts/ses_*.jsonl for full AI conversation text.
-
-        Each file is one conversation session.  Only "user", "assistant", and
-        "human" message types are indexed; tool-use noise is discarded.
-
-        On first startup, files older than CLAUDE_TRANSCRIPTS_LOOKBACK_DAYS are
-        baselined at end-of-file to prevent a historical replay storm.
-        """
+        """Scan ~/.claude/transcripts/ses_*.jsonl; indexes user/assistant/human messages."""
         if not ENABLE_CLAUDE_TRANSCRIPTS_MONITOR or not CLAUDE_TRANSCRIPTS_DIR.is_dir():
             return
 
         now = time.time()
         lookback_cutoff = now - CLAUDE_TRANSCRIPTS_LOOKBACK_DAYS * 86400
 
-        error_ref = [self._error_count]
-        self._cached_claude_transcript_files, self._last_claude_transcript_scan = _refresh_glob_cache(
+        self._cached_claude_transcript_files, self._last_claude_transcript_scan, _err = _refresh_glob_cache(
             pattern=str(CLAUDE_TRANSCRIPTS_DIR / "**" / "ses_*.jsonl"),
             max_results=MAX_CLAUDE_TRANSCRIPT_FILES_PER_POLL,
             last_refresh=self._last_claude_transcript_scan,
             interval_sec=CLAUDE_TRANSCRIPT_SCAN_INTERVAL_SEC,
             cached=self._cached_claude_transcript_files,
             error_context="claude_transcripts",
-            error_count_ref=error_ref,
         )
-        self._error_count = error_ref[0]
+        if _err:
+            self._error_count += 1
 
         for path in self._cached_claude_transcript_files:
             if not self._is_safe_source(path):
@@ -910,20 +790,10 @@ class SessionTracker:
             if messages_added:
                 logger.debug("claude_transcripts: +%d msgs from %s", messages_added, path.name)
 
-    # ------------------------------------------------------------------
     # Polling — Antigravity (Gemini) brain
-    # ------------------------------------------------------------------
 
     def poll_antigravity(self) -> None:
-        """Export Antigravity (Gemini) brain documents when they become stable.
-
-        In "final_only" mode (default) a document is only exported after it has
-        not been modified for ANTIGRAVITY_QUIET_SEC seconds, avoiding churn from
-        incremental writes.  In "live" mode every modification triggers an export.
-
-        Polling is suspended while the Gemini language server is heavily loaded
-        (configurable via SUSPEND_ANTIGRAVITY_WHEN_BUSY / ANTIGRAVITY_BUSY_LS_THRESHOLD).
-        """
+        """Export Antigravity brain docs when stable (final_only) or on every change (live)."""
         if not ENABLE_ANTIGRAVITY_MONITOR:
             return
 
@@ -944,17 +814,16 @@ class SessionTracker:
             return
 
         now = time.time()
-        error_ref = [self._error_count]
-        self._cached_antigravity_dirs, self._last_antigravity_scan = _refresh_glob_cache(
+        self._cached_antigravity_dirs, self._last_antigravity_scan, _err = _refresh_glob_cache(
             pattern=str(ANTIGRAVITY_BRAIN / "*-*-*-*-*"),
             max_results=MAX_ANTIGRAVITY_DIRS_PER_SCAN,
             last_refresh=self._last_antigravity_scan,
             interval_sec=ANTIGRAVITY_SCAN_INTERVAL_SEC,
             cached=self._cached_antigravity_dirs,
             error_context="antigravity_dirs",
-            error_count_ref=error_ref,
         )
-        self._error_count = error_ref[0]
+        if _err:
+            self._error_count += 1
 
         # Document types to consider, ordered by preference.
         brain_docs = (
@@ -1047,9 +916,7 @@ class SessionTracker:
             for sid, _ in stale[:remove_n]:
                 self.antigravity_sessions.pop(sid, None)
 
-    # ------------------------------------------------------------------
     # Parsing helpers
-    # ------------------------------------------------------------------
 
     def _extract_sid(self, data: dict[str, Any], sid_keys: list[str], source_name: str) -> str:
         for key in sid_keys:
@@ -1135,9 +1002,7 @@ class SessionTracker:
         digest = hashlib.sha256(rel.encode("utf-8", errors="ignore")).hexdigest()[:10]
         return f"{base}_{digest}"
 
-    # ------------------------------------------------------------------
     # Session management
-    # ------------------------------------------------------------------
 
     def _upsert_session(self, sid: str, source: str, text: str, now: float) -> None:
         if sid not in self.sessions:
@@ -1174,12 +1039,7 @@ class SessionTracker:
         del self.sessions[min(self.sessions, key=lambda k: self.sessions[k]["last_seen"])]
 
     def check_and_export_idle(self) -> None:
-        """Export sessions that have been idle for at least IDLE_TIMEOUT_SEC.
-
-        Sessions with too few messages are discarded after SESSION_TTL_SEC.
-        Exported sessions are removed from the map after SESSION_TTL_SEC to
-        keep memory bounded.
-        """
+        """Export idle sessions and evict exported ones past SESSION_TTL_SEC."""
         now = time.time()
         to_remove: list[str] = []
 
@@ -1228,17 +1088,10 @@ class SessionTracker:
             self._error_count += 1
             logger.warning("sync_index_from_storage failed: %s", exc)
 
-    # ------------------------------------------------------------------
     # Export — local write and optional remote push
-    # ------------------------------------------------------------------
 
     def _export(self, sid: str, data: dict[str, Any], title_prefix: str = "") -> bool:
-        """Write session data to local storage and optionally push to the remote.
-
-        Returns True on success (local write always counts as success when
-        remote sync is disabled).  Queues a pending file when the remote is
-        unreachable.
-        """
+        """Write session data locally and optionally push to remote (queues on failure)."""
         source = data["source"]
         messages = data["messages"]
         content = "\n- ".join(msg[:2000] for msg in messages[-60:])
@@ -1397,29 +1250,10 @@ class SessionTracker:
             return
         self._retry_pending()
 
-    # ------------------------------------------------------------------
     # Adaptive sleep interval
-    # ------------------------------------------------------------------
 
     def next_sleep_interval(self) -> int:
-        """Return the number of seconds to sleep before the next poll cycle.
-
-        The interval is computed as follows:
-
-        1. Night mode (NIGHT_POLL_START_HOUR - NIGHT_POLL_END_HOUR, local time):
-           if no sessions are pending export and no pending files are queued,
-           return NIGHT_POLL_INTERVAL_SEC to preserve battery / CPU.
-
-        2. No active work:
-           return min(POLL_INTERVAL_SEC * 3, IDLE_SLEEP_CAP_SEC).
-
-        3. Active sessions:
-           start from POLL_INTERVAL_SEC, then reduce towards FAST_POLL_INTERVAL_SEC
-           when:
-           - pending remote-sync files exist (retry soon), or
-           - a session is within FAST_POLL_INTERVAL_SEC of its export deadline, or
-           - activity was recorded in the last ~4x FAST_POLL_INTERVAL_SEC.
-        """
+        """Return adaptive sleep seconds: night-mode expansion, idle cap, fast-poll reduction."""
         current_hour = datetime.now().hour
         start_h = NIGHT_POLL_START_HOUR % 24
         end_h = NIGHT_POLL_END_HOUR % 24
@@ -1467,9 +1301,7 @@ class SessionTracker:
 
         return max(1, sleep_s)
 
-    # ------------------------------------------------------------------
     # Periodic heartbeat
-    # ------------------------------------------------------------------
 
     def heartbeat(self) -> None:
         """Log a structured status line at HEARTBEAT_INTERVAL_SEC intervals."""
@@ -1514,27 +1346,19 @@ def main() -> None:
     def _on_off(flag: bool) -> str:
         return "on" if flag else "off"
 
-    logger.info("ContextGO daemon starting.")
     logger.info(
-        "config remote_sync=%s remote_url=%s",
+        "ContextGO daemon starting. remote_sync=%s remote_url=%s"
+        " idle=%ds poll=%ds fast_poll=%ds heartbeat=%ds cycle_budget=%ds"
+        " shell=%s claude_history=%s codex_history=%s opencode=%s kilo=%s"
+        " codex_session=%s claude_transcripts=%s antigravity=%s"
+        " ag_ingest=%s ag_quiet=%ds ag_min=%dB",
         _on_off(ENABLE_REMOTE_SYNC),
         REMOTE_SYNC_URL,
-    )
-    logger.info(
-        "config timing idle=%ds poll=%ds fast_poll=%ds pending_retry=%ds"
-        " heartbeat=%ds cycle_budget=%ds backoff_max=%ds jitter=%.1fs",
         IDLE_TIMEOUT_SEC,
         POLL_INTERVAL_SEC,
         FAST_POLL_INTERVAL_SEC,
-        PENDING_RETRY_INTERVAL_SEC,
         HEARTBEAT_INTERVAL_SEC,
         CYCLE_BUDGET_SEC,
-        ERROR_BACKOFF_MAX_SEC,
-        LOOP_JITTER_SEC,
-    )
-    logger.info(
-        "config monitors shell=%s claude_history=%s codex_history=%s"
-        " opencode=%s kilo=%s codex_session=%s claude_transcripts=%s antigravity=%s",
         _on_off(ENABLE_SHELL_MONITOR),
         _on_off(ENABLE_CLAUDE_HISTORY_MONITOR),
         _on_off(ENABLE_CODEX_HISTORY_MONITOR),
@@ -1543,15 +1367,9 @@ def main() -> None:
         _on_off(ENABLE_CODEX_SESSION_MONITOR),
         _on_off(ENABLE_CLAUDE_TRANSCRIPTS_MONITOR),
         _on_off(ENABLE_ANTIGRAVITY_MONITOR),
-    )
-    logger.info(
-        "config antigravity ingest_mode=%s quiet=%ds min_doc=%dB suspend_busy=%s busy_threshold=%d scan_interval=%ds",
         ANTIGRAVITY_INGEST_MODE,
         ANTIGRAVITY_QUIET_SEC,
         ANTIGRAVITY_MIN_DOC_BYTES,
-        _on_off(SUSPEND_ANTIGRAVITY_WHEN_BUSY),
-        ANTIGRAVITY_BUSY_LS_THRESHOLD,
-        ANTIGRAVITY_SCAN_INTERVAL_SEC,
     )
 
     tracker = SessionTracker()
@@ -1561,13 +1379,11 @@ def main() -> None:
     while not _shutdown:
         had_error = False
         try:
-            # ------------------------------------------------------------------
             # Poll cycle
             # Each step checks whether it still has budget before proceeding.
             # Higher-priority monitors (JSONL, shell) always run; lower-priority
             # monitors (Codex sessions, Claude transcripts, Antigravity) are
             # skipped when the cycle has already consumed its budget.
-            # ------------------------------------------------------------------
             cycle_started = time.monotonic()
             budget_deadline = cycle_started + CYCLE_BUDGET_SEC
 
@@ -1598,9 +1414,7 @@ def main() -> None:
             had_error = True
             logger.exception("Unhandled error in main loop: %s", exc)
 
-        # ------------------------------------------------------------------
         # Adaptive sleep with exponential back-off on repeated errors
-        # ------------------------------------------------------------------
         consecutive_errors = consecutive_errors + 1 if had_error else 0
 
         sleep_s = float(tracker.next_sleep_interval())
@@ -1613,9 +1427,7 @@ def main() -> None:
 
         time.sleep(max(1.0, sleep_s))
 
-    # ------------------------------------------------------------------
     # Graceful shutdown
-    # ------------------------------------------------------------------
     tracker.maybe_sync_index(force=True)
     if tracker._http_client is not None:
         with contextlib.suppress(Exception):

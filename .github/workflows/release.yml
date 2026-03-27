@@ -28,8 +28,9 @@ jobs:
     timeout-minutes: 5
     outputs:
       version: ${{ steps.tag.outputs.version }}
+      has_notes: ${{ steps.notes.outputs.has_notes }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
       - name: Parse tag version
         id: tag
@@ -48,6 +49,20 @@ jobs:
           fi
           echo "OK: VERSION=$FILE_VERSION"
 
+      - name: Check for release notes file
+        id: notes
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          NOTES_FILE="docs/RELEASE_NOTES_${VERSION}.md"
+          if [ -f "$NOTES_FILE" ]; then
+            echo "has_notes=true" >> "$GITHUB_OUTPUT"
+            echo "notes_path=$NOTES_FILE" >> "$GITHUB_OUTPUT"
+            echo "Using $NOTES_FILE as release body"
+          else
+            echo "has_notes=false" >> "$GITHUB_OUTPUT"
+            echo "No dedicated release notes file found; using auto-generated notes"
+          fi
+
   # -------------------------------------------------------------------------
   # 2. Create GitHub Release
   # -------------------------------------------------------------------------
@@ -57,27 +72,25 @@ jobs:
     timeout-minutes: 10
     needs: validate
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Locate release notes
-        id: notes
-        run: |
-          VERSION="${{ needs.validate.outputs.version }}"
-          NOTES_FILE="docs/RELEASE_NOTES_${VERSION}.md"
-          if [ -f "$NOTES_FILE" ]; then
-            echo "body_path=$NOTES_FILE" >> "$GITHUB_OUTPUT"
-            echo "Using $NOTES_FILE as release body"
-          else
-            echo "No dedicated release notes file found; using auto-generated notes"
-          fi
-
-      - name: Create GitHub release
+      - name: Create GitHub release (with release notes)
+        if: needs.validate.outputs.has_notes == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          body_path: ${{ steps.notes.outputs.body_path }}
-          generate_release_notes: ${{ steps.notes.outputs.body_path == '' }}
+          body_path: docs/RELEASE_NOTES_${{ needs.validate.outputs.version }}.md
+          generate_release_notes: false
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          make_latest: "true"
+
+      - name: Create GitHub release (auto-generated notes)
+        if: needs.validate.outputs.has_notes != 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
           make_latest: "true"

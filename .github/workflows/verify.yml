@@ -22,14 +22,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
       - name: Cache pip (lint)
-        uses: actions/cache@v5
+        uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-lint-${{ hashFiles('pyproject.toml') }}
@@ -52,7 +52,7 @@ jobs:
 
       - name: Secret and path scan
         run: |
-          pip install --quiet ripgrep || sudo apt-get install -y ripgrep
+          sudo apt-get install -y --no-install-recommends ripgrep
           # Block common secret patterns (exclude test files and known-safe paths)
           ! rg -n \
             "AIza[0-9A-Za-z_-]{20,}|sk-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}" \
@@ -81,14 +81,14 @@ jobs:
       matrix:
         python-version: ["3.10", "3.11", "3.12"]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
 
       - name: Cache pip (test)
-        uses: actions/cache@v5
+        uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-test-${{ matrix.python-version }}-${{ hashFiles('pyproject.toml', 'requirements-dev.txt') }}
@@ -116,6 +116,7 @@ jobs:
         with:
           files: coverage.xml
           fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
 
       - name: Benchmark smoke (sanity)
         run: python -m benchmarks --iterations 1 --warmup 0 --query benchmark
@@ -129,9 +130,9 @@ jobs:
     timeout-minutes: 15
     needs: lint
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v5
         with:
           go-version: "1.22"
           cache-dependency-path: native/session_scan_go/go.mod
@@ -153,14 +154,14 @@ jobs:
     timeout-minutes: 20
     needs: lint
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
 
       - name: Cache Cargo
-        uses: actions/cache@v5
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
@@ -191,17 +192,17 @@ jobs:
       - go-test
       - rust-check
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
       - name: Cache pip (quality)
-        uses: actions/cache@v5
+        uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-quality-${{ hashFiles('pyproject.toml', 'requirements-dev.txt') }}
+          key: ${{ runner.os }}-pip-quality-3.11-${{ hashFiles('pyproject.toml', 'requirements-dev.txt') }}
           restore-keys: ${{ runner.os }}-pip-quality-
 
       - name: Install dependencies

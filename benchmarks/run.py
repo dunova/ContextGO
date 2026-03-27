@@ -27,18 +27,14 @@ DEFAULT_SEARCH_LIMIT = max(1, int(os.environ.get("CONTEXTGO_BENCH_SEARCH_LIMIT",
 DEFAULT_WARMUP = 1
 DEFAULT_FORMAT = "text"
 DEFAULT_SOURCE_CACHE_TTL = os.environ.get("CONTEXTGO_SOURCE_CACHE_TTL_SEC", "60")
-SYNC_ACTION_CODE = (
-    "import sys;"
-    f"sys.path.insert(0, {str(SCRIPTS_DIR)!r});"
-    "import session_index;"
-    "session_index.sync_session_index(force=True)"
-)
+
+_SYNC_PREAMBLE = f"import sys;sys.path.insert(0, {str(SCRIPTS_DIR)!r});import session_index;"
+SYNC_ACTION_CODE = _SYNC_PREAMBLE + "session_index.sync_session_index(force=True)"
 SYNC_JSON_CODE = (
-    "import sys;"
-    f"sys.path.insert(0, {str(SCRIPTS_DIR)!r});"
-    "import session_index, json;"
-    "print(json.dumps(session_index.sync_session_index(force=True), ensure_ascii=False))"
+    _SYNC_PREAMBLE + "import json;print(json.dumps(session_index.sync_session_index(force=True), ensure_ascii=False))"
 )
+
+MAX_SAMPLE_LINES = 5
 
 
 @dataclass
@@ -71,80 +67,69 @@ class BenchmarkStats:
 
 
 def _prepare_fake_home(home: Path, query: str) -> None:
-    codex_session = home / ".codex" / "sessions" / "2026" / "03" / "bench.jsonl"
-    codex_session.parent.mkdir(parents=True, exist_ok=True)
-    codex_session.write_text(
-        "\n".join(
-            json.dumps(record, ensure_ascii=False)
-            for record in [
-                {
-                    "type": "session_meta",
-                    "payload": {
-                        "id": "bench-codex",
-                        "cwd": "/tmp/context-bench",
-                        "timestamp": "2026-03-25T00:00:00Z",
-                    },
+    _write_jsonl(
+        home / ".codex" / "sessions" / "2026" / "03" / "bench.jsonl",
+        [
+            {
+                "type": "session_meta",
+                "payload": {
+                    "id": "bench-codex",
+                    "cwd": "/tmp/context-bench",
+                    "timestamp": "2026-03-25T00:00:00Z",
                 },
-                {
-                    "type": "event_msg",
-                    "payload": {
-                        "type": "user_message",
-                        "message": f"{query} health check",
-                    },
+            },
+            {
+                "type": "event_msg",
+                "payload": {
+                    "type": "user_message",
+                    "message": f"{query} health check",
                 },
-                {
-                    "type": "response_item",
-                    "payload": {
-                        "type": "message",
-                        "role": "assistant",
-                        "content": [
-                            {"type": "output_text", "text": "context_cli benchmark assistant"},
-                        ],
-                    },
+            },
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [
+                        {"type": "output_text", "text": "context_cli benchmark assistant"},
+                    ],
                 },
-            ]
-        ),
-        encoding="utf-8",
+            },
+        ],
     )
 
-    claude_session = home / ".claude" / "projects" / "bench" / "session.jsonl"
-    claude_session.parent.mkdir(parents=True, exist_ok=True)
-    claude_session.write_text(
-        "\n".join(
-            json.dumps(record, ensure_ascii=False)
-            for record in [
-                {
-                    "type": "session_meta",
-                    "sessionId": "bench-claude",
-                    "cwd": "/tmp/context-bench",
-                    "timestamp": "2026-03-25T01:00:00Z",
+    _write_jsonl(
+        home / ".claude" / "projects" / "bench" / "session.jsonl",
+        [
+            {
+                "type": "session_meta",
+                "sessionId": "bench-claude",
+                "cwd": "/tmp/context-bench",
+                "timestamp": "2026-03-25T01:00:00Z",
+            },
+            {"type": "user", "message": {"content": f"{query} claude input"}},
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {"type": "output_text", "text": "claude benchmark response"},
+                    ]
                 },
-                {"type": "user", "message": {"content": f"{query} claude input"}},
-                {
-                    "type": "assistant",
-                    "message": {
-                        "content": [
-                            {"type": "output_text", "text": "claude benchmark response"},
-                        ]
-                    },
-                },
-            ]
-        ),
-        encoding="utf-8",
+            },
+        ],
     )
 
     history_dir = home / ".codex"
     history_dir.mkdir(parents=True, exist_ok=True)
-    (history_dir / "history.jsonl").write_text(
-        "\n".join(
-            json.dumps(entry, ensure_ascii=False)
-            for entry in [{"message": f"{query} direct history"}, {"display": "extra entry"}]
-        ),
-        encoding="utf-8",
+    _write_jsonl(
+        history_dir / "history.jsonl",
+        [{"message": f"{query} direct history"}, {"display": "extra entry"}],
     )
+
     claude_history = home / ".claude" / "history.jsonl"
     claude_history.parent.mkdir(parents=True, exist_ok=True)
     claude_history.write_text(json.dumps({"text": f"{query} claude history"}, ensure_ascii=False), encoding="utf-8")
+
     (home / ".local" / "state" / "opencode").mkdir(parents=True, exist_ok=True)
     (home / ".local" / "state" / "opencode" / "prompt-history.jsonl").write_text(
         json.dumps([{"prompt": f"{query} OpenCode"}], ensure_ascii=False), encoding="utf-8"
@@ -152,6 +137,15 @@ def _prepare_fake_home(home: Path, query: str) -> None:
 
     (home / ".zsh_history").write_text(f"ls\n{query} zsh\n", encoding="utf-8")
     (home / ".bash_history").write_text(f"pwd\n{query} bash\n", encoding="utf-8")
+
+
+def _write_jsonl(path: Path, records: list[object]) -> None:
+    """Write a list of records as newline-delimited JSON to *path*, creating parents."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "\n".join(json.dumps(r, ensure_ascii=False) for r in records),
+        encoding="utf-8",
+    )
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -218,9 +212,6 @@ def _benchmark(action: Callable[[], object], warmup: int, iterations: int) -> li
         action()
         durations.append(time.perf_counter() - start)
     return durations[warmup:]
-
-
-MAX_SAMPLE_LINES = 5
 
 
 def _summarize_stats(name: str, durations: list[float], sample: str | None) -> BenchmarkStats:
@@ -379,40 +370,36 @@ def _run_native_command(cmd: list[str], env: dict[str, str]) -> str:
     return output
 
 
+def _make_case_from_callable(name: str, fn: Callable[[], str | None]) -> BenchmarkCase:
+    """Build a BenchmarkCase where the action discards the return value of *fn*."""
+    return BenchmarkCase(
+        name=name,
+        action=lambda: fn(),
+        sample=fn,
+    )
+
+
 def _build_python_cases(
     context_cli_module, cli_parser, session_index_module, query: str, search_limit: int
 ) -> list[BenchmarkCase]:
-    def health_action() -> None:
-        _run_context_cli(context_cli_module, cli_parser, ["health"])
-
-    def health_sample() -> str:
+    def health() -> str:
         return _run_context_cli(context_cli_module, cli_parser, ["health"])
 
-    def search_action() -> None:
-        _run_context_cli(
-            context_cli_module,
-            cli_parser,
-            ["search", query, "--limit", str(search_limit), "--literal"],
-        )
-
-    def search_sample() -> str:
+    def search() -> str:
         return _run_context_cli(
             context_cli_module,
             cli_parser,
             ["search", query, "--limit", str(search_limit), "--literal"],
         )
 
-    def sync_action() -> None:
-        session_index_module.sync_session_index(force=True)
-
-    def sync_sample() -> str:
+    def sync() -> str:
         stats = session_index_module.sync_session_index(force=True)
         return json.dumps(stats, ensure_ascii=False, indent=2)
 
     return [
-        BenchmarkCase("context_cli health", health_action, health_sample),
-        BenchmarkCase("context_cli search", search_action, search_sample),
-        BenchmarkCase("session_index.sync_session_index", sync_action, sync_sample),
+        _make_case_from_callable("context_cli health", health),
+        _make_case_from_callable("context_cli search", search),
+        _make_case_from_callable("session_index.sync_session_index", sync),
     ]
 
 
@@ -420,28 +407,19 @@ def _build_native_cases(env: dict[str, str], query: str, search_limit: int) -> l
     context_cli_path = str(SCRIPTS_DIR / "context_cli.py")
     search_args = ["search", query, "--limit", str(search_limit), "--literal"]
 
-    def health_action() -> None:
-        _run_native_command([sys.executable, context_cli_path, "health"], env)
-
-    def health_sample() -> str:
+    def health() -> str:
         return _run_native_command([sys.executable, context_cli_path, "health"], env)
 
-    def search_action() -> None:
-        _run_native_command([sys.executable, context_cli_path, *search_args], env)
-
-    def search_sample() -> str:
+    def search() -> str:
         return _run_native_command([sys.executable, context_cli_path, *search_args], env)
 
-    def sync_action() -> None:
-        _run_native_command([sys.executable, "-c", SYNC_JSON_CODE], env)
-
-    def sync_sample() -> str:
+    def sync() -> str:
         return _run_native_command([sys.executable, "-c", SYNC_JSON_CODE], env)
 
     return [
-        BenchmarkCase("context_cli health", health_action, health_sample),
-        BenchmarkCase("context_cli search", search_action, search_sample),
-        BenchmarkCase("session_index.sync_session_index", sync_action, sync_sample),
+        _make_case_from_callable("context_cli health", health),
+        _make_case_from_callable("context_cli search", search),
+        _make_case_from_callable("session_index.sync_session_index", sync),
     ]
 
 
@@ -454,8 +432,8 @@ def main(argv: list[str] | None = None) -> int:
             "HOME": str(fake_home),
             "CONTEXTGO_STORAGE_ROOT": str(storage_root),
             "CONTEXTGO_SESSION_SYNC_MIN_INTERVAL_SEC": "0",
+            "CONTEXTGO_SOURCE_CACHE_TTL_SEC": DEFAULT_SOURCE_CACHE_TTL,
         }
-        env_vars["CONTEXTGO_SOURCE_CACHE_TTL_SEC"] = DEFAULT_SOURCE_CACHE_TTL
         os.environ.update(env_vars)
 
         print("Benchmark environment:")
@@ -465,6 +443,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  iterations: {args.iterations} warmup: {args.warmup}")
         print(f"  search limit: {args.search_limit}")
         print("  source cache TTL:", env_vars["CONTEXTGO_SOURCE_CACHE_TTL_SEC"], "sec")
+
         mode_sequence = _build_mode_sequence(args.mode)
         results_by_mode: list[tuple[str, list[BenchmarkStats]]] = []
         for index, mode in enumerate(mode_sequence):
@@ -477,7 +456,7 @@ def main(argv: list[str] | None = None) -> int:
                 shutil.rmtree(storage_root, ignore_errors=True)
 
         if args.format == "json":
-            base_payload = {
+            base_payload: dict[str, object] = {
                 "mode": args.mode,
                 "query": args.query,
                 "search_limit": args.search_limit,
@@ -486,12 +465,10 @@ def main(argv: list[str] | None = None) -> int:
                 "source_cache_ttl_sec": int(env_vars["CONTEXTGO_SOURCE_CACHE_TTL_SEC"]),
             }
             if args.mode == "both" and len(results_by_mode) == 2:
-                benchmark_payload = {
+                base_payload["benchmarks"] = {
                     mode: [stats.to_dict() for stats in stats_list] for mode, stats_list in results_by_mode
                 }
-                comparison = _build_comparison_summary(results_by_mode[0][1], results_by_mode[1][1])
-                base_payload["benchmarks"] = benchmark_payload
-                base_payload["comparison"] = comparison
+                base_payload["comparison"] = _build_comparison_summary(results_by_mode[0][1], results_by_mode[1][1])
             else:
                 base_payload["benchmarks"] = [stats.to_dict() for stats in results_by_mode[0][1]]
             print(json.dumps(base_payload, ensure_ascii=False, indent=2))
@@ -507,8 +484,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(
                     "\nNote: `native-wrapper` measures subprocess CLI/native-wrapper overhead, not pure Go/Rust core execution."
                 )
-                comparisons = _build_comparison_summary(results_by_mode[0][1], results_by_mode[1][1])
-                _print_comparison_text(comparisons)
+                _print_comparison_text(_build_comparison_summary(results_by_mode[0][1], results_by_mode[1][1]))
 
     return 0
 

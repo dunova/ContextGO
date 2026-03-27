@@ -122,24 +122,19 @@ def _load_noise_config() -> dict[str, list[str]]:
     the path works both in-repo and after pip-install.  Falls back to empty
     lists when the config file is absent.
     """
+    _keys = (
+        "search_noise_markers",
+        "native_noise_markers",
+        "text_noise_markers",
+        "text_noise_lower_markers",
+        "noise_prefixes",
+    )
     config_path = Path(__file__).parent.parent / "config" / "noise_markers.json"
     if config_path.exists():
         with open(config_path) as fh:
             data = json.load(fh)
-        return {
-            "search_noise_markers": list(data.get("search_noise_markers", [])),
-            "native_noise_markers": list(data.get("native_noise_markers", [])),
-            "text_noise_markers": list(data.get("text_noise_markers", [])),
-            "text_noise_lower_markers": list(data.get("text_noise_lower_markers", [])),
-            "noise_prefixes": list(data.get("noise_prefixes", [])),
-        }
-    return {
-        "search_noise_markers": [],
-        "native_noise_markers": [],
-        "text_noise_markers": [],
-        "text_noise_lower_markers": [],
-        "noise_prefixes": [],
-    }
+        return {k: list(data.get(k, [])) for k in _keys}
+    return {k: [] for k in _keys}
 
 
 # Loaded once at import time; all marker constants are derived from this dict.
@@ -444,125 +439,83 @@ def _finish_session_doc(
     )
 
 
+def _iter_jsonl_objects(path: Path) -> Generator[dict[str, Any], None, None]:
+    """Yield parsed JSON objects from a JSONL file, skipping blank/invalid lines."""
+    with path.open("r", encoding="utf-8", errors="ignore") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                yield json.loads(line)
+            except (json.JSONDecodeError, ValueError):
+                continue
+
+
 def _parse_codex_session(path: Path) -> SessionDocument | None:
-    """Parse a Codex JSONL session file into a ``SessionDocument``.
-
-    Returns ``None`` if the file cannot be read or yields no usable content.
-    """
+    """Parse a Codex JSONL session file into a ``SessionDocument``."""
     session_id = path.stem
     title = ""
     created_at = ""
     pieces: list[str] = []
     mtime = int(path.stat().st_mtime)
-
     try:
-        with path.open("r", encoding="utf-8", errors="ignore") as fh:
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    obj = json.loads(line)
-                except (json.JSONDecodeError, ValueError):
-                    continue
-
-                kind = obj.get("type")
-                if kind == "session_meta":
-                    payload = obj.get("payload") or {}
-                    session_id = str(payload.get("id") or session_id)
-                    title = str(payload.get("cwd") or title or "")
-                    created_at = str(payload.get("timestamp") or created_at or obj.get("timestamp") or "")
-                elif kind == "event_msg":
-                    payload = obj.get("payload") or {}
-                    if payload.get("type") == "user_message":
-                        message = str(payload.get("message") or "").strip()
-                        if message and not _is_noise_text(message):
-                            pieces.append(message)
-                elif kind == "response_item":
-                    payload = obj.get("payload") or {}
-                    if payload.get("type") == "message" and payload.get("role") == "assistant":
-                        for text in _collect_content_text(payload.get("content")):
-                            if not _is_noise_text(text):
-                                pieces.append(text)
-    except (OSError, UnicodeDecodeError, ValueError):
-        return None
-
-    return _finish_session_doc(path, "codex_session", session_id, title, created_at, pieces, mtime)
-
-
-def _parse_claude_session(path: Path) -> SessionDocument | None:
-    """Parse a Claude JSONL session file into a ``SessionDocument``.
-
-    Returns ``None`` if the file cannot be read or yields no usable content.
-    """
-    session_id = path.stem
-    title = ""
-    created_at = ""
-    pieces: list[str] = []
-    mtime = int(path.stat().st_mtime)
-
-    try:
-        with path.open("r", encoding="utf-8", errors="ignore") as fh:
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    obj = json.loads(line)
-                except (json.JSONDecodeError, ValueError):
-                    continue
-
-                kind = obj.get("type")
-                session_id = str(obj.get("sessionId") or session_id)
-                if not title:
-                    title = str(obj.get("cwd") or title or "")
-                if not created_at:
-                    created_at = str(obj.get("timestamp") or "")
-
-                if kind == "user":
-                    message = obj.get("message") or {}
-                    raw_content = message.get("content")
-                    if isinstance(raw_content, str) and raw_content.strip() and not _is_noise_text(raw_content):
-                        pieces.append(raw_content)
-                elif kind == "assistant":
-                    message = obj.get("message") or {}
-                    for text in _collect_content_text(message.get("content")):
+        for obj in _iter_jsonl_objects(path):
+            kind = obj.get("type")
+            if kind == "session_meta":
+                payload = obj.get("payload") or {}
+                session_id = str(payload.get("id") or session_id)
+                title = str(payload.get("cwd") or title or "")
+                created_at = str(payload.get("timestamp") or created_at or obj.get("timestamp") or "")
+            elif kind == "event_msg":
+                payload = obj.get("payload") or {}
+                if payload.get("type") == "user_message":
+                    message = str(payload.get("message") or "").strip()
+                    if message and not _is_noise_text(message):
+                        pieces.append(message)
+            elif kind == "response_item":
+                payload = obj.get("payload") or {}
+                if payload.get("type") == "message" and payload.get("role") == "assistant":
+                    for text in _collect_content_text(payload.get("content")):
                         if not _is_noise_text(text):
                             pieces.append(text)
     except (OSError, UnicodeDecodeError, ValueError):
         return None
+    return _finish_session_doc(path, "codex_session", session_id, title, created_at, pieces, mtime)
 
+
+def _parse_claude_session(path: Path) -> SessionDocument | None:
+    """Parse a Claude JSONL session file into a ``SessionDocument``."""
+    session_id = path.stem
+    title = ""
+    created_at = ""
+    pieces: list[str] = []
+    mtime = int(path.stat().st_mtime)
+    try:
+        for obj in _iter_jsonl_objects(path):
+            kind = obj.get("type")
+            session_id = str(obj.get("sessionId") or session_id)
+            if not title:
+                title = str(obj.get("cwd") or title or "")
+            if not created_at:
+                created_at = str(obj.get("timestamp") or "")
+            if kind == "user":
+                message = obj.get("message") or {}
+                raw_content = message.get("content")
+                if isinstance(raw_content, str) and raw_content.strip() and not _is_noise_text(raw_content):
+                    pieces.append(raw_content)
+            elif kind == "assistant":
+                message = obj.get("message") or {}
+                for text in _collect_content_text(message.get("content")):
+                    if not _is_noise_text(text):
+                        pieces.append(text)
+    except (OSError, UnicodeDecodeError, ValueError):
+        return None
     return _finish_session_doc(path, "claude_session", session_id, title, created_at, pieces, mtime)
 
 
-def _parse_history_jsonl(path: Path, source_type: str) -> SessionDocument | None:
-    """Parse a flat JSONL history file into a ``SessionDocument``.
-
-    Returns ``None`` if no usable content is found.
-    """
-    mtime = int(path.stat().st_mtime)
-    texts: list[str] = []
-
-    try:
-        with path.open("r", encoding="utf-8", errors="ignore") as fh:
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    obj = json.loads(line)
-                except (json.JSONDecodeError, ValueError):
-                    continue
-                if not isinstance(obj, dict):
-                    continue
-                for key in ("display", "text", "input", "prompt", "message"):
-                    value = obj.get(key)
-                    if isinstance(value, str) and value.strip():
-                        texts.append(value)
-                        break
-    except (OSError, UnicodeDecodeError, ValueError):
-        return None
-
+def _make_flat_doc(path: Path, source_type: str, texts: list[str], mtime: int) -> SessionDocument | None:
+    """Build a flat ``SessionDocument`` from extracted text lines, or return ``None``."""
     content = _truncate(texts)
     if not content:
         return None
@@ -579,14 +532,28 @@ def _parse_history_jsonl(path: Path, source_type: str) -> SessionDocument | None
     )
 
 
-def _parse_shell_history(path: Path, source_type: str) -> SessionDocument | None:
-    """Parse a shell history file (zsh or bash) into a ``SessionDocument``.
-
-    Returns ``None`` if no usable content is found.
-    """
+def _parse_history_jsonl(path: Path, source_type: str) -> SessionDocument | None:
+    """Parse a flat JSONL history file into a ``SessionDocument``."""
     mtime = int(path.stat().st_mtime)
     texts: list[str] = []
+    try:
+        for obj in _iter_jsonl_objects(path):
+            if not isinstance(obj, dict):
+                continue
+            for key in ("display", "text", "input", "prompt", "message"):
+                value = obj.get(key)
+                if isinstance(value, str) and value.strip():
+                    texts.append(value)
+                    break
+    except (OSError, UnicodeDecodeError, ValueError):
+        return None
+    return _make_flat_doc(path, source_type, texts, mtime)
 
+
+def _parse_shell_history(path: Path, source_type: str) -> SessionDocument | None:
+    """Parse a shell history file (zsh or bash) into a ``SessionDocument``."""
+    mtime = int(path.stat().st_mtime)
+    texts: list[str] = []
     try:
         with path.open("r", encoding="utf-8", errors="ignore") as fh:
             for line in fh:
@@ -601,21 +568,7 @@ def _parse_shell_history(path: Path, source_type: str) -> SessionDocument | None
                     texts.append(line)
     except (OSError, UnicodeDecodeError, ValueError):
         return None
-
-    content = _truncate(texts)
-    if not content:
-        return None
-    return SessionDocument(
-        file_path=str(path),
-        source_type=source_type,
-        session_id=path.stem,
-        title=path.name,
-        content=content,
-        created_at=datetime.fromtimestamp(mtime).isoformat(),
-        created_at_epoch=mtime,
-        file_mtime=mtime,
-        file_size=path.stat().st_size,
-    )
+    return _make_flat_doc(path, source_type, texts, mtime)
 
 
 def _parse_source(source_type: str, path: Path) -> SessionDocument | None:
@@ -635,12 +588,7 @@ def _parse_source(source_type: str, path: Path) -> SessionDocument | None:
 
 
 def _iter_sources() -> list[tuple[str, Path]]:
-    """Return a list of ``(source_type, path)`` pairs for all discoverable sources.
-
-    Results are cached for ``SOURCE_CACHE_TTL_SEC`` seconds to avoid repeated
-    filesystem traversals.  Falls back to Python discovery when the native
-    backend is unavailable or returns an error.
-    """
+    """Return cached ``(source_type, path)`` pairs for all discoverable sources."""
     now = time.monotonic()
     current_home = str(_home())
     if (
@@ -707,11 +655,7 @@ def _update_source_cache(items: list[tuple[str, Path]], now: float, home: str) -
 
 
 def get_session_db_path() -> Path:
-    """Return the path to the session index SQLite database.
-
-    Checks ``CONTEXTGO_SESSION_INDEX_DB_PATH`` first; falls back to the
-    storage root.
-    """
+    """Return the session index DB path (env override or storage root)."""
     override = os.environ.get(SESSION_DB_PATH_ENV, "").strip()
     if override:
         return Path(override).expanduser()
@@ -719,10 +663,7 @@ def get_session_db_path() -> Path:
 
 
 def ensure_session_db() -> Path:
-    """Create the session index database and schema if they do not exist.
-
-    Returns the path to the database file.
-    """
+    """Create the session index database and schema if absent; return the path."""
     db_path = get_session_db_path()
     db_path.parent.mkdir(parents=True, exist_ok=True)
     with _open_db(db_path) as conn:
@@ -760,15 +701,9 @@ def _meta_set(conn: sqlite3.Connection, key: str, value: str) -> None:
 
 
 def sync_session_index(force: bool = False) -> dict[str, int]:
-    """Scan source files and upsert changed documents into the session index.
+    """Scan source files and upsert changed documents (mtime+size based).
 
-    Change detection is mtime + size based.  A full re-index is triggered
-    automatically when ``SESSION_INDEX_SCHEMA_VERSION`` changes or when
-    *force* is ``True``.
-
-    Returns a stats dict with keys:
-    ``scanned``, ``added``, ``updated``, ``removed``,
-    ``skipped_recent``, ``last_sync_epoch``, ``total_sessions``.
+    Forces full re-index when the schema version changes or *force* is True.
     """
     db_path = ensure_session_db()
     added = updated = removed = scanned = batch_pending = 0
@@ -867,17 +802,7 @@ def sync_session_index(force: bool = False) -> dict[str, int]:
 
 
 def build_query_terms(query: str) -> list[str]:
-    """Decompose a natural-language query into ranked search terms.
-
-    Processing order:
-    1. ISO date expressions -> normalised ``YYYY-MM-DD`` and ``YYYYMMDD``.
-    2. Filesystem path tokens -> file/directory basename.
-    3. ASCII identifier tokens (3-40 chars, not in STOPWORDS).
-    4. Chinese CJK token sequences (2-12 chars) with prefix/suffix extraction.
-    5. Fallback: the raw query string if nothing else matched.
-
-    Returns at most 8 terms, deduplicated and stopword-filtered.
-    """
+    """Decompose a query into at most 8 deduplicated, stopword-filtered search terms."""
     raw = (query or "").strip()
     if not raw:
         return []
@@ -1113,14 +1038,7 @@ def _rank_rows(
     *,
     skip_cwd_title: bool = False,
 ) -> list[tuple[int, sqlite3.Row]]:
-    """Score each candidate row and return those with a positive score.
-
-    Scoring factors (additive):
-    - Base weight from SOURCE_WEIGHT by source type.
-    - Per-term hit bonus: max(4, len(term) squared).
-    - Path-only content penalty: -180.
-    - Noise penalty from ``_search_noise_penalty``.
-    """
+    """Score and filter candidate rows, returning those with positive scores."""
     ranked: list[tuple[int, sqlite3.Row]] = []
     cwd_str = str(Path.cwd().resolve())
     for row in candidate_rows:
@@ -1142,19 +1060,7 @@ def _rank_rows(
 
 
 def _search_rows(query: str, limit: int = 10, literal: bool = False) -> list[dict[str, Any]]:
-    """Execute a ranked search against the local session index.
-
-    Search pipeline:
-    1. Sync the index (honours ``SYNC_MIN_INTERVAL_SEC`` throttle).
-    2. Attempt native backend if configured.
-    3. Build LIKE-based SQL from ``build_query_terms`` output.
-    4. Score and rank candidates; apply noise penalties.
-    5. Fall back to anchor-term re-query when literal mode yields no results.
-
-    Returns at most *limit* result dicts with keys:
-    ``source_type``, ``session_id``, ``title``, ``file_path``,
-    ``created_at``, ``created_at_epoch``, ``snippet``.
-    """
+    """Execute a ranked LIKE search against the local session index."""
     max_results = max(1, min(limit, 100))
     db_path = ensure_session_db()
     sync_session_index()
@@ -1224,17 +1130,7 @@ def format_search_results(
     limit: int = 10,
     literal: bool = False,
 ) -> str:
-    """Format session search results as a human-readable multi-line string.
-
-    Args:
-        query:       The search query.
-        search_type: Reserved; currently unused.
-        limit:       Maximum number of results to return (1-100).
-        literal:     When ``True``, treat *query* as a literal string before
-                     falling back to term expansion.
-
-    Returns a plain-text block suitable for display in a terminal or chat UI.
-    """
+    """Format session search results as a human-readable multi-line string."""
     results = _search_rows(query, limit=limit, literal=literal)
     if not results:
         return "No matches found in local session index."
