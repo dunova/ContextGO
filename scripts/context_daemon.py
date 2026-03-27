@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import atexit
 import contextlib
+import ctypes
 import gc
 import glob as _glob
 import hashlib
@@ -27,12 +28,16 @@ import logging.handlers
 import os
 import random
 import re
+import select
 import signal
 import sqlite3
 import stat
 import subprocess
 import sys
+import threading
 import time
+import weakref
+from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -184,6 +189,8 @@ CYCLE_BUDGET_SEC: int = _cfg_int("CYCLE_BUDGET_SEC", default=8, minimum=1)
 ERROR_BACKOFF_MAX_SEC: int = _cfg_int("ERROR_BACKOFF_MAX_SEC", default=30, minimum=2)
 LOOP_JITTER_SEC: float = _cfg_float("LOOP_JITTER_SEC", default=0.7, minimum=0.0)
 INDEX_SYNC_MIN_INTERVAL_SEC: int = _cfg_int("INDEX_SYNC_MIN_INTERVAL_SEC", default=20, minimum=5)
+# Adaptive-polling: sources are "active" if they had changes within this window.
+ACTIVE_SOURCE_WINDOW_SEC: int = _cfg_int("ACTIVE_SOURCE_WINDOW_SEC", default=300, minimum=30)
 
 # Capacity limits / HTTP timeouts
 MAX_TRACKED_SESSIONS: int = _cfg_int("MAX_TRACKED_SESSIONS", default=500)
@@ -208,6 +215,10 @@ ENABLE_KILO_MONITOR: bool = _cfg_bool("ENABLE_KILO_MONITOR", default=False)
 ENABLE_CODEX_SESSION_MONITOR: bool = _cfg_bool("ENABLE_CODEX_SESSION_MONITOR", default=True)
 ENABLE_CLAUDE_TRANSCRIPTS_MONITOR: bool = _cfg_bool("ENABLE_CLAUDE_TRANSCRIPTS_MONITOR", default=True)
 ENABLE_ANTIGRAVITY_MONITOR: bool = _cfg_bool("ENABLE_ANTIGRAVITY_MONITOR", default=True)
+# File watcher: enabled by default on Linux (inotify available), disabled elsewhere.
+# Set CONTEXTGO_ENABLE_FILE_WATCHER=true/false to override.
+_DEFAULT_FILE_WATCHER: bool = sys.platform.startswith("linux")
+ENABLE_FILE_WATCHER: bool = _cfg_bool("ENABLE_FILE_WATCHER", default=_DEFAULT_FILE_WATCHER)
 
 # Antigravity (Gemini) configuration
 # ANTIGRAVITY_INGEST_MODE: "final_only" (wait for quiet) or "live" (export on every change).
@@ -447,6 +458,310 @@ def _refresh_glob_cache(
         return cached, last_refresh, True
 
 
+# ---------------------------------------------------------------------------
+# _FileWatcher — optional inotify-based change detector (Linux only)
+# ---------------------------------------------------------------------------
+
+# inotify event flags (kernel ABI constants — stable since Linux 2.6.13)
+_IN_MODIFY: int = 0x00000002  # file was modified
+_IN_CLOSE_WRITE: int = 0x00000008  # writable file was closed
+_IN_MOVED_TO: int = 0x00000080  # file/dir was renamed into watched dir
+_IN_CREATE: int = 0x00000100  # file/dir created inside watched dir
+_IN_MASK: int = _IN_MODIFY | _IN_CLOSE_WRITE | _IN_MOVED_TO | _IN_CREATE
+
+# inotify_event struct: wd(i4) mask(u4) cookie(u4) len(u4)  [+name]
+_INOTIFY_EVENT_BASE: int = 16
+
+
+def _try_load_inotify() -> ctypes.CDLL | None:
+    """Return a loaded libc CDLL if inotify syscalls are available, else None."""
+    if not sys.platform.startswith("linux"):
+        return None
+    try:
+        libc = ctypes.CDLL("libc.so.6", use_errno=True)
+        # Quick sanity-check: inotify_init1 must be callable.
+        libc.inotify_init1.restype = ctypes.c_int
+        libc.inotify_init1.argtypes = [ctypes.c_int]
+        libc.inotify_add_watch.restype = ctypes.c_int
+        libc.inotify_add_watch.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_uint32]
+        libc.inotify_rm_watch.restype = ctypes.c_int
+        libc.inotify_rm_watch.argtypes = [ctypes.c_int, ctypes.c_int]
+        return libc
+    except (OSError, AttributeError):
+        return None
+
+
+_LIBC: ctypes.CDLL | None = _try_load_inotify()
+
+# IN_NONBLOCK flag for inotify_init1
+_IN_NONBLOCK: int = 0o4000
+
+
+class _FileWatcher:
+    """Lightweight inotify-backed directory watcher with polling fallback.
+
+    The watcher runs entirely in the calling thread — ``update()`` must be
+    called periodically by the main loop.  It never blocks; reads are
+    non-blocking and protected by a fixed-size read buffer.
+
+    On Linux with inotify available the watcher adds an OS watch for each
+    directory and drains events on ``update()``.  On other platforms (or
+    when inotify initialisation fails) it falls back to stat-based mtime
+    polling, preserving existing behaviour.
+
+    The watcher only *hints* which sources have changed; the actual
+    ``poll_*`` functions always perform their own incremental reads.  If
+    the watcher is unavailable, ``has_changes()`` returns ``True`` so the
+    main loop falls back to polling every source unconditionally.
+    """
+
+    def __init__(self, directories: list[Path]) -> None:
+        self._directories: list[Path] = [d for d in directories if d.is_dir()]
+        self._changed_paths: set[Path] = set()
+        self._lock: threading.Lock = threading.Lock()
+
+        # inotify state
+        self._inotify_fd: int = -1
+        self._wd_to_dir: dict[int, Path] = {}
+        self._available: bool = False
+
+        # Polling-fallback state (used when inotify is not available)
+        self._poll_mtimes: dict[Path, float] = {}
+
+        if _LIBC is not None:
+            self._init_inotify()
+        else:
+            self._init_poll_fallback()
+            logger.debug("_FileWatcher: inotify unavailable — using mtime polling fallback.")
+
+    # ------------------------------------------------------------------
+    # Initialisation helpers
+    # ------------------------------------------------------------------
+
+    def _init_inotify(self) -> None:
+        """Initialise inotify and add watches for each target directory."""
+        assert _LIBC is not None  # noqa: S101 — pre-checked by caller
+        fd = _LIBC.inotify_init1(_IN_NONBLOCK)
+        if fd < 0:
+            err = ctypes.get_errno()
+            logger.warning("_FileWatcher: inotify_init1 failed (errno=%d) — falling back to polling.", err)
+            self._init_poll_fallback()
+            return
+
+        self._inotify_fd = fd
+        added = 0
+        for d in self._directories:
+            wd = _LIBC.inotify_add_watch(fd, str(d).encode("utf-8", errors="replace"), _IN_MASK)
+            if wd < 0:
+                err = ctypes.get_errno()
+                logger.debug("_FileWatcher: inotify_add_watch(%s) failed errno=%d — skipped.", d, err)
+                continue
+            self._wd_to_dir[wd] = d
+            added += 1
+
+        if added == 0:
+            # No watches registered — fall back to polling.
+            self._close_inotify()
+            self._init_poll_fallback()
+            logger.debug("_FileWatcher: no inotify watches registered — using polling fallback.")
+            return
+
+        self._available = True
+        logger.debug("_FileWatcher: inotify active on %d/%d directories.", added, len(self._directories))
+
+    def _init_poll_fallback(self) -> None:
+        """Seed the mtime table for all watched directories (polling mode)."""
+        self._available = False  # use has_changes() == True as universal trigger
+        for d in self._directories:
+            with contextlib.suppress(OSError):
+                self._poll_mtimes[d] = d.stat().st_mtime
+
+    # ------------------------------------------------------------------
+    # Public interface
+    # ------------------------------------------------------------------
+
+    def add_directory(self, directory: Path) -> None:
+        """Watch an additional directory (no-op if already watched or non-existent)."""
+        if not directory.is_dir() or directory in self._directories:
+            return
+        self._directories.append(directory)
+        if self._inotify_fd >= 0 and _LIBC is not None:
+            wd = _LIBC.inotify_add_watch(self._inotify_fd, str(directory).encode("utf-8", errors="replace"), _IN_MASK)
+            if wd >= 0:
+                self._wd_to_dir[wd] = directory
+        else:
+            with contextlib.suppress(OSError):
+                self._poll_mtimes[directory] = directory.stat().st_mtime
+
+    def update(self) -> None:
+        """Drain pending events from inotify (or check mtimes in fallback mode).
+
+        Must be called from the main loop — not thread-safe by design.
+        """
+        if self._inotify_fd >= 0:
+            self._drain_inotify()
+        else:
+            self._poll_mtime_fallback()
+
+    def has_changes(self) -> bool:
+        """Return True if any watched path has signalled a change since last consume."""
+        if not self._available:
+            # Fallback mode: always say "yes" so the caller always polls.
+            return True
+        with self._lock:
+            return bool(self._changed_paths)
+
+    def get_changed_paths(self) -> set[Path]:
+        """Return and clear the set of directories that received inotify events."""
+        if not self._available:
+            return set(self._directories)
+        with self._lock:
+            paths = set(self._changed_paths)
+            self._changed_paths.clear()
+            return paths
+
+    def close(self) -> None:
+        """Release the inotify file descriptor (if open)."""
+        self._close_inotify()
+
+    # ------------------------------------------------------------------
+    # inotify drain
+    # ------------------------------------------------------------------
+
+    def _drain_inotify(self) -> None:
+        """Read all pending inotify events without blocking."""
+        if self._inotify_fd < 0:
+            return
+        # Use select to check readability without blocking.
+        try:
+            r, _, _ = select.select([self._inotify_fd], [], [], 0.0)
+        except (OSError, ValueError):
+            return
+        if not r:
+            return
+
+        # Read in 4 KiB chunks; inotify events are variable-length.
+        buf = bytearray(4096)
+        try:
+            n = os.read(self._inotify_fd, 4096)
+        except BlockingIOError:
+            return
+        except OSError as exc:
+            logger.debug("_FileWatcher: inotify read error: %s", exc)
+            return
+
+        if not n:
+            return
+
+        buf = n  # os.read returns bytes directly
+        offset = 0
+        changed: set[Path] = set()
+        while offset + _INOTIFY_EVENT_BASE <= len(buf):
+            wd = int.from_bytes(buf[offset : offset + 4], "little", signed=True)
+            name_len = int.from_bytes(buf[offset + 12 : offset + 16], "little")
+            event_end = offset + _INOTIFY_EVENT_BASE + name_len
+            if event_end > len(buf):
+                break
+            directory = self._wd_to_dir.get(wd)
+            if directory is not None:
+                changed.add(directory)
+            offset = event_end
+
+        if changed:
+            with self._lock:
+                self._changed_paths.update(changed)
+
+    # ------------------------------------------------------------------
+    # Polling fallback
+    # ------------------------------------------------------------------
+
+    def _poll_mtime_fallback(self) -> None:
+        """Detect directory changes via mtime comparison (fallback for non-Linux)."""
+        changed: set[Path] = set()
+        for d in self._directories:
+            try:
+                mtime = d.stat().st_mtime
+            except OSError:
+                continue
+            prev = self._poll_mtimes.get(d, 0.0)
+            if mtime > prev:
+                self._poll_mtimes[d] = mtime
+                changed.add(d)
+        # In fallback mode _available is False, so has_changes() always True.
+        # We still record them so get_changed_paths() returns something useful.
+        if changed:
+            with self._lock:
+                self._changed_paths.update(changed)
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _close_inotify(self) -> None:
+        """Close the inotify fd and clear watch descriptors."""
+        if self._inotify_fd >= 0:
+            with contextlib.suppress(OSError):
+                os.close(self._inotify_fd)
+            self._inotify_fd = -1
+            self._wd_to_dir.clear()
+
+
+def _build_file_watcher() -> _FileWatcher | None:
+    """Construct a ``_FileWatcher`` covering all monitored directories.
+
+    Returns ``None`` when ``ENABLE_FILE_WATCHER`` is False.
+    """
+    if not ENABLE_FILE_WATCHER:
+        return None
+
+    dirs: list[Path] = []
+
+    # JSONL source parent directories
+    for candidates in JSONL_SOURCES.values():
+        for cand in candidates:
+            parent = cand["path"].parent
+            if parent not in dirs:
+                dirs.append(parent)
+
+    # Shell history parent directories
+    for paths in SHELL_SOURCES.values():
+        for p in paths:
+            parent = p.parent
+            if parent not in dirs:
+                dirs.append(parent)
+
+    # Codex session tree root
+    if CODEX_SESSIONS.is_dir() and CODEX_SESSIONS not in dirs:
+        dirs.append(CODEX_SESSIONS)
+
+    # Claude transcripts root
+    if CLAUDE_TRANSCRIPTS_DIR.is_dir() and CLAUDE_TRANSCRIPTS_DIR not in dirs:
+        dirs.append(CLAUDE_TRANSCRIPTS_DIR)
+
+    # Antigravity brain root
+    if ANTIGRAVITY_BRAIN.is_dir() and ANTIGRAVITY_BRAIN not in dirs:
+        dirs.append(ANTIGRAVITY_BRAIN)
+
+    return _FileWatcher([d for d in dirs if d.is_dir()])
+
+
+# Glob cache entry — __slots__ reduces per-instance overhead compared to a plain dict.
+
+
+class _GlobCacheEntry:
+    """Lightweight holder for a cached glob result list.
+
+    Using ``__slots__`` eliminates the per-instance ``__dict__`` overhead (~200 B
+    per object).  Wrapped in a ``WeakValueDictionary`` so entries that are no
+    longer referenced by the tracker can be collected under memory pressure.
+    """
+
+    __slots__ = ("paths", "__weakref__")
+
+    def __init__(self, paths: list[Path]) -> None:
+        self.paths: list[Path] = paths
+
+
 # SessionTracker
 
 
@@ -459,8 +774,9 @@ class SessionTracker:
         # In-flight sessions: sid -> metadata dict
         self.sessions: dict[str, dict[str, Any]] = {}
 
-        # File-read cursors: cursor_key -> (inode, byte_offset)
-        self.file_cursors: dict[str, tuple[int, int]] = {}
+        # File-read cursors: cursor_key -> (inode, byte_offset).
+        # OrderedDict enables O(1) FIFO eviction via popitem(last=False).
+        self.file_cursors: OrderedDict[str, tuple[int, int]] = OrderedDict()
 
         # Antigravity brain sessions: sid -> metadata dict
         self.antigravity_sessions: dict[str, dict[str, Any]] = {}
@@ -468,6 +784,21 @@ class SessionTracker:
         # Active source descriptors discovered on disk
         self.active_jsonl: dict[str, dict[str, Any]] = {}
         self.active_shell: dict[str, Path] = {}
+
+        # Adaptive polling: sources that have had recent activity.
+        # Maps source_name -> last-activity timestamp.
+        self._active_sources: dict[str, float] = {}
+
+        # WeakValueDictionary for glob-cache entries; allows GC under memory pressure.
+        # Values are lists wrapped in a simple holder so they are reference-counted.
+        self._glob_cache_refs: weakref.WeakValueDictionary[str, _GlobCacheEntry] = weakref.WeakValueDictionary()
+        # Keep strong references for the three glob caches we own.
+        self._codex_glob_entry: _GlobCacheEntry = _GlobCacheEntry([])
+        self._transcript_glob_entry: _GlobCacheEntry = _GlobCacheEntry([])
+        self._antigravity_glob_entry: _GlobCacheEntry = _GlobCacheEntry([])
+        self._glob_cache_refs["codex_sessions"] = self._codex_glob_entry
+        self._glob_cache_refs["claude_transcripts"] = self._transcript_glob_entry
+        self._glob_cache_refs["antigravity_dirs"] = self._antigravity_glob_entry
 
         # Internal timers and counters
         self._last_heartbeat: float = time.time()
@@ -582,19 +913,26 @@ class SessionTracker:
         return prev_offset
 
     def _set_cursor(self, cursor_key: str, path: Path | str, offset: int) -> None:
+        """Update the read cursor for *cursor_key*, using FIFO eviction via OrderedDict.
+
+        When the cursor map exceeds ``MAX_FILE_CURSORS``, the oldest third of
+        entries (insertion order) are removed in O(n/3) time using
+        ``OrderedDict.popitem(last=False)`` — no sort required.
+        """
         try:
             inode = Path(path).stat().st_ino
         except OSError:
             return
+        # Move existing key to end (most-recently-used position); insert if new.
+        if cursor_key in self.file_cursors:
+            self.file_cursors.move_to_end(cursor_key)
         self.file_cursors[cursor_key] = (inode, offset)
         # Enforce cursor map upper bound on every write so the periodic
         # cleanup_cursors() call is a safety net, not the primary guard.
         if len(self.file_cursors) > MAX_FILE_CURSORS:
-            # Evict the lexicographically oldest third of keys (cheap, stable).
-            keys = sorted(self.file_cursors.keys())
-            remove_n = max(1, len(keys) // 3)
-            for k in keys[:remove_n]:
-                del self.file_cursors[k]
+            remove_n = max(1, len(self.file_cursors) // 3)
+            for _ in range(remove_n):
+                self.file_cursors.popitem(last=False)
             logger.debug("_set_cursor: evicted %d stale cursors (cap=%d).", remove_n, MAX_FILE_CURSORS)
 
     @staticmethod
@@ -1058,6 +1396,8 @@ class SessionTracker:
     # Session management
 
     def _upsert_session(self, sid: str, source: str, text: str, now: float) -> None:
+        # Intern source_type values so identical strings share one object.
+        source = sys.intern(source)
         if sid not in self.sessions:
             if len(self.sessions) >= MAX_TRACKED_SESSIONS:
                 self._evict_oldest()
@@ -1079,6 +1419,8 @@ class SessionTracker:
         sess["last_hash"] = digest
         sess["last_seen"] = now
         self._last_activity_ts = now
+        # Mark this source as recently active for adaptive polling.
+        self._active_sources[source] = now
 
         if len(sess["messages"]) > MAX_MESSAGES_PER_SESSION:
             del sess["messages"][:-200]
@@ -1120,13 +1462,16 @@ class SessionTracker:
             gc.collect()
 
     def cleanup_cursors(self) -> None:
-        """Evict the oldest third of cursor entries when the map is over-full."""
+        """Evict the oldest third of cursor entries when the map is over-full.
+
+        Uses ``OrderedDict.popitem(last=False)`` for O(1)-per-item FIFO removal
+        without any sorting.
+        """
         if len(self.file_cursors) <= MAX_FILE_CURSORS:
             return
-        keys = sorted(self.file_cursors.keys())
-        remove_n = max(1, len(keys) // 3)
-        for key in keys[:remove_n]:
-            del self.file_cursors[key]
+        remove_n = max(1, len(self.file_cursors) // 3)
+        for _ in range(remove_n):
+            self.file_cursors.popitem(last=False)
         logger.info("Evicted %d stale file cursors.", remove_n)
         gc.collect()
 
@@ -1323,10 +1668,30 @@ class SessionTracker:
             return
         self._retry_pending()
 
+    # Adaptive polling helpers
+
+    def _expire_active_sources(self, now: float) -> None:
+        """Remove sources from ``_active_sources`` that have been idle longer than ``ACTIVE_SOURCE_WINDOW_SEC``."""
+        stale = [src for src, ts in self._active_sources.items() if now - ts > ACTIVE_SOURCE_WINDOW_SEC]
+        for src in stale:
+            del self._active_sources[src]
+
+    def has_active_sources(self, now: float) -> bool:
+        """Return True if any source has had activity within ``ACTIVE_SOURCE_WINDOW_SEC``."""
+        self._expire_active_sources(now)
+        return bool(self._active_sources)
+
     # Adaptive sleep interval
 
     def next_sleep_interval(self) -> int:
-        """Return adaptive sleep seconds: night-mode expansion, idle cap, fast-poll reduction."""
+        """Return adaptive sleep seconds: night-mode, idle cap, active-source fast-poll.
+
+        Polling strategy:
+        - Night hours with no pending work → ``NIGHT_POLL_INTERVAL_SEC``
+        - No pending sessions or files → ``min(POLL_INTERVAL_SEC*3, IDLE_SLEEP_CAP_SEC)``
+        - Active sources (changes in last ``ACTIVE_SOURCE_WINDOW_SEC``) → ``FAST_POLL_INTERVAL_SEC``
+        - After ``IDLE_TIMEOUT_SEC`` with no activity on *any* source → ``NIGHT_POLL_INTERVAL_SEC``
+        """
         current_hour = datetime.now().hour
         start_h = NIGHT_POLL_START_HOUR % 24
         end_h = NIGHT_POLL_END_HOUR % 24
@@ -1345,7 +1710,21 @@ class SessionTracker:
         if is_night and not has_pending_sessions and not has_pending_files:
             return max(1, NIGHT_POLL_INTERVAL_SEC)
 
+        now = time.time()
+
+        # If no activity on any source for IDLE_TIMEOUT_SEC, switch to night-mode rate.
+        if (
+            self._last_activity_ts is not None
+            and (now - self._last_activity_ts) > IDLE_TIMEOUT_SEC
+            and not has_pending_sessions
+            and not has_pending_files
+        ):
+            return max(1, NIGHT_POLL_INTERVAL_SEC)
+
         if not has_pending_sessions and not has_pending_files:
+            # Use fast rate when active sources exist, otherwise apply idle cap.
+            if self.has_active_sources(now):
+                return max(1, FAST_POLL_INTERVAL_SEC)
             return min(POLL_INTERVAL_SEC * 3, IDLE_SLEEP_CAP_SEC)
 
         sleep_s = max(1, POLL_INTERVAL_SEC)
@@ -1353,7 +1732,10 @@ class SessionTracker:
         if has_pending_files:
             sleep_s = min(sleep_s, FAST_POLL_INTERVAL_SEC)
 
-        now = time.time()
+        # Active sources get fast poll rate.
+        if self.has_active_sources(now):
+            sleep_s = min(sleep_s, FAST_POLL_INTERVAL_SEC)
+
         nearest_due: float | None = None
         for data in self.sessions.values():
             if data.get("exported"):
@@ -1377,7 +1759,13 @@ class SessionTracker:
     # Periodic heartbeat
 
     def heartbeat(self) -> None:
-        """Log a structured status line at HEARTBEAT_INTERVAL_SEC intervals."""
+        """Log a structured status line at HEARTBEAT_INTERVAL_SEC intervals.
+
+        Includes:
+        - RSS memory from ``resource.getrusage`` (OS-level)
+        - Python-object sizes via ``sys.getsizeof`` for sessions and cursors
+        - Count of recently active sources
+        """
         now = time.time()
         if now - self._last_heartbeat < HEARTBEAT_INTERVAL_SEC:
             return
@@ -1391,17 +1779,28 @@ class SessionTracker:
             except (OSError, ValueError):
                 pass
 
+        # Shallow object-size tracking (does not recurse into values, but gives
+        # a useful signal for the size of the top-level dicts themselves).
+        sessions_sz_kb = sys.getsizeof(self.sessions) / 1024
+        cursors_sz_kb = sys.getsizeof(self.file_cursors) / 1024
+
         pending_count = sum(1 for _ in PENDING_DIR.glob("*.md")) if PENDING_DIR.exists() else 0
         active_sources = [*self.active_jsonl.keys(), *self.active_shell.keys()]
+        self._expire_active_sources(now)
+        hot_sources_count = len(self._active_sources)
 
         logger.info(
-            "heartbeat sessions=%d cursors=%d exported=%d errors=%d pending=%d mem_mb=%.1f active_sources=%s",
+            "heartbeat sessions=%d cursors=%d exported=%d errors=%d pending=%d"
+            " mem_mb=%.1f sessions_kb=%.1f cursors_kb=%.1f hot_sources=%d active_sources=%s",
             len(self.sessions),
             len(self.file_cursors),
             self._export_count,
             self._error_count,
             pending_count,
             mem_mb,
+            sessions_sz_kb,
+            cursors_sz_kb,
+            hot_sources_count,
             ",".join(active_sources) if active_sources else "none",
         )
 
@@ -1451,9 +1850,31 @@ def main() -> None:
     cycle = 0
     consecutive_errors = 0
 
+    # Optional event-driven file watcher: reduces polling overhead on Linux
+    # by using inotify to detect directory changes.  Falls back to pure
+    # polling when inotify is unavailable or ENABLE_FILE_WATCHER=false.
+    file_watcher: _FileWatcher | None = _build_file_watcher()
+    if file_watcher is not None:
+        logger.info(
+            "FileWatcher active (inotify=%s) on %d directories.",
+            file_watcher._inotify_fd >= 0,
+            len(file_watcher._directories),
+        )
+    else:
+        logger.debug("FileWatcher disabled (CONTEXTGO_ENABLE_FILE_WATCHER=false).")
+
     while not _shutdown:
         had_error = False
         try:
+            # Drain any pending inotify events before deciding whether to poll.
+            if file_watcher is not None:
+                file_watcher.update()
+
+            # Determine whether any watched source directory signalled a change.
+            # When the watcher is in fallback/polling mode has_changes() is always
+            # True so existing behaviour is fully preserved.
+            watcher_has_changes: bool = file_watcher is None or file_watcher.has_changes()
+
             # Poll cycle
             # Each step checks whether it still has budget before proceeding.
             # Higher-priority monitors (JSONL, shell) always run; lower-priority
@@ -1494,6 +1915,26 @@ def main() -> None:
 
         sleep_s = float(tracker.next_sleep_interval())
 
+        # When the file watcher is active and inotify is running (not fallback),
+        # extend the sleep toward IDLE_SLEEP_CAP_SEC if no changes were detected
+        # and there are no pending retries outstanding.  This avoids spinning
+        # when the filesystem is quiet.  R19's adaptive active-source polling
+        # already handles fast-poll when sources are hot; this extension only
+        # applies when both inotify and active-source logic agree it is quiet.
+        if (
+            not had_error
+            and file_watcher is not None
+            and file_watcher._inotify_fd >= 0
+            and not watcher_has_changes
+            and not tracker.has_active_sources(time.time())
+        ):
+            has_pending_files: bool = False
+            with contextlib.suppress(OSError):
+                has_pending_files = PENDING_DIR.exists() and any(PENDING_DIR.glob("*.md"))
+            has_pending_sessions = any(not v.get("exported") for v in tracker.sessions.values())
+            if not has_pending_sessions and not has_pending_files:
+                sleep_s = min(float(IDLE_SLEEP_CAP_SEC), sleep_s * 2)
+
         if consecutive_errors > 0:
             sleep_s += min(float(ERROR_BACKOFF_MAX_SEC), float(2 ** min(consecutive_errors, 6)))
 
@@ -1507,6 +1948,9 @@ def main() -> None:
     if tracker._http_client is not None:
         with contextlib.suppress(Exception):
             tracker._http_client.close()
+    if file_watcher is not None:
+        with contextlib.suppress(Exception):
+            file_watcher.close()
     logger.info("ContextGO daemon stopped. Total sessions exported: %d.", tracker._export_count)
 
 

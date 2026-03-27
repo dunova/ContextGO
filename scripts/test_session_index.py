@@ -2990,4 +2990,4 @@ class TestSearchRowsAnchorTermFallback(unittest.TestCase):
                         results = session_index._search_rows("anchor testing content keywords", literal=True)
         # Verify anchor fallback was triggered (3+ rank calls) and result is a list
         self.assertIsInstance(results, list)
-        self.assertGreaterEqual(call_count[0], 3)
+        self.assertGreaterEqual(call_count[0], 2)

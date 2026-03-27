@@ -1726,9 +1726,14 @@ class TestPollAntigravityDetailed(unittest.TestCase):
             context_daemon.ANTIGRAVITY_BUSY_LS_THRESHOLD = 1
             # last log was long ago — should log
             self.tracker._last_antigravity_busy_log = 0.0
-            with patch("context_daemon._count_antigravity_language_servers", return_value=5):
-                with patch.object(context_daemon.logger, "info") as mock_log:
-                    self.tracker.poll_antigravity()
+            # Ensure glob cache is NOT fresh so we enter the busy check
+            self.tracker._cached_antigravity_dirs = []
+            fake_brain = MagicMock()
+            fake_brain.is_dir.return_value = True
+            with patch("context_daemon.ANTIGRAVITY_BRAIN", fake_brain):
+                with patch("context_daemon._count_antigravity_language_servers", return_value=5):
+                    with patch.object(context_daemon.logger, "info") as mock_log:
+                        self.tracker.poll_antigravity()
             # Should have logged the busy message
             calls = [c for c in mock_log.call_args_list if "poll_antigravity skipped" in str(c)]
             self.assertTrue(len(calls) >= 1)
@@ -2718,7 +2723,8 @@ class TestCleanupCursors(unittest.TestCase):
         original_max = context_daemon.MAX_FILE_CURSORS
         try:
             context_daemon.MAX_FILE_CURSORS = 1000
-            self.tracker.file_cursors = {f"key_{i}": (i, i) for i in range(10)}
+            from collections import OrderedDict
+            self.tracker.file_cursors = OrderedDict((f"key_{i}", (i, i)) for i in range(10))
             self.tracker.cleanup_cursors()
             self.assertEqual(len(self.tracker.file_cursors), 10)
         finally:
@@ -2728,7 +2734,8 @@ class TestCleanupCursors(unittest.TestCase):
         original_max = context_daemon.MAX_FILE_CURSORS
         try:
             context_daemon.MAX_FILE_CURSORS = 6
-            self.tracker.file_cursors = {f"key_{i:03d}": (i, i) for i in range(9)}
+            from collections import OrderedDict
+            self.tracker.file_cursors = OrderedDict((f"key_{i:03d}", (i, i)) for i in range(9))
             self.tracker.cleanup_cursors()
             # Should remove roughly 1/3 = 3 entries
             self.assertLess(len(self.tracker.file_cursors), 9)
@@ -3218,12 +3225,14 @@ class TestPollAntigravityEdgeCases(unittest.TestCase):
 
     def test_busy_threshold_logs_then_returns(self) -> None:
         with patch.object(context_daemon, "ENABLE_ANTIGRAVITY_MONITOR", True):
-            with patch.object(context_daemon, "SUSPEND_ANTIGRAVITY_WHEN_BUSY", True):
-                with patch.object(context_daemon, "ANTIGRAVITY_BUSY_LS_THRESHOLD", 1):
-                    with patch("context_daemon._count_antigravity_language_servers", return_value=2):
-                        # Force log by setting _last_antigravity_busy_log to long ago
-                        self.tracker._last_antigravity_busy_log = 0.0
-                        self.tracker.poll_antigravity()
+            with patch.object(context_daemon, "ANTIGRAVITY_BRAIN", self.brain_dir):
+                with patch.object(context_daemon, "SUSPEND_ANTIGRAVITY_WHEN_BUSY", True):
+                    with patch.object(context_daemon, "ANTIGRAVITY_BUSY_LS_THRESHOLD", 1):
+                        with patch("context_daemon._count_antigravity_language_servers", return_value=2):
+                            # Force log by setting _last_antigravity_busy_log to long ago
+                            self.tracker._last_antigravity_busy_log = 0.0
+                            self.tracker._cached_antigravity_dirs = []
+                            self.tracker.poll_antigravity()
         # Log was triggered; method returned early without error
         self.assertGreater(self.tracker._last_antigravity_busy_log, 0.0)
 
@@ -3966,12 +3975,14 @@ class TestPollAntigravityFinalOnlyChecks(unittest.TestCase):
     def test_busy_threshold_not_logged_within_interval(self) -> None:
         """Busy threshold: if log was recent, no log and returns early."""
         with patch.object(context_daemon, "ENABLE_ANTIGRAVITY_MONITOR", True):
-            with patch.object(context_daemon, "SUSPEND_ANTIGRAVITY_WHEN_BUSY", True):
-                with patch.object(context_daemon, "ANTIGRAVITY_BUSY_LS_THRESHOLD", 1):
-                    with patch("context_daemon._count_antigravity_language_servers", return_value=2):
-                        # Set _last_antigravity_busy_log to just now (no re-log)
-                        self.tracker._last_antigravity_busy_log = time.time()
-                        self.tracker.poll_antigravity()
+            with patch.object(context_daemon, "ANTIGRAVITY_BRAIN", self.brain_dir):
+                with patch.object(context_daemon, "SUSPEND_ANTIGRAVITY_WHEN_BUSY", True):
+                    with patch.object(context_daemon, "ANTIGRAVITY_BUSY_LS_THRESHOLD", 1):
+                        with patch("context_daemon._count_antigravity_language_servers", return_value=2):
+                            # Set _last_antigravity_busy_log to just now (no re-log)
+                            self.tracker._last_antigravity_busy_log = time.time()
+                            self.tracker._cached_antigravity_dirs = []
+                            self.tracker.poll_antigravity()
         # Method returned early; sessions unchanged
         self.assertEqual(len(self.tracker.antigravity_sessions), 0)
 

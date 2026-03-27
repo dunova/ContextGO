@@ -84,6 +84,21 @@ _DDL_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_obs_updated  ON observations(updated_at_epoch DESC)",
 ]
 
+# FTS5 virtual table DDL (content table mirrors the observations base table).
+_DDL_FTS5 = (
+    "CREATE VIRTUAL TABLE IF NOT EXISTS observations_fts USING fts5("
+    "title, content, tags_json, "
+    "content=observations, content_rowid=rowid"
+    ")"
+)
+
+# SQL to (re)populate the FTS5 index from the base table.
+_SQL_FTS5_REBUILD = "INSERT INTO observations_fts(observations_fts) VALUES ('rebuild')"
+
+# SQL to insert / delete a single row in the FTS5 shadow tables.
+_SQL_FTS5_INSERT = "INSERT INTO observations_fts(rowid, title, content, tags_json) VALUES (?, ?, ?, ?)"
+_SQL_FTS5_DELETE = "INSERT INTO observations_fts(observations_fts, rowid) VALUES ('delete', ?)"
+
 _SQL_INSERT_OBS = """
     INSERT INTO observations(
         fingerprint, source_type, session_id, title, content,
@@ -211,6 +226,68 @@ def _open_db(db_path: Path) -> Generator[sqlite3.Connection, None, None]:
         yield conn
     finally:
         conn.close()
+
+
+# FTS5 availability cache: db_path_str -> bool
+_FTS5_AVAILABLE_CACHE: dict[str, bool] = {}
+
+# Special characters in the FTS5 query syntax that must be escaped or stripped.
+_FTS5_SPECIAL_RE = re.compile(r'["\(\)\[\]:^*]')
+
+
+def _fts5_available(conn: sqlite3.Connection, db_path: Path) -> bool:
+    """Return True if the observations_fts virtual table exists and is usable.
+
+    The result is cached per database path so the table-existence check is
+    only executed once per process lifetime per database file.
+
+    Args:
+        conn: An open :class:`sqlite3.Connection` to the target database.
+        db_path: Filesystem path of the database (used as the cache key).
+
+    Returns:
+        ``True`` when FTS5 is available; ``False`` otherwise.
+    """
+    key = str(db_path)
+    if key in _FTS5_AVAILABLE_CACHE:
+        return _FTS5_AVAILABLE_CACHE[key]
+    try:
+        conn.execute("SELECT 1 FROM observations_fts LIMIT 0")
+        _FTS5_AVAILABLE_CACHE[key] = True
+    except sqlite3.OperationalError:
+        _FTS5_AVAILABLE_CACHE[key] = False
+    return _FTS5_AVAILABLE_CACHE[key]
+
+
+def _escape_fts5_query(query: str) -> str:
+    """Convert a free-text query string into a safe FTS5 MATCH expression.
+
+    Multi-word queries are converted to AND-connected quoted phrases so that
+    each individual token must appear in the document.  FTS5 special
+    characters (parentheses, quotes, colons, carets, asterisks) are stripped
+    to prevent syntax errors.  The function handles CJK text correctly
+    because SQLite's unicode61 tokeniser handles Unicode codepoints natively;
+    no special escaping is needed for CJK characters.
+
+    Args:
+        query: Raw user-supplied search string.
+
+    Returns:
+        A string suitable for use as the right-hand operand of an FTS5 MATCH
+        expression, or an empty string when the query is blank after cleaning.
+
+    Examples:
+        >>> _escape_fts5_query("hello world")
+        '"hello" AND "world"'
+        >>> _escape_fts5_query("fast search")
+        '"fast" AND "search"'
+    """
+    cleaned = _FTS5_SPECIAL_RE.sub(" ", query).strip()
+    tokens = [t for t in cleaned.split() if t]
+    if not tokens:
+        return ""
+    # Wrap each token in double-quotes so it is treated as a literal phrase.
+    return " AND ".join(f'"{t}"' for t in tokens)
 
 
 # SQLite retry helpers
@@ -393,8 +470,9 @@ def _parse_markdown(path: Path) -> Observation | None:
 def ensure_index_db() -> Path:
     """Ensure the SQLite index database and its schema exist.
 
-    Creates all parent directories as needed.  Returns the resolved path to
-    the database file.
+    Creates all parent directories as needed.  Also creates the FTS5 virtual
+    table ``observations_fts`` and populates it from the base table when it
+    did not previously exist.  Returns the resolved path to the database file.
     """
     db_path = get_index_db_path()
     db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -402,6 +480,22 @@ def ensure_index_db() -> Path:
         _retry_sqlite(conn, _DDL_OBSERVATIONS)
         for idx_sql in _DDL_INDEXES:
             _retry_sqlite(conn, idx_sql)
+        # Create FTS5 virtual table if it does not already exist, then
+        # populate it from the base table.  The 'rebuild' command is
+        # idempotent: it truncates and repopulates the FTS index from the
+        # content= base table, so it is safe to call on every startup.
+        try:
+            fts_existed = _fts5_available(conn, db_path)
+            _retry_sqlite(conn, _DDL_FTS5)
+            if not fts_existed:
+                # Newly created — rebuild to populate from existing rows.
+                conn.execute(_SQL_FTS5_REBUILD)
+                # Invalidate the cache entry so the next call re-checks.
+                _FTS5_AVAILABLE_CACHE.pop(str(db_path), None)
+        except sqlite3.OperationalError:
+            # FTS5 extension not available in this SQLite build; continue
+            # without it — LIKE-based search will be used as the fallback.
+            _FTS5_AVAILABLE_CACHE[str(db_path)] = False
         _retry_commit(conn)
     return db_path
 
@@ -490,6 +584,15 @@ def sync_index_from_storage() -> dict[str, int]:
             if row["file_path"] not in seen_local_paths:
                 _retry_sqlite(conn, _SQL_DELETE_OBS, (row["id"],))
                 removed += 1
+
+        # Rebuild the FTS5 index after bulk DML so the content table stays
+        # consistent.  The 'rebuild' command is transactionally safe under WAL.
+        if added or updated or removed:
+            try:
+                if _fts5_available(conn, db_path):
+                    conn.execute(_SQL_FTS5_REBUILD)
+            except sqlite3.OperationalError:
+                pass  # FTS5 not available; LIKE fallback will be used.
 
         _retry_commit(conn)
 
@@ -591,21 +694,147 @@ def search_index(
             return list(cached[1])
 
     with _open_db(db_path) as conn:
-        where_clause, args = _obs_where_clause(query, source_type)
-        if date_start_epoch is not None:
-            where_clause = (where_clause + " AND" if where_clause else "WHERE") + " created_at_epoch >= ?"
-            args.append(date_start_epoch)
-        if date_end_epoch is not None:
-            where_clause = (where_clause + " AND" if where_clause else "WHERE") + " created_at_epoch <= ?"
-            args.append(date_end_epoch)
-        sql = f"SELECT * FROM observations {where_clause} ORDER BY created_at_epoch DESC LIMIT ? OFFSET ?"
-        args.extend([clamped_limit, clamped_offset])
-        results = [_row_to_dict(r) for r in conn.execute(sql, args).fetchall()]
+        results = _search_with_fts5_or_like(
+            conn,
+            db_path,
+            query=query,
+            source_type=source_type,
+            date_start_epoch=date_start_epoch,
+            date_end_epoch=date_end_epoch,
+            limit=clamped_limit,
+            offset=clamped_offset,
+        )
 
     if _SEARCH_CACHE_TTL > 0:
         _SEARCH_CACHE[cache_key] = (time.monotonic() + _SEARCH_CACHE_TTL, results)
 
     return results
+
+
+def _search_with_fts5_or_like(
+    conn: sqlite3.Connection,
+    db_path: Path,
+    *,
+    query: str,
+    source_type: str,
+    date_start_epoch: int | None,
+    date_end_epoch: int | None,
+    limit: int,
+    offset: int,
+) -> list[dict[str, Any]]:
+    """Execute a search against the index, preferring FTS5 over LIKE.
+
+    When *query* is non-empty and the ``observations_fts`` virtual table is
+    present, the function issues an FTS5 MATCH query and ranks results by
+    BM25 score (best match first).  If the FTS5 query fails for any reason
+    (e.g. an unsupported query syntax despite escaping, or the extension
+    being unavailable at query time), it transparently falls back to the
+    legacy ``LIKE '%term%'`` path via :func:`_obs_where_clause`.
+
+    When *query* is empty the function always uses the LIKE path (which
+    simply omits the text predicate) because FTS5 MATCH requires a non-empty
+    search term.
+
+    Date range filters are applied identically in both paths.
+
+    Args:
+        conn: An open :class:`sqlite3.Connection`.
+        db_path: Filesystem path of the database (used for the FTS5 cache).
+        query: Raw user search string.
+        source_type: Source type filter, or ``"all"`` for no filter.
+        date_start_epoch: Inclusive lower bound on ``created_at_epoch``.
+        date_end_epoch: Inclusive upper bound on ``created_at_epoch``.
+        limit: Maximum rows to return.
+        offset: Zero-based pagination offset.
+
+    Returns:
+        List of observation dicts.
+    """
+    q = strip_private_blocks(query).strip()
+
+    # FTS5 path: attempted only when a non-empty query is provided and FTS5 is
+    # available.
+    if q and _fts5_available(conn, db_path):
+        fts_expr = _escape_fts5_query(q)
+        if fts_expr:
+            try:
+                return _execute_fts5_search(
+                    conn,
+                    fts_expr=fts_expr,
+                    source_type=source_type,
+                    date_start_epoch=date_start_epoch,
+                    date_end_epoch=date_end_epoch,
+                    limit=limit,
+                    offset=offset,
+                )
+            except sqlite3.OperationalError:
+                # FTS5 query failed — fall through to LIKE path.
+                pass
+
+    # LIKE fallback path (always used when query is empty or FTS5 unavailable).
+    where_clause, args = _obs_where_clause(query, source_type)
+    if date_start_epoch is not None:
+        where_clause = (where_clause + " AND" if where_clause else "WHERE") + " created_at_epoch >= ?"
+        args.append(date_start_epoch)
+    if date_end_epoch is not None:
+        where_clause = (where_clause + " AND" if where_clause else "WHERE") + " created_at_epoch <= ?"
+        args.append(date_end_epoch)
+    sql = f"SELECT * FROM observations {where_clause} ORDER BY created_at_epoch DESC LIMIT ? OFFSET ?"
+    args.extend([limit, offset])
+    return [_row_to_dict(r) for r in conn.execute(sql, args).fetchall()]
+
+
+def _execute_fts5_search(
+    conn: sqlite3.Connection,
+    *,
+    fts_expr: str,
+    source_type: str,
+    date_start_epoch: int | None,
+    date_end_epoch: int | None,
+    limit: int,
+    offset: int,
+) -> list[dict[str, Any]]:
+    """Run an FTS5 MATCH query joined back to the observations table.
+
+    Results are ordered by BM25 relevance (ascending value = better match)
+    with ``created_at_epoch DESC`` as a tie-breaker.
+
+    Args:
+        conn: An open :class:`sqlite3.Connection`.
+        fts_expr: Pre-escaped FTS5 MATCH expression.
+        source_type: Source type filter, or ``"all"`` for no filter.
+        date_start_epoch: Inclusive lower bound on ``created_at_epoch``.
+        date_end_epoch: Inclusive upper bound on ``created_at_epoch``.
+        limit: Maximum rows to return.
+        offset: Zero-based pagination offset.
+
+    Returns:
+        List of observation dicts ordered by relevance then recency.
+    """
+    extra_where: list[str] = []
+    extra_args: list[Any] = []
+
+    if source_type and source_type != "all":
+        extra_where.append("o.source_type = ?")
+        extra_args.append(source_type)
+    if date_start_epoch is not None:
+        extra_where.append("o.created_at_epoch >= ?")
+        extra_args.append(date_start_epoch)
+    if date_end_epoch is not None:
+        extra_where.append("o.created_at_epoch <= ?")
+        extra_args.append(date_end_epoch)
+
+    and_clause = (" AND " + " AND ".join(extra_where)) if extra_where else ""
+
+    sql = (
+        "SELECT o.* FROM observations o "
+        "JOIN observations_fts f ON f.rowid = o.rowid "
+        f"WHERE f.observations_fts MATCH ?{and_clause} "
+        "ORDER BY bm25(observations_fts) ASC, o.created_at_epoch DESC "
+        "LIMIT ? OFFSET ?"
+    )
+    args: list[Any] = [fts_expr, *extra_args, limit, offset]
+    return [_row_to_dict(r) for r in conn.execute(sql, args).fetchall()]
 
 
 def timeline_index(
@@ -853,6 +1082,12 @@ def import_observations_payload(
             if to_insert:
                 _retry_sqlite_many(conn, _SQL_INSERT_OBS, to_insert)
                 inserted = len(to_insert)
+                # Keep FTS5 index consistent after bulk inserts.
+                try:
+                    if _fts5_available(conn, db_path):
+                        conn.execute(_SQL_FTS5_REBUILD)
+                except sqlite3.OperationalError:
+                    pass  # FTS5 not available; LIKE fallback will be used.
 
             _retry_commit(conn)
 

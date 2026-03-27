@@ -14,7 +14,9 @@ write_memory_markdown   -- write a memory entry as a Markdown file
 from __future__ import annotations
 
 import contextlib
+import heapq
 import json
+import mmap
 import os
 import re
 from collections.abc import Iterable
@@ -55,23 +57,58 @@ def safe_mtime(path: Path | str) -> float:
         return 0.0
 
 
+def _scandir_files(root: str) -> list[tuple[float, Path]]:
+    """Recursively yield ``(mtime, Path)`` pairs for text files under *root*.
+
+    Uses ``os.scandir()`` for fast directory traversal.  Hidden files and
+    directories (names starting with ``.``) are skipped.
+    """
+    results: list[tuple[float, Path]] = []
+    stack: list[str] = [root]
+    while stack:
+        current = stack.pop()
+        try:
+            with os.scandir(current) as it:
+                for entry in it:
+                    if entry.name.startswith("."):
+                        continue
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            stack.append(entry.path)
+                        elif entry.is_file(follow_symlinks=False):
+                            suffix = os.path.splitext(entry.name)[1].lower()
+                            if suffix in TEXT_FILE_SUFFIXES:
+                                try:
+                                    st = entry.stat()
+                                    results.append((st.st_mtime, Path(entry.path)))
+                                except OSError:
+                                    pass
+                    except OSError:
+                        pass
+        except OSError:
+            pass
+    return results
+
+
 def iter_shared_files(shared_root: Path | str, max_files: int) -> list[Path]:
     """Return up to *max_files* text files beneath *shared_root*, newest first.
 
     Hidden files (names starting with ``.``) are excluded.  Returns an empty
     list when *shared_root* does not exist or is not a directory.
+
+    Uses ``os.scandir()`` internally for faster traversal compared to
+    ``Path.rglob()``, and ``heapq.nlargest`` to avoid a full sort when only
+    the top-N newest files are needed.
     """
     root = Path(shared_root)
     if not root.is_dir():
         return []
 
-    files: list[Path] = [
-        p
-        for p in root.rglob("*")
-        if p.is_file() and not p.name.startswith(".") and p.suffix.lower() in TEXT_FILE_SUFFIXES
-    ]
-    files.sort(key=safe_mtime, reverse=True)
-    return files[: max(1, int(max_files))]
+    n = max(1, int(max_files))
+    pairs = _scandir_files(str(root))
+    # heapq.nlargest is O(k log k + n) which beats full sort when k << n.
+    top = heapq.nlargest(n, pairs, key=lambda t: t[0])
+    return [p for _, p in top]
 
 
 # ---------------------------------------------------------------------------
@@ -82,6 +119,118 @@ def iter_shared_files(shared_root: Path | str, max_files: int) -> list[Path]:
 def compact_text(text: str) -> str:
     """Collapse all whitespace runs to a single space and strip leading/trailing whitespace."""
     return _WHITESPACE_RE.sub(" ", text or "").strip()
+
+
+# ---------------------------------------------------------------------------
+# mmap helper
+# ---------------------------------------------------------------------------
+
+
+def _mmap_contains(path: Path, query_bytes: bytes, read_cap: int) -> bool:
+    """Return ``True`` if *query_bytes* appears within the first *read_cap* bytes of *path*.
+
+    Uses ``mmap.mmap()`` for zero-copy access and ``mmap.find()`` for a fast
+    byte-level substring search that avoids decoding the entire file.
+
+    Falls back to a regular ``read()`` if mmap is unavailable (e.g. the file
+    is empty or the platform does not support it).  Returns ``False`` on any
+    OS or permission error.
+
+    Parameters
+    ----------
+    path:
+        File to inspect.
+    query_bytes:
+        Raw bytes to search for (should already be lower-cased if
+        case-insensitive matching is desired).
+    read_cap:
+        Maximum number of bytes to examine from the start of the file.
+    """
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return False
+
+    if size == 0:
+        return False
+
+    # Clamp the region we inspect.
+    region = min(size, read_cap)
+
+    # --- attempt mmap ---
+    try:
+        with open(path, "rb") as fh:
+            try:
+                mm = mmap.mmap(fh.fileno(), region, access=mmap.ACCESS_READ)
+            except OSError:
+                # mmap unavailable (e.g. /proc files, zero-length after race)
+                # fall back to regular read
+                fh.seek(0)
+                data = fh.read(region).lower()
+                return query_bytes in data
+            try:
+                # Case-insensitive: lower the mmap region before searching.
+                data = mm[:region].lower()
+                return query_bytes in data
+            finally:
+                mm.close()
+    except OSError:
+        return False
+
+
+def _mmap_snippet(path: Path, query_bytes: bytes, query_str: str, read_cap: int) -> str:
+    """Extract a text snippet around the first occurrence of *query_bytes* in *path*.
+
+    Returns an empty string when the query is not found or on any error.
+
+    The snippet is taken from the decoded text of the file region, centred on
+    the match position, with radius ``_SNIPPET_RADIUS``.
+
+    Parameters
+    ----------
+    path:
+        File to read.
+    query_bytes:
+        Raw lower-cased query bytes (used to locate the byte offset).
+    query_str:
+        Original query string (used for length calculation after decode).
+    read_cap:
+        Maximum bytes to read.
+    """
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return ""
+
+    if size == 0:
+        return ""
+
+    region = min(size, read_cap)
+
+    try:
+        with open(path, "rb") as fh:
+            try:
+                mm = mmap.mmap(fh.fileno(), region, access=mmap.ACCESS_READ)
+            except OSError:
+                fh.seek(0)
+                raw = fh.read(region)
+            else:
+                try:
+                    raw = bytes(mm)
+                finally:
+                    mm.close()
+    except OSError:
+        return ""
+
+    # Decode permissively so binary noise does not crash snippet extraction.
+    text = raw.decode("utf-8", errors="ignore")
+    idx = text.lower().find(query_str.lower())
+    if idx < 0:
+        return ""
+
+    start = max(0, idx - _SNIPPET_RADIUS)
+    end = min(len(text), idx + len(query_str) + _SNIPPET_RADIUS)
+    return compact_text(text[start:end])
 
 
 # ---------------------------------------------------------------------------
@@ -123,6 +272,15 @@ def local_memory_matches(
     list[dict[str, Any]]
         Each entry contains ``uri_hint``, ``file_path``, ``matched_in``,
         ``mtime`` (ISO-8601), and ``snippet``.
+
+    Notes
+    -----
+    Content scanning uses ``mmap.mmap()`` + ``mmap.find()`` for zero-copy
+    byte-level search, which avoids decoding the entire file.  A graceful
+    fallback to ``read()`` is used when mmap is unavailable.  Scanning stops
+    as soon as *limit* matches have been collected (early termination).
+    Files are pre-sorted newest-first by ``iter_shared_files`` so recent
+    files are checked before older ones.
     """
     q = (query or "").strip()
     if not q:
@@ -134,12 +292,18 @@ def local_memory_matches(
     )
 
     ql = q.lower()
+    # Pre-encode the lower-cased query for byte-level mmap search.
+    ql_bytes = ql.encode("utf-8")
     cap = max(1, int(limit))
     read_cap = max(4096, int(read_bytes))
     prefix = (uri_prefix or "").strip()
     matches: list[dict[str, Any]] = []
 
     for path in search_files:
+        # Early termination: stop once we have enough results.
+        if len(matches) >= cap:
+            break
+
         matched_in: str | None = None
         snippet: str = ""
 
@@ -152,16 +316,10 @@ def local_memory_matches(
             matched_in = "path"
             snippet = rel_path
         else:
-            try:
-                text = path.read_text(encoding="utf-8", errors="ignore")[:read_cap]
-            except OSError:
-                continue
-            idx = text.lower().find(ql)
-            if idx >= 0:
+            # Fast byte-level search via mmap; avoids full UTF-8 decode.
+            if _mmap_contains(path, ql_bytes, read_cap):
                 matched_in = "content"
-                start = max(0, idx - _SNIPPET_RADIUS)
-                end = min(len(text), idx + len(q) + _SNIPPET_RADIUS)
-                snippet = compact_text(text[start:end])
+                snippet = _mmap_snippet(path, ql_bytes, ql, read_cap)
 
         if matched_in:
             matches.append(
@@ -173,8 +331,6 @@ def local_memory_matches(
                     "snippet": snippet,
                 }
             )
-        if len(matches) >= cap:
-            break
 
     return matches
 

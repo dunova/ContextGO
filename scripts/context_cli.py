@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import argparse
 import os
 import sys
 from pathlib import Path
@@ -100,6 +99,33 @@ ENABLE_REMOTE_MEMORY_HTTP = env_bool(
     default=False,
 )
 REMOTE_MEMORY_URL = env_str("CONTEXTGO_REMOTE_URL", default="http://127.0.0.1:8090/api/v1")
+
+# ───────────────────────────────────────────────
+# Lazy thread pool — initialized once, reused across calls
+# ───────────────────────────────────────────────
+
+_THREAD_POOL: object | None = None  # type: concurrent.futures.ThreadPoolExecutor | None
+
+
+def _get_thread_pool() -> object:
+    """Return the module-level lazy ThreadPoolExecutor (max_workers=3).
+
+    The pool is created on first call and reused for subsequent calls, avoiding
+    repeated thread-creation overhead across parallel search and health checks.
+    """
+    global _THREAD_POOL  # noqa: PLW0603
+    if _THREAD_POOL is None:
+        from concurrent.futures import ThreadPoolExecutor  # deferred: only needed for parallel ops
+
+        _THREAD_POOL = ThreadPoolExecutor(max_workers=3, thread_name_prefix="contextgo")
+    return _THREAD_POOL
+
+
+# ───────────────────────────────────────────────
+# Cached argument parser — built once, reused on every main() call
+# ───────────────────────────────────────────────
+
+_PARSER: object | None = None  # type: argparse.ArgumentParser | None
 
 
 # ───────────────────────────────────────────────
@@ -303,8 +329,9 @@ def _remote_process_count() -> int:
 # ───────────────────────────────────────────────
 
 
-def cmd_search(args: argparse.Namespace) -> int:
+def cmd_search(args: object) -> int:
     """Search session/history context and print results."""
+
     if not args.query or not args.query.strip():
         print("Error: search query must not be empty.", file=sys.stderr)
         return 2
@@ -318,41 +345,84 @@ def cmd_search(args: argparse.Namespace) -> int:
     return 0 if not text.startswith("No matches found") else 1
 
 
-def cmd_semantic(args: argparse.Namespace) -> int:
-    """Search local memories first, then fall back to history content search."""
+def cmd_semantic(args: object) -> int:
+    """Search local memories and session index in parallel, merging by relevance.
+
+    Both search paths run concurrently via ThreadPoolExecutor with a 5-second
+    timeout each. Memory matches are preferred; if the memory path returns
+    enough results the session path result is discarded.
+    """
+    from concurrent.futures import ThreadPoolExecutor  # deferred
+    from concurrent.futures import TimeoutError as FuturesTimeoutError
+
     if not args.query or not args.query.strip():
         print("Error: search query must not be empty.", file=sys.stderr)
         return 2
-    matches = _local_memory_matches(args.query, limit=args.limit)
+
+    query: str = args.query
+    limit: int = args.limit
+    _SEARCH_TIMEOUT = 5.0  # seconds per search path
+
+    pool = _get_thread_pool()
+    assert isinstance(pool, ThreadPoolExecutor)
+
+    # Submit both search paths in parallel.
+    future_memory = pool.submit(_local_memory_matches, query, limit)
+    future_session = pool.submit(
+        _get_session_index().format_search_results,
+        query,
+        "content",
+        min(limit, 10),
+        True,  # literal=True
+    )
+
+    matches: list[dict] = []
+    session_text: str = ""
+
+    # Collect memory result first (preferred path).
+    try:
+        matches = future_memory.result(timeout=_SEARCH_TIMEOUT)
+    except FuturesTimeoutError:
+        matches = []
+    except Exception:  # noqa: BLE001
+        matches = []
+
+    # If memory returned enough results, cancel the session future (best-effort).
     if matches:
+        future_session.cancel()
         import json  # deferred: only needed when memory matches are found
 
         print("--- LOCAL MEMORY MATCHES ---")
         for item in matches:
             print(json.dumps(item, ensure_ascii=False, indent=2))
         return 0
-    text = _get_session_index().format_search_results(
-        args.query,
-        search_type="content",
-        limit=min(args.limit, 10),
-        literal=True,
-    )
-    if text:
+
+    # Memory came back empty — collect the session result.
+    try:
+        session_text = future_session.result(timeout=_SEARCH_TIMEOUT)
+    except FuturesTimeoutError:
+        session_text = ""
+    except Exception:  # noqa: BLE001
+        session_text = ""
+
+    if session_text:
         print("--- HISTORY CONTENT FALLBACK ---")
-        print(text)
-    return 0 if not text.startswith("No matches found") else 1
+        print(session_text)
+    return 0 if not session_text.startswith("No matches found") else 1
 
 
-def cmd_save(args: argparse.Namespace) -> int:
+def cmd_save(args: object) -> int:
     """Save a key conclusion to local memory storage."""
+
     tags = [t.strip() for t in args.tags.split(",") if t.strip()]
     message = _save_local_memory(args.title, args.content, tags)
     print(message)
     return 0 if not message.startswith("Failed to save memory:") else 1
 
 
-def cmd_export(args: argparse.Namespace) -> int:
+def cmd_export(args: object) -> int:
     """Export indexed observations to a JSON file."""
+
     if not args.output or not args.output.strip():
         print("Error: export output path must not be empty.", file=sys.stderr)
         return 2
@@ -373,7 +443,7 @@ def cmd_export(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_import(args: argparse.Namespace) -> int:
+def cmd_import(args: object) -> int:
     """Import observations from a previously exported JSON file."""
     import json  # deferred: only needed for import deserialisation
 
@@ -404,8 +474,9 @@ def cmd_import(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_serve(args: argparse.Namespace) -> int:
+def cmd_serve(args: object) -> int:
     """Start the local memory viewer server (blocks until interrupted)."""
+
     if not (1 <= args.port <= 65535):
         print(f"Error: port {args.port} is out of valid range 1-65535.", file=sys.stderr)
         return 2
@@ -415,8 +486,9 @@ def cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_maintain(args: argparse.Namespace) -> int:
+def cmd_maintain(args: object) -> int:
     """Run local index maintenance (repair queue, enqueue missing sessions)."""
+
     maintenance_module = _load_module("context_maintenance")
     # Re-serialize only the flags parsed here so context_maintenance.parse_args()
     # remains the single source of truth for its own defaults.
@@ -439,8 +511,9 @@ def cmd_maintain(args: argparse.Namespace) -> int:
     return maintenance_module.main(forwarded)
 
 
-def cmd_native_scan(args: argparse.Namespace) -> int:
+def cmd_native_scan(args: object) -> int:
     """Run the native Rust/Go scan backend and print results."""
+
     if args.threads < 1:
         print(f"Error: --threads must be at least 1, got {args.threads}.", file=sys.stderr)
         return 2
@@ -468,8 +541,9 @@ def cmd_native_scan(args: argparse.Namespace) -> int:
     return result.returncode
 
 
-def cmd_smoke(args: argparse.Namespace) -> int:
+def cmd_smoke(args: object) -> int:
     """Run the end-to-end smoke gate and print a JSON result summary."""
+
     scripts_dir = Path(__file__).resolve().parent
     smoke_args = (
         scripts_dir / "context_cli.py",
@@ -493,12 +567,50 @@ def cmd_smoke(args: argparse.Namespace) -> int:
     return 1 if any(not item["ok"] for item in payload["results"]) else 0
 
 
-def cmd_health(args: argparse.Namespace) -> int:
-    """Check context system health and print a JSON status payload."""
+def cmd_health(args: object) -> int:
+    """Check context system health and print a JSON status payload.
+
+    Runs session_index health, memory_index stats, and native backend checks in
+    parallel via ThreadPoolExecutor to reduce wall-clock time.
+    """
+    from concurrent.futures import ThreadPoolExecutor  # deferred
+    from concurrent.futures import TimeoutError as FuturesTimeoutError
     from datetime import datetime  # deferred: only needed for health timestamp
 
-    recall = _get_session_index().health_payload()
+    _HEALTH_TIMEOUT = 10.0  # seconds per health sub-check
+
+    pool = _get_thread_pool()
+    assert isinstance(pool, ThreadPoolExecutor)
+
+    # Submit all three independent health checks in parallel.
+    future_session = pool.submit(_get_session_index().health_payload)
+    future_memory_root = pool.submit(lambda: LOCAL_SHARED_ROOT.exists())
+    future_native = pool.submit(_get_context_native().health_payload)
+
+    # Collect session index result.
+    try:
+        recall: dict = future_session.result(timeout=_HEALTH_TIMEOUT)
+    except FuturesTimeoutError:
+        recall = {}
+    except Exception:  # noqa: BLE001
+        recall = {}
+
     db_ok = bool(recall.get("session_index_db_exists"))
+
+    # Collect memory root existence check.
+    try:
+        memory_root_exists: bool = future_memory_root.result(timeout=_HEALTH_TIMEOUT)
+    except (FuturesTimeoutError, Exception):  # noqa: BLE001
+        memory_root_exists = LOCAL_SHARED_ROOT.exists()
+
+    # Collect native backends health.
+    try:
+        native_health: object = future_native.result(timeout=_HEALTH_TIMEOUT)
+    except FuturesTimeoutError:
+        native_health = {}
+    except Exception:  # noqa: BLE001
+        native_health = {}
+
     payload: dict[str, object] = {
         "checked_at": datetime.now().isoformat(),
         "session_search_lite": {
@@ -509,7 +621,7 @@ def cmd_health(args: argparse.Namespace) -> int:
         },
         "source_freshness": _source_freshness(),
         "local_memory_root": {
-            "exists": LOCAL_SHARED_ROOT.exists(),
+            "exists": memory_root_exists,
             "path": str(LOCAL_SHARED_ROOT),
         },
         "remote_sync_policy": {
@@ -517,7 +629,7 @@ def cmd_health(args: argparse.Namespace) -> int:
             "mode": "optional-http" if ENABLE_REMOTE_MEMORY_HTTP else "disabled-by-policy",
             "remote_processes": _remote_process_count(),
         },
-        "native_backends": _get_context_native().health_payload(),
+        "native_backends": native_health,
         "all_ok": db_ok,
     }
 
@@ -564,8 +676,18 @@ COMMANDS: dict[str, object] = {
 # ───────────────────────────────────────────────
 
 
-def build_parser() -> argparse.ArgumentParser:
-    """Build and return the top-level argument parser for the ContextGO CLI."""
+def build_parser() -> object:
+    """Build and return the top-level argument parser for the ContextGO CLI.
+
+    The parser is cached at module level after the first call so that repeated
+    invocations (e.g. in tests) pay the argparse construction cost only once.
+    """
+    global _PARSER  # noqa: PLW0603
+    if _PARSER is not None:
+        return _PARSER
+
+    import argparse  # deferred: only needed when the parser is first built
+
     parser = argparse.ArgumentParser(
         description="ContextGO unified CLI (search, viewer, native scan, smoke, and maintenance)."
     )
@@ -655,7 +777,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("health", help="Check context system health")
     p.add_argument("--verbose", action="store_true", help="Print full health payload")
 
-    return parser
+    _PARSER = parser
+    return _PARSER
 
 
 # ───────────────────────────────────────────────
@@ -663,9 +786,9 @@ def build_parser() -> argparse.ArgumentParser:
 # ───────────────────────────────────────────────
 
 
-def run(args: argparse.Namespace) -> int:
+def run(args: object) -> int:
     """Dispatch parsed arguments to the appropriate command handler."""
-    handler = COMMANDS.get(args.command)
+    handler = COMMANDS.get(args.command)  # type: ignore[union-attr]
     if handler is None:
         print(f"Unknown command: {args.command}", file=sys.stderr)
         return 2
@@ -674,7 +797,11 @@ def run(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     """Parse *argv* and run the selected command. Returns an exit code."""
-    return run(build_parser().parse_args(argv))
+    parser = build_parser()
+    # build_parser() returns argparse.ArgumentParser; the type annotation uses
+    # ``object`` to avoid a top-level ``import argparse`` on every startup.
+    args = parser.parse_args(argv)  # type: ignore[union-attr]
+    return run(args)
 
 
 _LAZY_MODULE_MAP: dict[str, object] = {}

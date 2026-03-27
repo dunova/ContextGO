@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -9,7 +10,12 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 )
+
+// mmapThreshold is the minimum file size in bytes for using memory-mapped I/O.
+// Files smaller than this are read with a pooled bufio.Scanner instead.
+const mmapThreshold = 1024 * 1024 // 1 MB
 
 // scannerBufPool pools the large scanner buffers used in ProcessFile to reduce
 // GC pressure when many files are processed in parallel.
@@ -29,6 +35,10 @@ var runeSlicePool = sync.Pool{
 		return &s
 	},
 }
+
+// Note: bufio.Scanner cannot be Reset to a new reader (no Reset method in Go stdlib),
+// so we create a new Scanner per call but reuse the underlying byte buffer via
+// scannerBufPool.  This avoids the dominant allocation (the 1MB scan buffer).
 
 // DefaultNoiseMarkers is the set of substrings that identify a text fragment
 // as noise.  Each entry is compared case-insensitively against the candidate.
@@ -151,13 +161,65 @@ func NewSessionScanner(filter *NoiseFilter, snippetLimit int) *SessionScanner {
 	}
 }
 
+// mmapFile memory-maps a file and returns the mapped bytes and an unmap
+// function.  On error it falls back by returning (nil, nil, err).
+// Only called for files >= mmapThreshold bytes.
+func mmapFile(f *os.File, size int64) (data []byte, unmap func(), err error) {
+	if size <= 0 {
+		return nil, func() {}, nil
+	}
+	data, err = syscall.Mmap(int(f.Fd()), 0, int(size), syscall.PROT_READ, syscall.MAP_SHARED)
+	if err != nil {
+		return nil, nil, err
+	}
+	return data, func() {
+		_ = syscall.Munmap(data)
+	}, nil
+}
+
+// processLines iterates over newline-delimited lines in data (a []byte) and
+// calls fn for each non-empty, trimmed line.  Avoids string conversion of the
+// whole buffer.
+func processLines(data []byte, fn func(line []byte)) {
+	for len(data) > 0 {
+		idx := bytes.IndexByte(data, '\n')
+		var line []byte
+		if idx < 0 {
+			line = data
+			data = data[len(data):]
+		} else {
+			line = data[:idx]
+			data = data[idx+1:]
+		}
+		// Trim CR for Windows-style line endings.
+		if len(line) > 0 && line[len(line)-1] == '\r' {
+			line = line[:len(line)-1]
+		}
+		// Inline trim of leading/trailing spaces without allocation.
+		start := 0
+		for start < len(line) && (line[start] == ' ' || line[start] == '\t') {
+			start++
+		}
+		end := len(line)
+		for end > start && (line[end-1] == ' ' || line[end-1] == '\t') {
+			end--
+		}
+		line = line[start:end]
+		if len(line) > 0 {
+			fn(line)
+		}
+	}
+}
+
 // ProcessFile reads item.Path, applies query matching, and returns a populated
 // SessionSummary.  The boolean return is false when the file should be excluded
 // (no match, or belongs to the active working directory session).
 func (s *SessionScanner) ProcessFile(item WorkItem, query string) (SessionSummary, bool) {
 	file, err := os.Open(item.Path)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "open %s: %v\n", item.Path, err)
+		if !os.IsPermission(err) {
+			fmt.Fprintf(os.Stderr, "open %s: %v\n", item.Path, err)
+		}
 		return SessionSummary{}, false
 	}
 	defer file.Close()
@@ -168,35 +230,62 @@ func (s *SessionScanner) ProcessFile(item WorkItem, query string) (SessionSummar
 		return SessionSummary{}, false
 	}
 
+	fileSize := stat.Size()
+
 	summary := SessionSummary{
 		Source:    item.Source,
 		Path:      item.Path,
 		SessionID: strings.TrimSuffix(filepath.Base(item.Path), filepath.Ext(item.Path)),
-		SizeBytes: stat.Size(),
+		SizeBytes: fileSize,
 	}
 
 	queryLower := strings.ToLower(strings.TrimSpace(query))
+	// Pre-compute []byte form of query for faster binary search on raw lines.
+	queryBytes := []byte(queryLower)
 	matcher := NewSnippetMatcher(queryLower, s.noiseFilter, s.snippetLimit)
 	matchFound := matcher.QueryEmpty()
 	currentWorkdir := normalizedCurrentWorkdir()
 	sessionCwd := ""
 
-	// Borrow a reusable buffer from the pool to avoid repeated large allocations.
-	bufPtr := scannerBufPool.Get().(*[]byte)
-	scanBuf := (*bufPtr)[:0]
-	sc := bufio.NewScanner(file)
-	sc.Buffer(scanBuf, 32*1024*1024)
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if line == "" {
-			continue
+	// Estimate initial candidate capacity from file size: assume ~200 bytes per line
+	// and ~10% of lines carry meaningful text fields.
+	estLines := int(fileSize/200) + 1
+	if estLines > 1024 {
+		estLines = 1024
+	}
+
+	// processOneLine handles one raw line (as []byte).  Using a closure keeps
+	// the hot path inlined without repeating the outer variable captures.
+	// Returns (continueProcessing bool).
+	processOneLine := func(lineBytes []byte) bool {
+		// Try to detect binary content: if line contains a NUL byte it is
+		// almost certainly binary — skip the whole file by signalling stop.
+		if bytes.IndexByte(lineBytes, 0) >= 0 {
+			return false // binary file indicator
 		}
+
 		summary.Lines++
 
+		// Fast-path: if the query is non-empty and the raw line does not
+		// contain the query bytes at all (case-insensitive), skip JSON parsing
+		// entirely.  containsFoldASCII is used for ASCII queries; for
+		// non-ASCII queries we fall back to bytes.Contains on the lowercased
+		// copy only when needed.
+		queryMatches := matcher.QueryEmpty()
+		if !queryMatches {
+			if isASCII(queryBytes) {
+				queryMatches = containsFoldASCII(lineBytes, queryBytes)
+			} else {
+				lineLower := bytes.ToLower(lineBytes)
+				queryMatches = bytes.Contains(lineLower, queryBytes)
+			}
+		}
+
 		var payload map[string]any
-		if err := json.Unmarshal([]byte(line), &payload); err == nil {
+		lineStr := string(lineBytes)
+		if err := json.Unmarshal(lineBytes, &payload); err == nil {
 			if shouldSkipRecordType(payload) {
-				continue
+				return true
 			}
 			if sid := extractSessionID(payload); sid != "" {
 				summary.SessionID = sid
@@ -206,7 +295,7 @@ func (s *SessionScanner) ProcessFile(item WorkItem, query string) (SessionSummar
 					sessionCwd = cwd
 				}
 				if !matcher.QueryEmpty() && currentWorkdir != "" && normalizePath(cwd) == currentWorkdir {
-					return SessionSummary{}, false
+					return false // signal: skip this file
 				}
 			}
 			if ts := extractTimestamp(payload); ts != "" {
@@ -215,8 +304,10 @@ func (s *SessionScanner) ProcessFile(item WorkItem, query string) (SessionSummar
 				}
 				summary.LastTimestamp = ts
 			}
-			if !matcher.QueryEmpty() {
-				for _, candidate := range extractTextCandidates(payload) {
+			if !matcher.QueryEmpty() && queryMatches {
+				// Pre-allocate candidates slice based on estimated capacity.
+				candidates := extractTextCandidatesWithCap(payload, estLines/10+4)
+				for _, candidate := range candidates {
 					if snippet, ok := matcher.Match(candidate.Text); ok {
 						score := candidateScore(candidate.Field, candidate.Text, queryLower)
 						if score > summary.MatchScore {
@@ -228,9 +319,10 @@ func (s *SessionScanner) ProcessFile(item WorkItem, query string) (SessionSummar
 					}
 				}
 			}
-		} else if !matcher.QueryEmpty() {
-			if snippet, ok := matcher.Match(line); ok {
-				score := candidateScore("raw_line", line, queryLower)
+		} else if !matcher.QueryEmpty() && queryMatches {
+			// Raw (non-JSON) line: use the string form for snippet extraction.
+			if snippet, ok := matcher.Match(lineStr); ok {
+				score := candidateScore("raw_line", lineStr, queryLower)
 				if score > summary.MatchScore {
 					summary.Snippet = snippet
 					summary.MatchField = "raw_line"
@@ -239,19 +331,136 @@ func (s *SessionScanner) ProcessFile(item WorkItem, query string) (SessionSummar
 				matchFound = true
 			}
 		}
-	}
-	if err := sc.Err(); err != nil {
-		fmt.Fprintf(os.Stderr, "scan %s: %v\n", item.Path, err)
+		return true
 	}
 
-	// Return the underlying scanner buffer to the pool.  bufio.Scanner may
-	// have grown the slice; store the grown version so future callers benefit.
-	grown := sc.Bytes() // points into the internal buffer after the last scan
-	_ = grown
-	*bufPtr = scanBuf[:0]
-	scannerBufPool.Put(bufPtr)
+	// Choose I/O strategy based on file size.
+	if fileSize >= mmapThreshold {
+		// Large file: use memory-mapped I/O to avoid a user-space copy.
+		data, unmap, mmapErr := mmapFile(file, fileSize)
+		if mmapErr == nil && data != nil {
+			defer unmap()
+			abort := false
+			processLines(data, func(line []byte) {
+				if abort {
+					return
+				}
+				if !processOneLine(line) {
+					abort = true
+				}
+			})
+			if abort {
+				// Either binary file or active-workdir match — exclude.
+				return SessionSummary{}, false
+			}
+		} else {
+			// mmap failed: fall back to buffered reading.
+			if _, seekErr := file.Seek(0, 0); seekErr != nil {
+				fmt.Fprintf(os.Stderr, "seek %s: %v\n", item.Path, seekErr)
+				return SessionSummary{}, false
+			}
+			if skip := s.processWithScanner(file, item.Path, processOneLine); skip {
+				return SessionSummary{}, false
+			}
+		}
+	} else {
+		// Small file: use pooled bufio.Scanner.
+		if skip := s.processWithScanner(file, item.Path, processOneLine); skip {
+			return SessionSummary{}, false
+		}
+	}
 
 	return summary, matchFound
+}
+
+// processWithScanner reads lines from f using a bufio.Scanner backed by a
+// pooled byte buffer and calls fn for each non-empty line.  Returns true if
+// processing should be aborted (fn returned false, indicating the file should
+// be excluded).
+func (s *SessionScanner) processWithScanner(f *os.File, path string, fn func([]byte) bool) (abort bool) {
+	// Borrow a reusable buffer from the pool to avoid the dominant large
+	// allocation (1 MB scan buffer) on every call.
+	bufPtr := scannerBufPool.Get().(*[]byte)
+	scanBuf := (*bufPtr)[:0]
+
+	// bufio.Scanner has no Reset method; create a new instance backed by the
+	// pooled buffer so only the small Scanner struct is allocated per call.
+	sc := bufio.NewScanner(f)
+	sc.Buffer(scanBuf, 32*1024*1024)
+
+	for sc.Scan() {
+		raw := sc.Bytes()
+		// Trim in-place without allocation.
+		trimmed := bytes.TrimSpace(raw)
+		if len(trimmed) == 0 {
+			continue
+		}
+		// Make a copy: sc.Bytes() is only valid until the next Scan call.
+		line := make([]byte, len(trimmed))
+		copy(line, trimmed)
+		if !fn(line) {
+			abort = true
+			break
+		}
+	}
+	if err := sc.Err(); err != nil {
+		fmt.Fprintf(os.Stderr, "scan %s: %v\n", path, err)
+	}
+
+	// Return the buffer to the pool; sc.Buffer may have grown it.
+	*bufPtr = scanBuf[:0]
+	scannerBufPool.Put(bufPtr)
+	return abort
+}
+
+// isASCII reports whether b contains only bytes in [0x00, 0x7F].
+func isASCII(b []byte) bool {
+	for _, c := range b {
+		if c > 0x7F {
+			return false
+		}
+	}
+	return true
+}
+
+// containsFoldASCII reports whether haystack contains needle using
+// ASCII-only case-folding (a-z / A-Z).  needle must already be lower-cased.
+// This avoids a full strings.ToLower allocation on every line.
+func containsFoldASCII(haystack, needle []byte) bool {
+	if len(needle) == 0 {
+		return true
+	}
+	if len(haystack) < len(needle) {
+		return false
+	}
+	first := needle[0]
+	firstUp := first
+	if first >= 'a' && first <= 'z' {
+		firstUp = first - 32
+	}
+	for i := 0; i <= len(haystack)-len(needle); i++ {
+		c := haystack[i]
+		if c != first && c != firstUp {
+			continue
+		}
+		match := true
+		for j := 1; j < len(needle); j++ {
+			hc := haystack[i+j]
+			nc := needle[j]
+			ncUp := nc
+			if nc >= 'a' && nc <= 'z' {
+				ncUp = nc - 32
+			}
+			if hc != nc && hc != ncUp {
+				match = false
+				break
+			}
+		}
+		if match {
+			return true
+		}
+	}
+	return false
 }
 
 // shouldSkipRecordType returns true for record types that contain no useful
@@ -567,7 +776,16 @@ func clipSnippet(text string, index, queryLen, limit int) string {
 // extractTextCandidates returns all non-empty text fields from a parsed JSON
 // record, labelled with their field path.
 func extractTextCandidates(payload map[string]any) []TextCandidate {
-	out := make([]TextCandidate, 0, 16)
+	return extractTextCandidatesWithCap(payload, 16)
+}
+
+// extractTextCandidatesWithCap is like extractTextCandidates but pre-allocates
+// the output slice with the provided capacity hint.
+func extractTextCandidatesWithCap(payload map[string]any, cap int) []TextCandidate {
+	if cap < 4 {
+		cap = 4
+	}
+	out := make([]TextCandidate, 0, cap)
 	appendStr := func(field string, value any) {
 		if text, ok := value.(string); ok {
 			if text = strings.TrimSpace(text); text != "" {

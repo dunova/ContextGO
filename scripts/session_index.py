@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import re
 import sqlite3
@@ -51,6 +52,10 @@ EXPERIMENTAL_SYNC_BACKEND: str = os.environ.get("CONTEXTGO_EXPERIMENTAL_SYNC_BAC
 
 #: Bump this string to force a full re-index on next sync.
 SESSION_INDEX_SCHEMA_VERSION = "2026-03-26-search-noise-v5"
+
+#: Set to True once FTS5 availability has been confirmed in the current process.
+#: None = not yet checked; True = available; False = unavailable.
+_FTS5_AVAILABLE: bool | None = None
 
 #: Number of upsert rows per SQLite transaction batch during sync.
 _BATCH_COMMIT_SIZE: int = env_int("CONTEXTGO_INDEX_BATCH_SIZE", default=100, minimum=10)
@@ -89,6 +94,38 @@ _DDL_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_session_session_id ON session_documents(session_id)",
     # Accelerates updated_at_epoch sorts used in health/stats queries.
     "CREATE INDEX IF NOT EXISTS idx_session_updated    ON session_documents(updated_at_epoch DESC)",
+]
+
+_DDL_SESSION_DOCUMENTS_FTS = """
+CREATE VIRTUAL TABLE IF NOT EXISTS session_documents_fts
+USING fts5(title, content, file_path, content=session_documents, content_rowid=rowid)
+"""
+
+# Triggers to keep the FTS5 shadow tables in sync with the main table.
+_DDL_FTS_TRIGGERS = [
+    """
+    CREATE TRIGGER IF NOT EXISTS session_documents_fts_ai
+    AFTER INSERT ON session_documents BEGIN
+        INSERT INTO session_documents_fts(rowid, title, content, file_path)
+        VALUES (new.rowid, new.title, new.content, new.file_path);
+    END
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS session_documents_fts_ad
+    AFTER DELETE ON session_documents BEGIN
+        INSERT INTO session_documents_fts(session_documents_fts, rowid, title, content, file_path)
+        VALUES ('delete', old.rowid, old.title, old.content, old.file_path);
+    END
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS session_documents_fts_au
+    AFTER UPDATE ON session_documents BEGIN
+        INSERT INTO session_documents_fts(session_documents_fts, rowid, title, content, file_path)
+        VALUES ('delete', old.rowid, old.title, old.content, old.file_path);
+        INSERT INTO session_documents_fts(rowid, title, content, file_path)
+        VALUES (new.rowid, new.title, new.content, new.file_path);
+    END
+    """,
 ]
 
 _SQL_META_GET = "SELECT value FROM session_index_meta WHERE key = ?"
@@ -737,11 +774,23 @@ def ensure_session_db() -> Path:
     db_path = get_session_db_path()
     db_path.parent.mkdir(parents=True, exist_ok=True)
     with _open_db(db_path) as conn:
-        conn.execute(_DDL_SESSION_DOCUMENTS)
+        _retry_sqlite(conn, _DDL_SESSION_DOCUMENTS)
         for ddl in _DDL_INDEXES:
-            conn.execute(ddl)
-        conn.execute(_DDL_SESSION_META)
-        conn.commit()
+            _retry_sqlite(conn, ddl)
+        _retry_sqlite(conn, _DDL_SESSION_META)
+        # Attempt to create the FTS5 virtual table and sync triggers.
+        # If the SQLite build does not support FTS5 this is silently skipped.
+        if _check_fts5_available(conn):
+            try:
+                _retry_sqlite(conn, _DDL_SESSION_DOCUMENTS_FTS)
+                for trigger_ddl in _DDL_FTS_TRIGGERS:
+                    _retry_sqlite(conn, trigger_ddl)
+                # Populate the FTS index for any rows that already exist
+                # (e.g. after a schema migration where the table was recreated).
+                _retry_sqlite(conn, "INSERT INTO session_documents_fts(session_documents_fts) VALUES ('rebuild')")
+            except sqlite3.OperationalError as exc:
+                _logger.debug("FTS5 setup skipped: %s", exc)
+        _retry_commit(conn)
     return db_path
 
 
@@ -750,6 +799,7 @@ def _open_db(db_path: Path) -> Generator[sqlite3.Connection, None, None]:
     """Open a SQLite connection with WAL mode and ensure it is closed on exit."""
     conn = sqlite3.connect(db_path, timeout=30)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout=5000")
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
     conn.execute("PRAGMA cache_size=-8000")
@@ -761,15 +811,148 @@ def _open_db(db_path: Path) -> Generator[sqlite3.Connection, None, None]:
         conn.close()
 
 
+# ---------------------------------------------------------------------------
+# SQLite retry helpers
+# ---------------------------------------------------------------------------
+
+_SQLITE_RETRY_DELAYS: tuple[float, ...] = (0.1, 0.5, 2.0)
+
+
+def _retry_sqlite(
+    conn: sqlite3.Connection,
+    sql: str,
+    params: Any = None,
+    max_retries: int = 3,
+) -> sqlite3.Cursor:
+    """Execute *sql* on *conn* with retry-on-busy logic.
+
+    Retries up to *max_retries* times with exponential back-off (0.1 / 0.5 / 2 s)
+    when SQLite raises ``OperationalError: database is locked``.  All other
+    errors are re-raised immediately.
+
+    Args:
+        conn: An open :class:`sqlite3.Connection`.
+        sql: SQL statement to execute.
+        params: Optional bind parameters (sequence or mapping).
+        max_retries: Maximum number of retry attempts (default 3).
+
+    Returns:
+        The :class:`sqlite3.Cursor` returned by the final successful execute.
+
+    Raises:
+        sqlite3.OperationalError: When the database remains locked after all
+            retries are exhausted, or for any non-lock operational error.
+    """
+    last_exc: sqlite3.OperationalError | None = None
+    for attempt in range(max_retries + 1):
+        try:
+            if params is not None:
+                return conn.execute(sql, params)
+            return conn.execute(sql)
+        except sqlite3.OperationalError as exc:
+            if "database is locked" not in str(exc).lower():
+                raise
+            last_exc = exc
+            if attempt < max_retries:
+                delay = _SQLITE_RETRY_DELAYS[min(attempt, len(_SQLITE_RETRY_DELAYS) - 1)]
+                _logger.warning(
+                    "_retry_sqlite: database locked, retrying in %.1fs (attempt %d/%d)",
+                    delay,
+                    attempt + 1,
+                    max_retries,
+                )
+                time.sleep(delay)
+    assert last_exc is not None
+    raise last_exc
+
+
+def _retry_sqlite_many(
+    conn: sqlite3.Connection,
+    sql: str,
+    params_seq: Any,
+    max_retries: int = 3,
+) -> sqlite3.Cursor:
+    """Like :func:`_retry_sqlite` but calls ``executemany`` instead of ``execute``.
+
+    Args:
+        conn: An open :class:`sqlite3.Connection`.
+        sql: SQL statement to execute against each row in *params_seq*.
+        params_seq: Iterable of parameter sequences or mappings.
+        max_retries: Maximum number of retry attempts (default 3).
+
+    Returns:
+        The :class:`sqlite3.Cursor` returned by the final successful executemany.
+
+    Raises:
+        sqlite3.OperationalError: When the database remains locked after all
+            retries are exhausted, or for any non-lock operational error.
+    """
+    last_exc: sqlite3.OperationalError | None = None
+    for attempt in range(max_retries + 1):
+        try:
+            return conn.executemany(sql, params_seq)
+        except sqlite3.OperationalError as exc:
+            if "database is locked" not in str(exc).lower():
+                raise
+            last_exc = exc
+            if attempt < max_retries:
+                delay = _SQLITE_RETRY_DELAYS[min(attempt, len(_SQLITE_RETRY_DELAYS) - 1)]
+                _logger.warning(
+                    "_retry_sqlite_many: database locked, retrying in %.1fs (attempt %d/%d)",
+                    delay,
+                    attempt + 1,
+                    max_retries,
+                )
+                time.sleep(delay)
+    assert last_exc is not None
+    raise last_exc
+
+
+def _retry_commit(conn: sqlite3.Connection, max_retries: int = 3) -> None:
+    """Commit *conn* with retry-on-busy logic.
+
+    Retries up to *max_retries* times with exponential back-off (0.1 / 0.5 / 2 s)
+    when SQLite raises ``OperationalError: database is locked``.
+
+    Args:
+        conn: An open :class:`sqlite3.Connection`.
+        max_retries: Maximum number of retry attempts (default 3).
+
+    Raises:
+        sqlite3.OperationalError: When the database remains locked after all
+            retries are exhausted, or for any non-lock operational error.
+    """
+    last_exc: sqlite3.OperationalError | None = None
+    for attempt in range(max_retries + 1):
+        try:
+            conn.commit()
+            return
+        except sqlite3.OperationalError as exc:
+            if "database is locked" not in str(exc).lower():
+                raise
+            last_exc = exc
+            if attempt < max_retries:
+                delay = _SQLITE_RETRY_DELAYS[min(attempt, len(_SQLITE_RETRY_DELAYS) - 1)]
+                _logger.warning(
+                    "_retry_commit: database locked, retrying in %.1fs (attempt %d/%d)",
+                    delay,
+                    attempt + 1,
+                    max_retries,
+                )
+                time.sleep(delay)
+    assert last_exc is not None
+    raise last_exc
+
+
 def _meta_get(conn: sqlite3.Connection, key: str) -> str | None:
     """Retrieve a value from the ``session_index_meta`` table, or ``None``."""
-    row = conn.execute(_SQL_META_GET, (key,)).fetchone()
+    row = _retry_sqlite(conn, _SQL_META_GET, (key,)).fetchone()
     return str(row[0]) if row else None
 
 
 def _meta_set(conn: sqlite3.Connection, key: str, value: str) -> None:
     """Upsert a key/value pair into the ``session_index_meta`` table."""
-    conn.execute(_SQL_META_SET, (key, value))
+    _retry_sqlite(conn, _SQL_META_SET, (key, value))
 
 
 # Index Synchronisation
@@ -794,15 +977,15 @@ def sync_session_index(force: bool = False) -> dict[str, int]:
     with _open_db(db_path) as conn:
         current_version = _meta_get(conn, "schema_version")
         if current_version != SESSION_INDEX_SCHEMA_VERSION:
-            conn.execute("DELETE FROM session_documents")
+            _retry_sqlite(conn, "DELETE FROM session_documents")
             _meta_set(conn, "schema_version", SESSION_INDEX_SCHEMA_VERSION)
-            conn.commit()
+            _retry_commit(conn)
             force = True
 
         last_sync_raw = _meta_get(conn, "last_sync_epoch")
         last_sync_epoch = int(last_sync_raw or "0")
         if not force and last_sync_epoch and (now_epoch - last_sync_epoch) < SYNC_MIN_INTERVAL_SEC:
-            total = conn.execute(_SQL_COUNT_DOCS).fetchone()[0]
+            total = _retry_sqlite(conn, _SQL_COUNT_DOCS).fetchone()[0]
             _logger.debug(
                 "sync_session_index skipped (last_sync %ds ago, threshold %ds)",
                 now_epoch - last_sync_epoch,
@@ -825,8 +1008,8 @@ def sync_session_index(force: bool = False) -> dict[str, int]:
         def _flush_upsert_batch() -> None:
             """Flush the current upsert batch to the database and commit."""
             if upsert_batch:
-                conn.executemany(_SQL_UPSERT_DOC, upsert_batch)
-                conn.commit()
+                _retry_sqlite_many(conn, _SQL_UPSERT_DOC, upsert_batch)
+                _retry_commit(conn)
                 _logger.debug("sync_session_index: flushed %d upsert rows", len(upsert_batch))
                 upsert_batch.clear()
 
@@ -844,7 +1027,7 @@ def sync_session_index(force: bool = False) -> dict[str, int]:
             except FileNotFoundError:
                 continue
 
-            row = conn.execute(_SQL_CHECK_CHANGED, (canonical_path,)).fetchone()
+            row = _retry_sqlite(conn, _SQL_CHECK_CHANGED, (canonical_path,)).fetchone()
             if row and int(row[0]) == int(stat.st_mtime) and int(row[1]) == int(stat.st_size):
                 continue
 
@@ -891,22 +1074,32 @@ def sync_session_index(force: bool = False) -> dict[str, int]:
         # Remove index entries whose source files no longer exist.
         _t_remove_start = time.monotonic()
         delete_batch: list[tuple[str]] = []
-        for (file_path,) in conn.execute(_SQL_ALL_PATHS).fetchall():
+        for (file_path,) in _retry_sqlite(conn, _SQL_ALL_PATHS).fetchall():
             if file_path not in seen_paths:
                 delete_batch.append((file_path,))
                 removed += 1
                 if len(delete_batch) >= _BATCH_COMMIT_SIZE:
-                    conn.executemany(_SQL_DELETE_DOC, delete_batch)
-                    conn.commit()
+                    _retry_sqlite_many(conn, _SQL_DELETE_DOC, delete_batch)
+                    _retry_commit(conn)
                     _logger.debug("sync_session_index: flushed %d delete rows", len(delete_batch))
                     delete_batch.clear()
 
         if delete_batch:
-            conn.executemany(_SQL_DELETE_DOC, delete_batch)
+            _retry_sqlite_many(conn, _SQL_DELETE_DOC, delete_batch)
 
         _meta_set(conn, "last_sync_epoch", str(now_epoch))
-        conn.commit()
-        total = conn.execute(_SQL_COUNT_DOCS).fetchone()[0]
+
+        # Rebuild the FTS5 index after bulk inserts/deletes so that BM25
+        # scores remain accurate.  This is a no-op when FTS5 is unavailable.
+        if (added or removed or force) and _check_fts5_available(conn):
+            try:
+                _retry_sqlite(conn, "INSERT INTO session_documents_fts(session_documents_fts) VALUES ('rebuild')")
+                _logger.debug("sync_session_index: FTS5 index rebuilt")
+            except sqlite3.OperationalError as exc:
+                _logger.debug("FTS5 rebuild skipped: %s", exc)
+
+        _retry_commit(conn)
+        total = _retry_sqlite(conn, _SQL_COUNT_DOCS).fetchone()[0]
 
         _t_remove_elapsed = time.monotonic() - _t_remove_start
         _logger.debug(
@@ -1007,52 +1200,103 @@ def build_query_terms(query: str) -> list[str]:
     return terms[:8]
 
 
+def _cjk_safe_boundary(text: str, pos: int, direction: int) -> int:
+    """Adjust *pos* so it does not split the middle of a CJK character run.
+
+    *direction* should be -1 (move left) for a start boundary or +1 (move
+    right) for an end boundary.  The function walks at most 4 characters in
+    the given direction until it finds a non-CJK character or a whitespace
+    boundary.
+    """
+    _CJK_CHAR_RE = re.compile(r"[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]")
+    length = len(text)
+    adjusted = max(0, min(pos, length))
+    for _ in range(4):
+        check = adjusted + (direction if direction == 1 else 0) - (1 if direction == -1 else 0)
+        if check < 0 or check >= length:
+            break
+        if _CJK_CHAR_RE.match(text[check]):
+            adjusted += direction
+            adjusted = max(0, min(adjusted, length))
+        else:
+            break
+    return adjusted
+
+
 def _build_snippet(text: str, terms: list[str], radius: int = 80) -> str:
     """Extract a context window around the best term match in *text*.
 
-    Falls back to known summary section headings or the first 2*radius
-    characters when no term matches.
+    Snippet selection strategy (in priority order):
+      1. Find all candidate windows (one per term occurrence) and pick the
+         window that covers the *most distinct query terms* (coverage scoring).
+      2. Among windows with equal coverage, prefer those containing a
+         conclusion marker (最终, 结论, …) and those closer to the start.
+      3. If no term matches, fall back to known summary headings or the
+         first ``2*radius`` characters.
+
+    CJK boundary handling: start/end positions are nudged outward to avoid
+    splitting a contiguous run of CJK characters.
     """
     compact = _WHITESPACE_RE.sub(" ", text or "").strip()
     if not compact:
         return ""
     lower = compact.lower()
-    idx = -1
-    matched = ""
-    best_score: int | None = None
     conclusion_markers = ("最终", "结论", "交付", "已完成", "核心")
+    lower_terms = [t.lower() for t in terms if t]
 
-    for term in terms:
-        term_lower = term.lower()
+    # Detect CJK query so we apply boundary adjustment selectively.
+    _CJK_QUERY_RE = re.compile(r"[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]")
+    is_cjk_query = any(_CJK_QUERY_RE.search(t) for t in lower_terms)
+
+    # --- Phase 1: collect candidate windows ---
+    # Each candidate is (start, end, matched_term_lower).
+    candidates: list[tuple[int, int, str]] = []
+    for term_lower in lower_terms:
         start = 0
         while True:
             pos = lower.find(term_lower, start)
             if pos < 0:
                 break
-            window = compact[max(0, pos - 120) : min(len(compact), pos + len(term) + 120)]
-            score = pos
-            if any(marker in window for marker in conclusion_markers):
-                score -= 5000
-            if pos > len(compact) // 2:
-                score -= 500
-            if best_score is None or score < best_score:
-                best_score = score
-                idx = pos
-                matched = term
-            start = pos + len(term_lower)
+            w_start = max(0, pos - radius)
+            w_end = min(len(compact), pos + len(term_lower) + radius)
+            if is_cjk_query:
+                w_start = _cjk_safe_boundary(compact, w_start, -1)
+                w_end = _cjk_safe_boundary(compact, w_end, 1)
+            candidates.append((w_start, w_end, term_lower))
+            start = pos + max(1, len(term_lower))
 
-    if idx < 0:
+    if not candidates:
+        # Fallback: summary headings.
         for marker in ("最终交付", "变更概览", "核心变化", "改动文件", "建议验证", "结论", "Summary"):
             pos = compact.find(marker)
             if pos >= 0:
-                start = max(0, pos - radius // 2)
-                end = min(len(compact), pos + len(marker) + radius + radius // 2)
-                return compact[start:end]
+                fb_start = max(0, pos - radius // 2)
+                fb_end = min(len(compact), pos + len(marker) + radius + radius // 2)
+                return compact[fb_start:fb_end]
         return compact[: radius * 2]
 
-    start = max(0, idx - radius)
-    end = min(len(compact), idx + len(matched) + radius)
-    return compact[start:end]
+    # --- Phase 2: score each candidate window by coverage ---
+    best_window: tuple[int, int] = candidates[0][:2]
+    best_coverage = -1
+    best_has_conclusion = False
+    best_pos = len(compact)
+
+    for w_start, w_end, _ in candidates:
+        window_lower = lower[w_start:w_end]
+        coverage = sum(1 for t in lower_terms if t in window_lower)
+        has_conclusion = any(m in window_lower for m in conclusion_markers)
+        # Higher coverage wins; tie-break: conclusion markers > earlier position.
+        if (
+            coverage > best_coverage
+            or (coverage == best_coverage and has_conclusion and not best_has_conclusion)
+            or (coverage == best_coverage and has_conclusion == best_has_conclusion and w_start < best_pos)
+        ):
+            best_coverage = coverage
+            best_has_conclusion = has_conclusion
+            best_pos = w_start
+            best_window = (w_start, w_end)
+
+    return compact[best_window[0] : best_window[1]]
 
 
 def _native_search_rows(query: str, limit: int = 10) -> list[dict[str, Any]]:
@@ -1128,7 +1372,7 @@ def _fetch_session_docs_by_paths(conn: sqlite3.Connection, file_paths: Iterable[
 
     placeholders = ",".join("?" for _ in unique_paths)
     sql = f"SELECT * FROM session_documents WHERE file_path IN ({placeholders})"
-    return {str(row["file_path"]): row for row in conn.execute(sql, tuple(unique_paths))}
+    return {str(row["file_path"]): row for row in _retry_sqlite(conn, sql, tuple(unique_paths))}
 
 
 def _enrich_native_rows(
@@ -1170,6 +1414,83 @@ def _enrich_native_rows(
     return enriched
 
 
+def _check_fts5_available(conn: sqlite3.Connection) -> bool:
+    """Return True if the current SQLite build supports FTS5.
+
+    The result is cached in the module-level ``_FTS5_AVAILABLE`` flag so that
+    subsequent calls within the same process skip the probe query entirely.
+    """
+    global _FTS5_AVAILABLE  # noqa: PLW0603
+    if _FTS5_AVAILABLE is not None:
+        return _FTS5_AVAILABLE
+    try:
+        conn.execute("SELECT fts5(?)", ("test",))
+        _FTS5_AVAILABLE = True
+    except sqlite3.OperationalError:
+        # fts5() scalar is not available — try creating a temp table instead.
+        try:
+            conn.execute("CREATE VIRTUAL TABLE IF NOT EXISTS _fts5_probe USING fts5(x)")
+            conn.execute("DROP TABLE IF EXISTS _fts5_probe")
+            _FTS5_AVAILABLE = True
+        except sqlite3.OperationalError:
+            _FTS5_AVAILABLE = False
+    return bool(_FTS5_AVAILABLE)
+
+
+def _fts5_search_rows(
+    conn: sqlite3.Connection,
+    query: str,
+    limit: int = 10,
+) -> list[sqlite3.Row]:
+    """Search the FTS5 virtual table using BM25 ranking.
+
+    Builds a simple FTS5 MATCH expression from *query*.  Each whitespace-
+    separated token is treated as a prefix match (``token*``) which works
+    well for both ASCII and CJK text (CJK characters have no word boundaries
+    so individual character n-grams match naturally).
+
+    Returns an empty list when the FTS5 table does not exist, when *query* is
+    empty, or when the query fails for any reason.
+    """
+    if not query.strip():
+        return []
+
+    def _build_fts_query(raw: str) -> str:
+        """Convert *raw* to a safe FTS5 MATCH expression.
+
+        Special FTS5 characters are escaped and each non-empty token is
+        wrapped in double-quotes so that punctuation inside tokens is treated
+        literally.  A trailing ``*`` enables prefix matching.
+        """
+        # FTS5 special characters that must be escaped inside quoted phrases
+        # are limited to '"' itself (double-quote closes a phrase).
+        tokens = raw.split()
+        parts: list[str] = []
+        for tok in tokens:
+            if not tok:
+                continue
+            # Escape embedded double-quotes
+            safe = tok.replace('"', '""')
+            parts.append(f'"{safe}"*')
+        return " ".join(parts) if parts else '""'
+
+    fts_query = _build_fts_query(query)
+    row_limit = max(1, min(limit * 20, 2000))
+
+    try:
+        sql = (
+            "SELECT sd.* FROM session_documents sd "
+            "JOIN session_documents_fts fts ON sd.rowid = fts.rowid "
+            "WHERE session_documents_fts MATCH ? "
+            "ORDER BY bm25(session_documents_fts) "
+            "LIMIT ?"
+        )
+        return _retry_sqlite(conn, sql, (fts_query, row_limit)).fetchall()
+    except sqlite3.OperationalError as exc:
+        _logger.debug("FTS5 search failed, falling back to LIKE: %s", exc)
+        return []
+
+
 def _fetch_rows(
     conn: sqlite3.Connection,
     active_terms: list[str],
@@ -1194,7 +1515,44 @@ def _fetch_rows(
     where_clause = f"WHERE {' OR '.join(where_parts)}" if where_parts else ""
     sql = f"SELECT * FROM session_documents {where_clause} ORDER BY created_at_epoch DESC LIMIT ?"
     args.append(max(1, int(row_limit)))
-    return conn.execute(sql, args).fetchall()
+    return _retry_sqlite(conn, sql, args).fetchall()
+
+
+def _score_term_frequency(text: str, terms: list[str]) -> float:
+    """Compute a TF-IDF-inspired term-frequency score for *text* against *terms*.
+
+    Each term's contribution is ``count * sqrt(len(term))`` so longer terms
+    get a mild length bonus without overwhelming the score.  The final value
+    is capped at 100 to keep it bounded relative to SOURCE_WEIGHT values.
+    """
+    if not text or not terms:
+        return 0.0
+    lower = text.lower()
+    total = 0.0
+    for term in terms:
+        term_lower = term.lower()
+        if not term_lower:
+            continue
+        count = lower.count(term_lower)
+        if count:
+            total += count * (len(term_lower) ** 0.5)
+    return min(total, 100.0)
+
+
+# Approximate current Unix epoch for recency scoring; recomputed each call to
+# _rank_rows so it stays accurate across long-running daemon processes without
+# being re-imported.
+def _recency_bonus(created_at_epoch: int) -> float:
+    """Return a mild logarithmic recency bonus in the range [0, 20].
+
+    Documents created within the last day score close to 20; documents older
+    than ~100 days score near 0.  The log base is chosen so the decay is
+    gradual enough not to bury high-quality older results.
+    """
+    age_secs = max(0, int(time.time()) - int(created_at_epoch))
+    age_days = age_secs / 86400.0
+    # log2(1) = 0, log2(2) ≈ 1, log2(128) = 7 → scores 20, ~17, ~0
+    return max(0.0, 20.0 - math.log2(1.0 + age_days) * 3.0)
 
 
 def _rank_rows(
@@ -1203,29 +1561,98 @@ def _rank_rows(
     *,
     skip_cwd_title: bool = False,
 ) -> list[tuple[int, sqlite3.Row]]:
-    """Score and filter candidate rows, returning those with positive scores."""
+    """Score and filter candidate rows, returning those with positive scores.
+
+    Scoring components (in priority order):
+      1. SOURCE_WEIGHT  — primary discriminator, unchanged from baseline.
+      2. Term-length-squared match bonus — baseline term bonus.
+      3. TF score       — term frequency reward (capped at 100).
+      4. Title bonus    — 3× weight for terms found in the title field.
+      5. Exact-phrase bonus — +50 when the joined query phrase hits verbatim.
+      6. CJK bigram bonus — extra credit for CJK bigram overlaps.
+      7. Recency bonus  — logarithmic [0, 20] boost for newer documents.
+      8. Noise penalties — unchanged from baseline.
+    """
     ranked: list[tuple[int, sqlite3.Row]] = []
     cwd_str = str(Path.cwd().resolve())
+
+    # Precompute lowercased terms once.
+    lower_terms = [t.lower() for t in active_terms if t]
+
+    # Build the exact phrase to check for the phrase bonus.
+    # We join the original query terms with a space for a "natural" phrase.
+    exact_phrase = " ".join(lower_terms)
+
+    # Detect CJK queries: at least one term contains a CJK character.
+    _CJK_RE = re.compile(r"[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]")
+    has_cjk = any(_CJK_RE.search(t) for t in lower_terms)
+
+    # Build CJK bigrams from all terms for bigram matching.
+    cjk_bigrams: list[str] = []
+    if has_cjk:
+        for term in lower_terms:
+            cjk_chars = _CJK_RE.findall(term)
+            for i in range(len(cjk_chars) - 1):
+                bg = cjk_chars[i] + cjk_chars[i + 1]
+                if bg not in cjk_bigrams:
+                    cjk_bigrams.append(bg)
+
     for row in candidate_rows:
         if skip_cwd_title and row["title"] == cwd_str:
             continue
         if _is_current_repo_meta_result(row["title"], row["content"], row["file_path"]):
             continue
-        haystack = f"{row['title']}\n{row['content']}\n{row['file_path']}".lower()
-        score = SOURCE_WEIGHT.get(str(row["source_type"]), 1)
-        for term in active_terms:
-            if term.lower() in haystack:
-                score += max(4, len(term) * len(term))
+
+        title_lower = str(row["title"] or "").lower()
+        content_lower = str(row["content"] or "").lower()
+        fp_lower = str(row["file_path"] or "").lower()
+        haystack = f"{title_lower}\n{content_lower}\n{fp_lower}"
+
+        # 1. SOURCE_WEIGHT — primary factor.
+        score: float = SOURCE_WEIGHT.get(str(row["source_type"]), 1)
+
+        # 2. Baseline term-length-squared bonus + 3. TF + 4. Title bonus.
+        for term_lower in lower_terms:
+            if term_lower in haystack:
+                # Baseline squared-length bonus.
+                score += max(4, len(term_lower) * len(term_lower))
+
+                # TF score from full content.
+                score += _score_term_frequency(content_lower, [term_lower])
+
+                # Title position bonus: 3× extra for title matches.
+                if term_lower in title_lower:
+                    score += max(4, len(term_lower) * len(term_lower)) * 2  # 3× total
+
+        # 5. Exact-phrase bonus.
+        if exact_phrase and len(exact_phrase) >= 2 and exact_phrase in haystack:
+            score += 50
+
+        # 6. CJK bigram bonus.
+        if cjk_bigrams:
+            bigram_hits = sum(1 for bg in cjk_bigrams if bg in haystack)
+            score += bigram_hits * 8
+
+        # 7. Recency bonus.
+        score += _recency_bonus(int(row["created_at_epoch"] or 0))
+
+        # 8. Noise penalties (unchanged).
         if _looks_like_path_only_content(row["title"], row["content"]):
             score -= 180
         score -= _search_noise_penalty(row["title"], row["content"], row["file_path"])
+
         if score > 0:
-            ranked.append((score, row))
+            ranked.append((int(score), row))
     return ranked
 
 
 def _search_rows(query: str, limit: int = 10, literal: bool = False) -> list[dict[str, Any]]:
-    """Execute a ranked LIKE search against the local session index.
+    """Execute a ranked search against the local session index.
+
+    Attempts FTS5 full-text search first for dramatically faster lookups when
+    the ``session_documents_fts`` virtual table is available.  Falls back to
+    ``LIKE``-based scanning (``COLLATE NOCASE``) when FTS5 is unavailable or
+    the query fails.
 
     Results are cached in-process for ``_SEARCH_RESULT_CACHE_TTL`` seconds
     so that repeated identical queries within a single CLI invocation avoid
@@ -1255,7 +1682,9 @@ def _search_rows(query: str, limit: int = 10, literal: bool = False) -> list[dic
         if native_rows:
             return _enrich_native_rows(native_rows, conn, terms, max_results)
 
-        rows = _fetch_rows(conn, terms)
+        # Try FTS5 first; fall back to LIKE-based scan when unavailable.
+        fts5_rows = _fts5_search_rows(conn, query, limit=max_results) if _check_fts5_available(conn) else []
+        rows: list[sqlite3.Row] = fts5_rows if fts5_rows else _fetch_rows(conn, terms)
         if literal and not rows:
             expanded = build_query_terms(query)
             if expanded and expanded != terms:
@@ -1348,8 +1777,8 @@ def health_payload() -> dict[str, Any]:
     sync_info = sync_session_index()
     db_path = ensure_session_db()
     with _open_db(db_path) as conn:
-        total = conn.execute(_SQL_COUNT_DOCS).fetchone()[0]
-        latest = conn.execute(_SQL_MAX_EPOCH).fetchone()[0]
+        total = _retry_sqlite(conn, _SQL_COUNT_DOCS).fetchone()[0]
+        latest = _retry_sqlite(conn, _SQL_MAX_EPOCH).fetchone()[0]
     return {
         "session_index_db_exists": db_path.exists(),
         "session_index_db": str(db_path),

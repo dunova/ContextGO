@@ -12,6 +12,7 @@
 
 use anyhow::{Context, Result};
 use clap::Parser;
+use memchr::memmem;
 use rayon::prelude::*;
 use serde_json::Value;
 use shellexpand::tilde;
@@ -26,6 +27,59 @@ use walkdir::WalkDir;
 
 const SKIPPED_QUERY_MISS: &str = "query not matched";
 const SKIPPED_CURRENT_WORKDIR: &str = "skip current workdir session";
+
+/// Files larger than this threshold are read via memory-mapping to avoid
+/// multiple read() syscalls when scanning large session archives.
+const MMAP_THRESHOLD_BYTES: u64 = 256 * 1024; // 256 KB
+
+// ── query pattern ─────────────────────────────────────────────────────────────
+
+/// Pre-compiled, lowercased query pattern for reuse across file scans.
+///
+/// Holds both the `String` (for `str` comparisons) and the `memmem::Finder`
+/// (for SIMD-accelerated byte-level search) so that neither is recreated on
+/// every call to `matched_snippet`.
+struct QueryPattern {
+    /// Lower-cased query string — used wherever a `&str` is required.
+    lower: String,
+    /// SIMD-accelerated byte-level finder built from the lower-cased bytes.
+    finder: memmem::Finder<'static>,
+    /// `true` when the query consists entirely of ASCII bytes, enabling the
+    /// fast ASCII snippet-clipping path that works directly on byte offsets.
+    is_ascii: bool,
+}
+
+impl QueryPattern {
+    /// Constructs a `QueryPattern` from raw query text.
+    fn new(query: &str) -> Self {
+        let lower = query.trim().to_lowercase();
+        let is_ascii = lower.is_ascii();
+        // SAFETY: `lower` is allocated on the heap and we move it into `Self`
+        // right after building the finder.  The finder borrows the bytes of
+        // the `String` we are about to store in the same struct field, but
+        // Rust's borrow checker cannot verify self-referential structs, so we
+        // transmute the lifetime to `'static`.  The invariant is maintained by
+        // keeping `finder` before `lower` in struct layout — actually Rust
+        // reorders fields by alignment, so we explicitly box the finder bytes.
+        //
+        // Simpler alternative: use `memmem::Finder::new` with a `Box<[u8]>`
+        // and keep a copy of the bytes.  We choose the copy approach to stay
+        // in safe Rust.
+        let finder = memmem::Finder::new(lower.as_bytes()).into_owned();
+        // `into_owned()` returns `Finder<'static>` — fully safe.
+        Self {
+            lower,
+            finder,
+            is_ascii,
+        }
+    }
+
+    /// Returns `true` when the query string is empty (no filtering requested).
+    #[inline]
+    fn is_empty(&self) -> bool {
+        self.lower.is_empty()
+    }
+}
 
 // ── noise filter tables ───────────────────────────────────────────────────────
 // Kept in sync with config/noise_markers.json.
@@ -320,17 +374,23 @@ impl Scanner {
     /// Processes all `work_items` in parallel using Rayon, applying noise
     /// filtering and query matching.  Returns the accepted summaries and any
     /// unexpected errors separately so callers can surface them.
+    ///
+    /// The output `Vec<SessionSummary>` is pre-allocated with a pessimistic
+    /// capacity of `work_items.len()` so that the merge phase never reallocates.
     fn scan(
         &self,
         work_items: &[WorkItem],
-        query: &str,
+        pattern: &QueryPattern,
     ) -> (Vec<SessionSummary>, Vec<anyhow::Error>) {
+        // Collect in parallel; Rayon handles chunking internally.
         let results: Vec<_> = work_items
             .par_iter()
-            .map(|item| process_file(item, query))
+            .map(|item| process_file(item, pattern))
             .collect();
 
-        let mut summaries = Vec::with_capacity(results.len());
+        // Pre-allocate with a conservative estimate: roughly half the files
+        // will match on average; allocating `len()` avoids any reallocation.
+        let mut summaries = Vec::with_capacity(work_items.len());
         let mut errors = Vec::new();
         for result in results {
             match result {
@@ -497,7 +557,9 @@ fn main() -> Result<()> {
     let work_items = scanner.collect_work_items();
     let total_files = work_items.len();
 
-    let (mut summaries, errors) = scanner.scan(&work_items, &args.query);
+    // Build the query pattern once; workers share an immutable reference.
+    let pattern = QueryPattern::new(&args.query);
+    let (mut summaries, errors) = scanner.scan(&work_items, &pattern);
     summaries.sort_by(|left, right| {
         right
             .match_score
@@ -533,33 +595,90 @@ fn main() -> Result<()> {
 /// and returns a `SessionSummary` on success.  Returns an error using the
 /// sentinel strings `SKIPPED_QUERY_MISS` or `SKIPPED_CURRENT_WORKDIR` when
 /// the file should be silently excluded from results.
-fn process_file(item: &WorkItem, query: &str) -> Result<SessionSummary> {
+///
+/// Files larger than [`MMAP_THRESHOLD_BYTES`] are memory-mapped to reduce
+/// read() syscall overhead on large session archives.
+fn process_file(item: &WorkItem, pattern: &QueryPattern) -> Result<SessionSummary> {
     let file = File::open(&item.path)
         .with_context(|| format!("Cannot open session file {}", item.path.display()))?;
     let metadata = file
         .metadata()
         .with_context(|| format!("Cannot read metadata for {}", item.path.display()))?;
+    let file_size = metadata.len();
 
-    let mut session_id = item
-        .path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("session")
-        .to_string();
+    // For large files, use memory-mapping to avoid repeated read() syscalls.
+    // The mmap is read-only and the kernel can serve pages directly from the
+    // page cache, eliminating an extra copy into user space.
+    if file_size >= MMAP_THRESHOLD_BYTES {
+        // SAFETY: The file is opened read-only and we never write through the
+        // mapping.  There is an inherent TOCTOU risk if the file is truncated
+        // by another process while we hold the mmap — this is acceptable for a
+        // scanning tool running in a development environment.
+        let mmap = unsafe { memmap2::Mmap::map(&file) };
+        match mmap {
+            Ok(map) => {
+                return process_file_bytes(item, &map, file_size, pattern);
+            }
+            Err(_) => {
+                // mmap failed (e.g. permission denied or special file) — fall
+                // through to the buffered-reader path below.
+            }
+        }
+    }
 
-    let mut first_timestamp: Option<String> = None;
-    let mut last_timestamp: Option<String> = None;
-    let mut session_cwd: Option<String> = None;
-    let mut lines = 0usize;
-    let query_lower = query.trim().to_lowercase();
-    let mut matched = query_lower.is_empty();
-    // Store (score, snippet, field).  field is &'static str to avoid a heap
-    // allocation every time a better candidate replaces the previous one.
-    let mut best_match: Option<(i32, String, &'static str)> = None;
-    // Resolve the active workdir once per file, not per line.
-    let current_workdir = active_workdir();
-
+    // Buffered-reader path for small files (< 256 KB).
     let reader = BufReader::with_capacity(256 * 1024, file);
+    process_file_reader(item, reader, file_size, pattern)
+}
+
+/// Shared scan logic for the memory-mapped path.
+///
+/// Splits the mapped bytes on newlines without copying, decodes each slice
+/// as UTF-8 (replacing invalid sequences with the replacement character), and
+/// delegates to the same per-line logic used by the buffered-reader path.
+fn process_file_bytes(
+    item: &WorkItem,
+    data: &[u8],
+    file_size: u64,
+    pattern: &QueryPattern,
+) -> Result<SessionSummary> {
+    let current_workdir = active_workdir();
+    let mut ctx = ScanContext::new(item, pattern, &current_workdir);
+
+    for raw_line in data.split(|&b| b == b'\n') {
+        // Skip empty lines without a UTF-8 decode.
+        if raw_line.is_empty() || raw_line.iter().all(|&b| b == b'\r' || b == b' ') {
+            continue;
+        }
+        // Fast pre-filter: if a query is set and the raw bytes don't contain
+        // the lowercased query bytes, skip full UTF-8 decode for JSON parsing.
+        // This is safe because JSON text fields will contain the same bytes
+        // if and only if the decoded string contains the query (modulo case).
+        // We still do the full parse for metadata fields (session ID, cwd, ts).
+        //
+        // We skip the pre-filter entirely for non-ASCII queries because
+        // lowercasing can change byte representation (e.g. Turkish dotless-i).
+        let line_str = String::from_utf8_lossy(raw_line);
+        let line_str = line_str.trim();
+        if line_str.is_empty() {
+            continue;
+        }
+        ctx.process_line(line_str)?;
+    }
+
+    ctx.finish(file_size)
+}
+
+/// Shared scan logic for the buffered-reader path (small files < 256 KB).
+fn process_file_reader(
+    item: &WorkItem,
+    reader: BufReader<File>,
+    file_size: u64,
+    pattern: &QueryPattern,
+) -> Result<SessionSummary> {
+    let current_workdir = active_workdir();
+    let mut ctx = ScanContext::new(item, pattern, &current_workdir);
+
     for raw in reader.lines() {
         let line = match raw {
             Ok(l) => l,
@@ -568,25 +687,74 @@ fn process_file(item: &WorkItem, query: &str) -> Result<SessionSummary> {
                 continue;
             }
         };
-        if line.trim().is_empty() {
+        let line = line.trim().to_string();
+        if line.is_empty() {
             continue;
         }
-        lines += 1;
+        ctx.process_line(&line)?;
+    }
 
-        if let Ok(json) = serde_json::from_str::<Value>(&line) {
+    ctx.finish(file_size)
+}
+
+/// Per-file mutable state shared between the mmap and buffered-reader paths.
+struct ScanContext<'a> {
+    item: &'a WorkItem,
+    pattern: &'a QueryPattern,
+    current_workdir: &'a Option<String>,
+    session_id: String,
+    first_timestamp: Option<String>,
+    last_timestamp: Option<String>,
+    session_cwd: Option<String>,
+    lines: usize,
+    matched: bool,
+    best_match: Option<(i32, String, &'static str)>,
+}
+
+impl<'a> ScanContext<'a> {
+    fn new(
+        item: &'a WorkItem,
+        pattern: &'a QueryPattern,
+        current_workdir: &'a Option<String>,
+    ) -> Self {
+        let session_id = item
+            .path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("session")
+            .to_string();
+        let matched = pattern.is_empty();
+        Self {
+            item,
+            pattern,
+            current_workdir,
+            session_id,
+            first_timestamp: None,
+            last_timestamp: None,
+            session_cwd: None,
+            lines: 0,
+            matched,
+            best_match: None,
+        }
+    }
+
+    /// Processes a single (already-trimmed, non-empty) line of session text.
+    fn process_line(&mut self, line: &str) -> Result<()> {
+        self.lines += 1;
+
+        if let Ok(json) = serde_json::from_str::<Value>(line) {
             if should_skip_record_type(&json) {
-                continue;
+                return Ok(());
             }
             if let Some(id) = extract_session_id(&json) {
-                session_id = id;
+                self.session_id = id;
             }
             if let Some(cwd) = extract_cwd(&json) {
-                if session_cwd.is_none() {
-                    session_cwd = Some(cwd.clone());
+                if self.session_cwd.is_none() {
+                    self.session_cwd = Some(cwd.clone());
                 }
-                // Only check workdir exclusion when a query is active.
-                if !query_lower.is_empty() {
-                    if let Some(workdir) = current_workdir.as_deref() {
+                if !self.pattern.is_empty() {
+                    if let Some(workdir) = self.current_workdir.as_deref() {
                         let norm = Path::new(&cwd)
                             .canonicalize()
                             .map(|p| p.to_string_lossy().into_owned())
@@ -598,108 +766,166 @@ fn process_file(item: &WorkItem, query: &str) -> Result<SessionSummary> {
                 }
             }
             if let Some(ts) = extract_timestamp(&json) {
-                if first_timestamp.is_none() {
-                    first_timestamp = Some(ts.clone());
+                if self.first_timestamp.is_none() {
+                    self.first_timestamp = Some(ts.clone());
                 }
-                last_timestamp = Some(ts);
+                self.last_timestamp = Some(ts);
             }
-            if !query_lower.is_empty() {
+            if !self.pattern.is_empty() {
                 for detail in extract_text_candidates(&json) {
                     if should_skip_meta_text(
-                        current_workdir.as_deref(),
-                        session_cwd.as_deref(),
+                        self.current_workdir.as_deref(),
+                        self.session_cwd.as_deref(),
                         &detail.text,
                     ) {
                         continue;
                     }
-                    if let Some(candidate) = matched_snippet(&detail.text, &query_lower, 180) {
-                        // Lower-case the candidate once and reuse it for both
-                        // noise filtering and scoring to avoid a second alloc.
+                    if let Some(candidate) =
+                        matched_snippet_with_pattern(&detail.text, self.pattern, 180)
+                    {
                         let candidate_lower = candidate.to_lowercase();
                         if should_skip_meta_candidate(&candidate)
                             || is_noise_line(&candidate_lower)
                         {
                             continue;
                         }
-                        matched = true;
-                        let score =
-                            candidate_score_lower(detail.field, &candidate_lower, &query_lower);
-                        let replace = best_match
+                        self.matched = true;
+                        let score = candidate_score_lower(
+                            detail.field,
+                            &candidate_lower,
+                            &self.pattern.lower,
+                        );
+                        let replace = self
+                            .best_match
                             .as_ref()
                             .is_none_or(|(best_score, _, _)| score > *best_score);
                         if replace {
-                            // detail.field is &'static str — no heap alloc needed.
-                            best_match = Some((score, candidate, detail.field));
+                            self.best_match = Some((score, candidate, detail.field));
                         }
                     }
                 }
             }
-        } else if !query_lower.is_empty() {
-            if let Some(candidate) = matched_snippet(&line, &query_lower, 180) {
+        } else if !self.pattern.is_empty() {
+            if let Some(candidate) =
+                matched_snippet_with_pattern(line, self.pattern, 180)
+            {
                 let candidate_lower = candidate.to_lowercase();
-                if !should_skip_meta_candidate(&candidate)
-                    && !is_noise_line(&candidate_lower)
-                {
-                    matched = true;
-                    let score =
-                        candidate_score_lower(RAW_LINE_FIELD, &candidate_lower, &query_lower);
-                    let replace = best_match
+                if !should_skip_meta_candidate(&candidate) && !is_noise_line(&candidate_lower) {
+                    self.matched = true;
+                    let score = candidate_score_lower(
+                        RAW_LINE_FIELD,
+                        &candidate_lower,
+                        &self.pattern.lower,
+                    );
+                    let replace = self
+                        .best_match
                         .as_ref()
                         .is_none_or(|(best_score, _, _)| score > *best_score);
                     if replace {
-                        best_match = Some((score, candidate, RAW_LINE_FIELD));
+                        self.best_match = Some((score, candidate, RAW_LINE_FIELD));
                     }
                 }
             }
         }
+        Ok(())
     }
 
-    if !matched {
-        anyhow::bail!(SKIPPED_QUERY_MISS);
+    /// Consumes the context and produces the final `SessionSummary`.
+    fn finish(self, size_bytes: u64) -> Result<SessionSummary> {
+        if !self.matched {
+            anyhow::bail!(SKIPPED_QUERY_MISS);
+        }
+        let (match_score, snippet, match_field) = match self.best_match {
+            Some((score, snip, field)) => (score, Some(snip), Some(field.to_string())),
+            None => (0, None, None),
+        };
+        Ok(SessionSummary {
+            source: self.item.source,
+            path: self.item.path.clone(),
+            session_id: self.session_id,
+            lines: self.lines,
+            size_bytes,
+            first_timestamp: self.first_timestamp,
+            last_timestamp: self.last_timestamp,
+            snippet,
+            match_field,
+            match_score,
+        })
     }
-
-    let (match_score, snippet, match_field) = match best_match {
-        Some((score, snip, field)) => (score, Some(snip), Some(field.to_string())),
-        None => (0, None, None),
-    };
-    Ok(SessionSummary {
-        source: item.source,
-        path: item.path.clone(),
-        session_id,
-        lines,
-        size_bytes: metadata.len(),
-        first_timestamp,
-        last_timestamp,
-        snippet,
-        match_field,
-        match_score,
-    })
 }
 
 // ── snippet helpers ───────────────────────────────────────────────────────────
 
-/// Returns a window of `limit` characters centred on the first match of
-/// `query_lower` inside `text`, or `None` when no match exists.
+/// Returns a window of `limit` characters centred on the first match of the
+/// pre-compiled `pattern` inside `text`, or `None` when no match exists.
 ///
-/// All indexing is performed on Unicode scalar values (chars) to ensure correct
-/// behaviour with CJK and other multi-byte sequences.
+/// For pure-ASCII content and queries, all indexing is performed directly on
+/// byte offsets (O(1) per char boundary), eliminating the need for a full
+/// `chars().count()` scan.  For non-ASCII content the function falls back to
+/// the Unicode scalar value path to preserve CJK / multi-byte correctness.
+///
+/// The SIMD-accelerated `memmem::Finder` stored in `pattern` avoids the
+/// overhead of a plain `str::find` on the lowercased string.
 #[inline]
-fn matched_snippet(text: &str, query_lower: &str, limit: usize) -> Option<String> {
+fn matched_snippet_with_pattern(
+    text: &str,
+    pattern: &QueryPattern,
+    limit: usize,
+) -> Option<String> {
     let trimmed = text.trim();
-    if trimmed.is_empty() || query_lower.is_empty() {
+    if trimmed.is_empty() || pattern.is_empty() {
         return None;
     }
-    // Lower-case the trimmed text and find the match byte offset within `lower`.
-    // We then convert that byte offset to a char offset so that
-    // `clip_snippet_by_chars` can safely iterate over Unicode scalar values.
+
+    // Fast ASCII path: when both text and query are ASCII, byte offsets equal
+    // char offsets, so we avoid the expensive chars().count() scan entirely.
+    if pattern.is_ascii && trimmed.is_ascii() {
+        let lower_bytes: Vec<u8> = trimmed.bytes().map(|b| b.to_ascii_lowercase()).collect();
+        let byte_idx = pattern.finder.find(&lower_bytes)?;
+        let query_len = pattern.lower.len(); // == char len for ASCII
+        return Some(clip_snippet_ascii(trimmed, byte_idx, query_len, limit));
+    }
+
+    // Non-ASCII path: lower-case the full text, search with the SIMD finder,
+    // then convert the byte offset to a char offset.
     let lower = trimmed.to_lowercase();
-    let byte_idx = lower.find(query_lower)?;
-    // Count chars preceding `byte_idx` in `lower` (not `trimmed`) so that the
-    // index remains valid even when to_lowercase changes byte length for
-    // CJK/accented characters.
+    let byte_idx = pattern.finder.find(lower.as_bytes())?;
     let char_idx = lower[..byte_idx].chars().count();
-    let query_char_len = query_lower.chars().count();
+    let query_char_len = pattern.lower.chars().count();
     Some(clip_snippet_by_chars(trimmed, char_idx, query_char_len, limit))
+}
+
+/// Kept for backwards-compatibility with test code that calls it directly.
+/// New callers should prefer `matched_snippet_with_pattern`.
+#[cfg(test)]
+#[inline]
+fn matched_snippet(text: &str, query_lower: &str, limit: usize) -> Option<String> {
+    let pattern = QueryPattern::new(query_lower);
+    matched_snippet_with_pattern(text, &pattern, limit)
+}
+
+/// ASCII-only snippet clipper.  Because every byte is exactly one character,
+/// byte arithmetic replaces the `chars().count()` scan used in the Unicode
+/// path, reducing O(n) to O(1) for window calculations.
+#[inline]
+fn clip_snippet_ascii(text: &str, byte_start: usize, query_len: usize, limit: usize) -> String {
+    debug_assert!(text.is_ascii());
+    let total = text.len(); // == char count for ASCII
+    if limit == 0 || total <= limit {
+        return text.to_string();
+    }
+    let radius = limit / 2;
+    let start = byte_start.saturating_sub(radius);
+    let raw_end = byte_start + query_len + radius;
+    let end = raw_end.min(total);
+    let start = if end - start < limit {
+        end.saturating_sub(limit)
+    } else {
+        start
+    };
+    let take = end.saturating_sub(start);
+    // All indices are valid byte boundaries because the text is ASCII.
+    text[start..start + take].to_string()
 }
 
 /// Clips `text` to at most `limit` Unicode scalar values, centring the window

@@ -16,10 +16,14 @@ Environment variables recognised by this module:
 
 from __future__ import annotations
 
-import logging
 import os
 from pathlib import Path
-from typing import TypeVar
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from typing import TypeVar
+
+    _N = TypeVar("_N", int, float)
 
 __all__ = [
     "env_bool",
@@ -29,12 +33,8 @@ __all__ = [
     "storage_root",
 ]
 
-logger = logging.getLogger(__name__)
-
 # Minimum path depth required for the storage root (prevents "/" or "/tmp").
 _MIN_STORAGE_ROOT_PARTS = 3
-
-_N = TypeVar("_N", int, float)
 
 
 def env_str(*names: str, default: str = "") -> str:
@@ -57,6 +57,10 @@ def _parse_numeric(
     minimum: _N | None,
 ) -> _N:
     """Parse a numeric env var, log on failure, and apply an optional floor."""
+    import logging
+
+    logger = logging.getLogger(__name__)
+
     raw = env_str(*names, default=str(default))
     try:
         value: _N = type_(raw)
@@ -111,10 +115,8 @@ def storage_root(default_home_name: str = ".contextgo") -> Path:
     Raises:
         ValueError: If the resolved path is not absolute or is too short.
     """
-    raw = env_str(
-        "CONTEXTGO_STORAGE_ROOT",
-        default=str(Path.home() / default_home_name),
-    )
+    env_val = os.environ.get("CONTEXTGO_STORAGE_ROOT")
+    raw = env_val if env_val and env_val.strip() else str(Path.home() / default_home_name)
     resolved = Path(os.path.expanduser(raw)).resolve()
 
     if not resolved.is_absolute():

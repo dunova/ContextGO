@@ -15,6 +15,44 @@ _No unreleased changes._
 
 ---
 
+## [0.9.36] — 2026-03-27
+
+### Overview
+
+"极覆盖" (Extreme Coverage) AutoResearch release. 50-round optimization cycle targeting world-class context memory quality. Critical mmap case-sensitivity bug fixed, test-ordering flaky failures eliminated, thread-safety mock leaks resolved, and 263 new tests across 13 new test files push coverage from 94.7% to 99.4%.
+
+"极覆盖" AutoResearch版本。50轮优化循环追求世界级上下文记忆系统：修复mmap大小写敏感关键bug、消除测试排序抖动、解决线程安全mock泄漏，13个新测试文件+263个新测试，覆盖率从94.7%飞升至99.4%。
+
+### Fixed
+
+- **Critical**: mmap content search was case-sensitive — `mm.find(query_bytes)` on raw bytes without lowering. Fixed to `mm[:region].lower()` before searching (context_core.py)
+- `builtins.print` mock leak in R25 threaded tests — replaced `mock.patch("builtins.print")` inside threads with `contextlib.redirect_stdout(io.StringIO())` for thread safety
+- `_GlobCacheEntry` weakref TypeError — added `__weakref__` to `__slots__` (context_daemon.py)
+- `OrderedDict` vs plain `dict` in `file_cursors` — 3 test files fixed to use `OrderedDict`
+- Test ordering flakiness in `test_context_maintenance.py` — 10 tests that failed when run after R25 due to leaked mock
+
+### Added
+
+- 13 new test files: R22 (daemon), R23 (core), R25 (CLI), R26 (concurrent safety), R27 (Go), R31 (daemon coverage), R32 (session_index), R33 (core), R34 (CLI), R35 (memory_index), R36 (daemon deep), R37 (session deep), R38 (Go edge cases), R39 (viewer/native), R40 (smoke/e2e)
+- 263 new Python tests, 14 new Go tests
+- SQLite concurrent safety tests with WAL mode verification
+- mmap edge case tests (empty files, binary noise, Unicode content)
+- ThreadPoolExecutor cleanup and interleaving tests
+
+### Changed
+
+- Tests: 1545 → 1808
+- Coverage: 94.7% → 99.4%
+- context_core.py: 89.5% → 100%
+- context_daemon.py: 89.7% → 99.3%
+- session_index.py: 94.5% → 99.6%
+- context_cli.py: 95.0% → 99.1%
+- memory_index.py: 97.5% → 99.3%
+- autoresearch_contextgo.py: 97.8% → 100%
+- context_smoke.py / e2e_quality_gate.py: → 100%
+
+---
+
 ## [0.9.35] — 2026-03-27
 
 ### Overview

@@ -10,6 +10,7 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -24,8 +25,9 @@ import (
 
 // WorkItem pairs a file path with its logical source label.
 type WorkItem struct {
-	Source string
-	Path   string
+	Source    string
+	Path      string
+	SizeBytes int64
 }
 
 // SessionSummary holds the metadata and best match extracted from one session
@@ -62,25 +64,48 @@ func main() {
 		fmt.Fprintf(os.Stderr, "warning: cannot determine home directory: %v\n", err)
 		home = "."
 	}
+
+	// Parse all flags up front; store in local vars to avoid repeated
+	// pointer dereferences in the hot output path.
 	codexRoot := flag.String("codex-root", filepath.Join(home, ".codex", "sessions"), "Root directory for Codex session files")
 	claudeRoot := flag.String("claude-root", filepath.Join(home, ".claude", "projects"), "Root directory for Claude session files")
 	threads := flag.Int("threads", 4, "Number of parallel worker goroutines")
 	query := flag.String("query", "", "Return only results whose text contains this substring")
 	limit := flag.Int("limit", 20, "Maximum number of results to return")
 	jsonOutput := flag.Bool("json", false, "Emit machine-readable JSON instead of a human summary")
+	batchOutput := flag.Bool("batch-output", false, "Write results as NDJSON (one JSON object per line) instead of a single JSON array; avoids buffering all results in memory. Implies --json output format.")
 	flag.Parse()
+
+	// Capture flag values once to avoid repeated pointer dereferences.
+	codexRootVal := *codexRoot
+	claudeRootVal := *claudeRoot
+	threadsVal := *threads
+	queryVal := *query
+	limitVal := *limit
+	jsonOutputVal := *jsonOutput
+	batchOutputVal := *batchOutput
 
 	start := time.Now()
 
 	roots := []WorkItem{
-		{Source: "codex_session", Path: *codexRoot},
+		{Source: "codex_session", Path: codexRootVal},
 		{Source: "codex_session", Path: filepath.Join(home, ".codex", "archived_sessions")},
-		{Source: "claude_session", Path: *claudeRoot},
+		{Source: "claude_session", Path: claudeRootVal},
 	}
 	work := collectFiles(roots)
 
 	scanner := NewSessionScanner(NewNoiseFilter(DefaultNoiseMarkers), defaultSnippetLimit)
-	results, truncated := scan(work, *threads, *query, *limit, scanner)
+
+	// --batch-output: stream NDJSON results directly to stdout without
+	// accumulating all matches in memory.  Each result is emitted as a
+	// separate JSON line the moment it is ready, making this mode suitable
+	// for large result sets and downstream streaming consumers.
+	if batchOutputVal {
+		writeBatchOutput(work, threadsVal, queryVal, limitVal, scanner, start)
+		return
+	}
+
+	results, truncated := scan(work, threadsVal, queryVal, limitVal, scanner)
 
 	sort.Slice(results, func(i, j int) bool {
 		a, b := results[i], results[j]
@@ -99,19 +124,19 @@ func main() {
 		return a.Path < b.Path
 	})
 
-	if *limit > 0 && len(results) > *limit {
-		results = results[:*limit]
+	if limitVal > 0 && len(results) > limitVal {
+		results = results[:limitVal]
 		truncated = true
 	}
 
 	output := ScanOutput{
 		FilesScanned: len(work),
-		Query:        *query,
+		Query:        queryVal,
 		Matches:      results,
 		Truncated:    truncated,
 	}
 
-	if *jsonOutput {
+	if jsonOutputVal {
 		raw, err := json.MarshalIndent(output, "", "  ")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "json marshal error: %v\n", err)
@@ -134,8 +159,81 @@ func main() {
 		fmt.Fprintf(os.Stderr, "tabwriter flush: %v\n", err)
 	}
 
-	if truncated && *limit > 0 {
-		fmt.Printf("Results truncated at limit %d; additional matches may exist.\n", *limit)
+	if truncated && limitVal > 0 {
+		fmt.Printf("Results truncated at limit %d; additional matches may exist.\n", limitVal)
+	}
+}
+
+// writeBatchOutput streams scan results as NDJSON to stdout.  Each
+// SessionSummary is written as one JSON line immediately when produced,
+// without accumulating the full result set in memory.  A final metadata
+// line is appended after all results.
+func writeBatchOutput(work []WorkItem, threads int, query string, limit int, scanner *SessionScanner, start time.Time) {
+	if threads < 1 {
+		threads = 1
+	}
+
+	workCh := make(chan WorkItem, threads*2)
+	resultCh := make(chan SessionSummary, threads*2)
+
+	var wg sync.WaitGroup
+	for i := 0; i < threads; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for item := range workCh {
+				if summary, ok := scanner.ProcessFile(item, query); ok {
+					resultCh <- summary
+				}
+			}
+		}()
+	}
+
+	go func() {
+		for _, item := range work {
+			workCh <- item
+		}
+		close(workCh)
+		wg.Wait()
+		close(resultCh)
+	}()
+
+	bw := bufio.NewWriterSize(os.Stdout, 64*1024)
+	enc := json.NewEncoder(bw)
+	enc.SetEscapeHTML(false)
+
+	count := 0
+	truncated := false
+	for result := range resultCh {
+		if limit > 0 && count >= limit {
+			truncated = true
+			// Drain remaining results to avoid blocking workers.
+			continue
+		}
+		if err := enc.Encode(result); err != nil {
+			fmt.Fprintf(os.Stderr, "json encode error: %v\n", err)
+		}
+		count++
+	}
+
+	// Emit a trailing metadata line so consumers can detect end-of-stream.
+	meta := struct {
+		FilesScanned int    `json:"files_scanned"`
+		Query        string `json:"query,omitempty"`
+		Truncated    bool   `json:"truncated,omitempty"`
+		ElapsedMs    int64  `json:"elapsed_ms"`
+	}{
+		FilesScanned: len(work),
+		Query:        query,
+		Truncated:    truncated,
+		ElapsedMs:    time.Since(start).Milliseconds(),
+	}
+	if err := enc.Encode(meta); err != nil {
+		fmt.Fprintf(os.Stderr, "json encode meta error: %v\n", err)
+	}
+
+	if err := bw.Flush(); err != nil {
+		fmt.Fprintf(os.Stderr, "flush error: %v\n", err)
 	}
 }
 
