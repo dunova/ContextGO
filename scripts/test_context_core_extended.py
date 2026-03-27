@@ -228,6 +228,33 @@ class TestLocalMemoryMatches(unittest.TestCase):
         # Fallback to file.name
         self.assertIn("outside.md", matches[0]["uri_hint"])
 
+    def test_no_match_file_is_skipped(self) -> None:
+        """Cover branches 160->166 and 166->176: file whose path and content don't match."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            # This file contains no query term and its name doesn't match either
+            (root / "irrelevant.md").write_text("completely unrelated words here")
+            matches = context_core.local_memory_matches(
+                "zzz_unique_term_not_in_any_file_xyz",
+                shared_root=root,
+                limit=5,
+            )
+        self.assertEqual(matches, [])
+
+    def test_empty_uri_prefix_omitted_from_uri_hint(self) -> None:
+        """Cover the ``else rel_path`` branch in uri_hint construction (line 169)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "doc.md").write_text("empty_prefix_test_token present")
+            matches = context_core.local_memory_matches(
+                "empty_prefix_test_token",
+                shared_root=root,
+                uri_prefix="",
+            )
+        self.assertEqual(len(matches), 1)
+        # uri_hint should just be the relative path, no prefix
+        self.assertFalse(matches[0]["uri_hint"].startswith("local://"))
+
 
 # ---------------------------------------------------------------------------
 # normalize_tags tests

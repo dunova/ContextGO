@@ -203,6 +203,17 @@ class TestStorageRoot(unittest.TestCase):
             path = storage_root(default_home_name=".mycontextgo")
         self.assertTrue(str(path).endswith(".mycontextgo"))
 
+    def test_non_absolute_resolved_path_raises_value_error(self) -> None:
+        """Cover line 121: resolved path is not absolute (requires mock)."""
+        from unittest.mock import patch as _patch
+
+        relative_path = Path("relative/path/only")
+
+        with patch.dict(os.environ, {"CONTEXTGO_STORAGE_ROOT": "/home/user/.contextgo"}):
+            with _patch.object(Path, "resolve", return_value=relative_path):
+                with self.assertRaises(ValueError):
+                    storage_root()
+
 
 if __name__ == "__main__":
     unittest.main()

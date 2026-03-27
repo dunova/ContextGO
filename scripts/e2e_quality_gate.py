@@ -108,6 +108,7 @@ def run_cmd(args: list[str], env: dict[str, str], timeout: int = 20) -> tuple[in
         text=True,
         env=env,
         timeout=timeout,
+        check=False,
     )
     return proc.returncode, proc.stdout or "", proc.stderr or ""
 

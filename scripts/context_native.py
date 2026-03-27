@@ -405,6 +405,7 @@ def _execute_native_command(
             capture_output=True,
             text=True,
             timeout=timeout,
+            check=False,
         )
         return NativeRunResult(
             backend=backend,

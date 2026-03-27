@@ -766,6 +766,7 @@ class TestMainEntryPoint(unittest.TestCase):
                 capture_output=True,
                 text=True,
                 cwd=scripts_dir,
+                check=False,
             )
         self.assertEqual(proc.returncode, 0)
         self.assertIn("=== Snapshot ===", proc.stdout)

@@ -379,6 +379,7 @@ def _count_antigravity_language_servers() -> int:
             capture_output=True,
             text=True,
             timeout=3,
+            check=False,
         )
         if proc.returncode not in (0, 1):
             return 0

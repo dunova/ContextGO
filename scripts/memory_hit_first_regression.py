@@ -23,7 +23,7 @@ class Check:
 
 def run_cmd(args: list[str], timeout: int = 30) -> tuple[int, str, str]:
     """Run a subprocess and return (returncode, stdout, stderr)."""
-    proc = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+    proc = subprocess.run(args, capture_output=True, text=True, timeout=timeout, check=False)
     return proc.returncode, proc.stdout or "", proc.stderr or ""
 
 

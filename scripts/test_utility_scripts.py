@@ -254,6 +254,333 @@ class TestE2eQualityGate(unittest.TestCase):
         self.assertTrue(r.passed)
         self.assertEqual(r.elapsed_sec, 0.5)
 
+    def test_case_save_and_readback_fail(self) -> None:
+        """Cover the failure detail branch (line 160) in case_save_and_readback."""
+        import e2e_quality_gate
+
+        def fake_run_cmd(args, env, timeout=20):
+            if "save" in args:
+                return 0, "saved", ""
+            if "semantic" in args:
+                # marker NOT in output → triggers failure branch
+                return 0, "no results here", ""
+            return 0, "", ""
+
+        with patch.object(e2e_quality_gate, "run_cmd", side_effect=fake_run_cmd):
+            result = e2e_quality_gate.case_save_and_readback(env=os.environ.copy())
+        self.assertFalse(result.passed)
+        self.assertIn("save-readback failed", result.detail)
+
+    def test_case_save_and_readback_fail_save_error(self) -> None:
+        """Cover case where save itself fails."""
+        import e2e_quality_gate
+
+        def fake_run_cmd(args, env, timeout=20):
+            if "save" in args:
+                return 1, "", "error saving"
+            return 0, "", ""
+
+        with patch.object(e2e_quality_gate, "run_cmd", side_effect=fake_run_cmd):
+            result = e2e_quality_gate.case_save_and_readback(env=os.environ.copy())
+        self.assertFalse(result.passed)
+
+    def test_case_session_index_sources_all_present(self) -> None:
+        """Cover lines 175-185: DB exists and has all required source types."""
+        import sqlite3
+
+        import e2e_quality_gate
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            storage_root = Path(tmpdir) / ".contextgo"
+            db_dir = storage_root / "index"
+            db_dir.mkdir(parents=True, exist_ok=True)
+            db_path = db_dir / "session_index.db"
+
+            conn = sqlite3.connect(str(db_path))
+            conn.execute(
+                "CREATE TABLE session_documents (source_type TEXT, content TEXT)"
+            )
+            for src in ("codex_session", "claude_session", "shell_zsh"):
+                conn.execute(
+                    "INSERT INTO session_documents VALUES (?, ?)", (src, "data")
+                )
+            conn.commit()
+            conn.close()
+
+            with patch.object(e2e_quality_gate, "run_cmd", return_value=(0, "", "")):
+                result = e2e_quality_gate.case_session_index_sources(
+                    env=os.environ.copy(), storage_root=storage_root
+                )
+
+        self.assertTrue(result.passed)
+        self.assertEqual(result.name, "session-index-sources")
+        self.assertIn("missing=[]", result.detail)
+
+    def test_case_session_index_sources_some_missing(self) -> None:
+        """Cover lines 175-185: DB exists but missing some required source types."""
+        import sqlite3
+
+        import e2e_quality_gate
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            storage_root = Path(tmpdir) / ".contextgo"
+            db_dir = storage_root / "index"
+            db_dir.mkdir(parents=True, exist_ok=True)
+            db_path = db_dir / "session_index.db"
+
+            conn = sqlite3.connect(str(db_path))
+            conn.execute(
+                "CREATE TABLE session_documents (source_type TEXT, content TEXT)"
+            )
+            # Only codex_session present, missing claude_session and shell_zsh
+            conn.execute(
+                "INSERT INTO session_documents VALUES (?, ?)", ("codex_session", "data")
+            )
+            conn.commit()
+            conn.close()
+
+            with patch.object(e2e_quality_gate, "run_cmd", return_value=(0, "", "")):
+                result = e2e_quality_gate.case_session_index_sources(
+                    env=os.environ.copy(), storage_root=storage_root
+                )
+
+        self.assertFalse(result.passed)
+        self.assertIn("claude_session", result.detail)
+
+    def test_case_export_and_import_save_fails(self) -> None:
+        """Cover lines 226-232: save step returns non-zero."""
+        import e2e_quality_gate
+
+        with patch.object(
+            e2e_quality_gate, "run_cmd", return_value=(1, "", "save error")
+        ):
+            result = e2e_quality_gate.case_export_and_import(env=os.environ.copy())
+
+        self.assertFalse(result.passed)
+        self.assertIn("save failed", result.detail)
+
+    def test_case_export_and_import_export_fails(self) -> None:
+        """Cover lines 248-254: export step returns non-zero."""
+        import e2e_quality_gate
+
+        call_count = [0]
+
+        def fake_run_cmd(args, env, timeout=20):
+            call_count[0] += 1
+            if "save" in args:
+                return 0, "saved", ""
+            if "export" in args:
+                return 1, "", "export error"
+            return 0, "", ""
+
+        with patch.object(e2e_quality_gate, "run_cmd", side_effect=fake_run_cmd):
+            result = e2e_quality_gate.case_export_and_import(env=os.environ.copy())
+
+        self.assertFalse(result.passed)
+        self.assertIn("export failed", result.detail)
+
+    def test_case_export_and_import_export_file_not_created(self) -> None:
+        """Cover lines 255-261: export file doesn't exist after export command."""
+        import e2e_quality_gate
+
+        def fake_run_cmd(args, env, timeout=20):
+            if "save" in args:
+                return 0, "saved", ""
+            if "export" in args:
+                # rc=0 but file won't actually be created
+                return 0, "exported", ""
+            return 0, "", ""
+
+        with patch.object(e2e_quality_gate, "run_cmd", side_effect=fake_run_cmd):
+            result = e2e_quality_gate.case_export_and_import(env=os.environ.copy())
+
+        self.assertFalse(result.passed)
+        self.assertIn("export file not created", result.detail)
+
+    def test_case_export_and_import_zero_observations(self) -> None:
+        """Cover lines 263-272: export file exists but has total_observations=0."""
+        import e2e_quality_gate
+
+        with tempfile.TemporaryDirectory(prefix="cg_gate_ei_test_") as tmpdir:
+            export_path = Path(tmpdir) / "gate_export.json"
+            export_path.write_text(
+                json.dumps({"total_observations": 0, "memories": []}), encoding="utf-8"
+            )
+
+            def fake_run_cmd(args, env, timeout=20):
+                if "save" in args:
+                    return 0, "saved", ""
+                if "export" in args:
+                    # Write to whatever export_file path was passed
+                    for _i, a in enumerate(args):
+                        if str(a).endswith(".json") and "gate_export" in str(a):
+                            Path(a).write_text(
+                                json.dumps({"total_observations": 0}), encoding="utf-8"
+                            )
+                    return 0, "exported", ""
+                return 0, "", ""
+
+            with patch.object(e2e_quality_gate, "run_cmd", side_effect=fake_run_cmd):
+                result = e2e_quality_gate.case_export_and_import(env=os.environ.copy())
+
+        self.assertFalse(result.passed)
+        self.assertIn("0 observations", result.detail)
+
+    def test_case_export_and_import_import_fails(self) -> None:
+        """Cover lines 274-281: import step returns non-zero."""
+        import e2e_quality_gate
+
+        def fake_run_cmd(args, env, timeout=20):
+            if "save" in args:
+                return 0, "saved", ""
+            if "export" in args:
+                # Write a valid export file to the path arg
+                for a in args:
+                    if str(a).endswith(".json"):
+                        Path(a).write_text(
+                            json.dumps({"total_observations": 2, "memories": [{}, {}]}),
+                            encoding="utf-8",
+                        )
+                return 0, "exported", ""
+            if "import" in args:
+                return 1, "", "import error"
+            return 0, "", ""
+
+        with patch.object(e2e_quality_gate, "run_cmd", side_effect=fake_run_cmd):
+            result = e2e_quality_gate.case_export_and_import(env=os.environ.copy())
+
+        self.assertFalse(result.passed)
+        self.assertIn("import failed", result.detail)
+
+    def test_case_export_and_import_success(self) -> None:
+        """Cover the full success path of case_export_and_import (lines 274-282)."""
+        import e2e_quality_gate
+
+        def fake_run_cmd(args, env, timeout=20):
+            if "save" in args:
+                return 0, "saved", ""
+            if "export" in args:
+                for a in args:
+                    if str(a).endswith(".json"):
+                        Path(a).write_text(
+                            json.dumps({"total_observations": 3, "memories": [{}, {}, {}]}),
+                            encoding="utf-8",
+                        )
+                return 0, "exported", ""
+            if "import" in args:
+                return 0, "import done: 3 records", ""
+            return 0, "", ""
+
+        with patch.object(e2e_quality_gate, "run_cmd", side_effect=fake_run_cmd):
+            result = e2e_quality_gate.case_export_and_import(env=os.environ.copy())
+
+        self.assertTrue(result.passed)
+        self.assertEqual(result.name, "export-import")
+
+    def test_case_maintain_pass(self) -> None:
+        """Cover lines 287-302: maintain returns rc=0 and 'Snapshot' in output."""
+        import e2e_quality_gate
+
+        with patch.object(
+            e2e_quality_gate,
+            "run_cmd",
+            return_value=(0, "Snapshot taken. 10 observations archived.", ""),
+        ):
+            result = e2e_quality_gate.case_maintain(env=os.environ.copy())
+
+        self.assertTrue(result.passed)
+        self.assertEqual(result.name, "maintain")
+        self.assertIn("snapshot_reported=True", result.detail)
+
+    def test_case_maintain_fail_no_snapshot(self) -> None:
+        """Cover maintain failure path: rc=0 but no 'Snapshot' keyword."""
+        import e2e_quality_gate
+
+        with patch.object(
+            e2e_quality_gate,
+            "run_cmd",
+            return_value=(0, "Done. Nothing to archive.", ""),
+        ):
+            result = e2e_quality_gate.case_maintain(env=os.environ.copy())
+
+        self.assertFalse(result.passed)
+        self.assertIn("maintain --dry-run failed", result.detail)
+
+    def test_case_maintain_fail_nonzero_rc(self) -> None:
+        """Cover maintain failure path: non-zero returncode."""
+        import e2e_quality_gate
+
+        with patch.object(
+            e2e_quality_gate,
+            "run_cmd",
+            return_value=(1, "", "crash"),
+        ):
+            result = e2e_quality_gate.case_maintain(env=os.environ.copy())
+
+        self.assertFalse(result.passed)
+
+    def test_case_maintain_snapshot_in_stderr(self) -> None:
+        """Cover maintain: Snapshot keyword in stderr (text = out or err)."""
+        import e2e_quality_gate
+
+        with patch.object(
+            e2e_quality_gate,
+            "run_cmd",
+            return_value=(0, "", "Snapshot taken via stderr."),
+        ):
+            result = e2e_quality_gate.case_maintain(env=os.environ.copy())
+
+        self.assertTrue(result.passed)
+
+    def test_main_all_pass(self) -> None:
+        """Cover lines 307-336: main() with all cases passing."""
+        import e2e_quality_gate
+
+        pass_result = e2e_quality_gate.CaseResult("dummy", True, "ok", 0.1)
+
+        with patch.object(e2e_quality_gate, "case_health", return_value=pass_result):
+            with patch.object(e2e_quality_gate, "case_save_and_readback", return_value=pass_result):
+                with patch.object(
+                    e2e_quality_gate, "case_session_index_sources", return_value=pass_result
+                ):
+                    with patch.object(e2e_quality_gate, "case_local_search", return_value=pass_result):
+                        with patch.object(
+                            e2e_quality_gate, "case_export_and_import", return_value=pass_result
+                        ):
+                            with patch.object(e2e_quality_gate, "case_maintain", return_value=pass_result):
+                                with patch.object(
+                                    e2e_quality_gate, "prepare_fixture_home"
+                                ):
+                                    with patch("builtins.print"):
+                                        rc = e2e_quality_gate.main()
+
+        self.assertEqual(rc, 0)
+
+    def test_main_with_failures(self) -> None:
+        """Cover lines 328-335: main() with some cases failing."""
+        import e2e_quality_gate
+
+        pass_result = e2e_quality_gate.CaseResult("dummy", True, "ok", 0.1)
+        fail_result = e2e_quality_gate.CaseResult("failing", False, "broken", 0.1)
+
+        with patch.object(e2e_quality_gate, "case_health", return_value=fail_result):
+            with patch.object(e2e_quality_gate, "case_save_and_readback", return_value=pass_result):
+                with patch.object(
+                    e2e_quality_gate, "case_session_index_sources", return_value=pass_result
+                ):
+                    with patch.object(e2e_quality_gate, "case_local_search", return_value=pass_result):
+                        with patch.object(
+                            e2e_quality_gate, "case_export_and_import", return_value=pass_result
+                        ):
+                            with patch.object(e2e_quality_gate, "case_maintain", return_value=pass_result):
+                                with patch.object(
+                                    e2e_quality_gate, "prepare_fixture_home"
+                                ):
+                                    with patch("builtins.print"):
+                                        rc = e2e_quality_gate.main()
+
+        self.assertEqual(rc, 1)
+
 
 # ---------------------------------------------------------------------------
 # memory_hit_first_regression — unit-level

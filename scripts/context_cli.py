@@ -258,6 +258,7 @@ def _remote_process_count() -> int:
             capture_output=True,
             text=True,
             timeout=3,
+            check=False,
         )
     except (OSError, subprocess.TimeoutExpired):
         return 0

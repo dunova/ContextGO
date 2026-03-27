@@ -29,6 +29,7 @@ def run_cmd(args: list[str], timeout: int = 180) -> tuple[int, str, str]:
         capture_output=True,
         text=True,
         timeout=timeout,
+        check=False,
     )
     return proc.returncode, proc.stdout or "", proc.stderr or ""
 

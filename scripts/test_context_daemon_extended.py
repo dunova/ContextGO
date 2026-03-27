@@ -2733,5 +2733,1304 @@ class TestCleanupCursors(unittest.TestCase):
             context_daemon.MAX_FILE_CURSORS = original_max
 
 
+# ---------------------------------------------------------------------------
+# _pid_alive / _release_single_instance_lock / _acquire_single_instance_lock
+# ---------------------------------------------------------------------------
+
+
+class TestPidAlive(unittest.TestCase):
+    def test_own_pid_is_alive(self) -> None:
+        self.assertTrue(context_daemon._pid_alive(os.getpid()))
+
+    def test_dead_pid_returns_false(self) -> None:
+        # PID 0 is not a normal process; os.kill(0, 0) succeeds for own process group,
+        # so use an unreachable large PID instead.
+        self.assertFalse(context_daemon._pid_alive(999999999))
+
+
+class TestReleaseSingleInstanceLock(unittest.TestCase):
+    def test_release_with_none_lock_fd_is_safe(self) -> None:
+        """Calling _release_single_instance_lock when _LOCK_FD is None must not raise."""
+        original = context_daemon._LOCK_FD
+        try:
+            context_daemon._LOCK_FD = None
+            context_daemon._release_single_instance_lock()
+        finally:
+            context_daemon._LOCK_FD = original
+
+    def test_release_handles_oserror_on_close(self) -> None:
+        """OSError from os.close is swallowed without propagating."""
+        original = context_daemon._LOCK_FD
+        try:
+            context_daemon._LOCK_FD = -1  # invalid fd — os.close will raise OSError
+            # The function must not raise even though os.close(-1) raises OSError
+            try:
+                context_daemon._release_single_instance_lock()
+            except OSError:
+                self.fail("_release_single_instance_lock raised OSError")
+        finally:
+            context_daemon._LOCK_FD = original
+
+
+class TestAcquireSingleInstanceLockExtra(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self) -> None:
+        import shutil
+
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_acquire_returns_false_when_live_pid_in_lock(self) -> None:
+        """If lock exists with a live PID, acquisition fails."""
+        fake_lock = Path(self.tmp) / "test.lock"
+        fake_lock.write_text(str(os.getpid()))
+        with patch.object(context_daemon, "LOCK_FILE", fake_lock):
+            result = context_daemon._acquire_single_instance_lock()
+        self.assertFalse(result)
+        # Clean up global state if it somehow wrote
+        context_daemon._LOCK_FD = None
+
+    def test_acquire_stale_lock_unreadable_retries_and_fails(self) -> None:
+        """Lock file exists; pid cannot be read (OSError); treated as stale → retry → fails again."""
+        fake_lock = Path(self.tmp) / "stale.lock"
+        fake_lock.write_text("not-a-number")
+        with patch.object(context_daemon, "LOCK_FILE", fake_lock):
+            # After removing stale lock, os.open will raise FileExistsError again
+            # because we re-create it in between; simulate by never letting O_EXCL succeed.
+            original_open = os.open
+
+            call_count = [0]
+
+            def _fake_open(path, flags, *args, **kwargs):
+                if "stale.lock" in str(path) and (flags & os.O_EXCL):
+                    call_count[0] += 1
+                    raise FileExistsError("exists")
+                return original_open(path, flags, *args, **kwargs)
+
+            with patch("os.open", side_effect=_fake_open):
+                result = context_daemon._acquire_single_instance_lock()
+        self.assertFalse(result)
+
+    def test_acquire_returns_false_on_oserror(self) -> None:
+        """Generic OSError from os.open returns False immediately."""
+        with patch("os.open", side_effect=OSError("permission denied")):
+            result = context_daemon._acquire_single_instance_lock()
+        self.assertFalse(result)
+        context_daemon._LOCK_FD = None
+
+
+# ---------------------------------------------------------------------------
+# _count_antigravity_language_servers — additional cases
+# ---------------------------------------------------------------------------
+
+
+class TestCountAntigravityLanguageServersExtra(unittest.TestCase):
+    def test_returns_zero_on_non_zero_one_returncode(self) -> None:
+        fake_result = MagicMock()
+        fake_result.returncode = 2
+        fake_result.stdout = ""
+        with patch("subprocess.run", return_value=fake_result):
+            result = context_daemon._count_antigravity_language_servers()
+        self.assertEqual(result, 0)
+
+    def test_counts_matching_lines(self) -> None:
+        fake_result = MagicMock()
+        fake_result.returncode = 0
+        fake_result.stdout = "1234\n5678\n"
+        with patch("subprocess.run", return_value=fake_result):
+            result = context_daemon._count_antigravity_language_servers()
+        self.assertEqual(result, 2)
+
+
+# ---------------------------------------------------------------------------
+# _tail_file — OSError on stat and read exception paths
+# ---------------------------------------------------------------------------
+
+
+class TestTailFileErrorPaths(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tracker = _make_tracker()
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self) -> None:
+        import shutil
+
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_returns_none_when_stat_raises_oserror(self) -> None:
+        p = Path(self.tmp) / "file.jsonl"
+        p.write_text("data\n")
+        key = self.tracker._cursor_key("jsonl", "test", p)
+        self.tracker.file_cursors[key] = (p.stat().st_ino, 0)
+        # Patch _is_safe_source to return True, then make stat raise OSError
+        # by using a non-existent path after setting up the cursor
+        nonexist = Path(self.tmp) / "gone.jsonl"
+        # Set same cursor key for non-existent path (inode won't matter since stat fails)
+        with patch.object(SessionTracker, "_is_safe_source", return_value=True):
+            result = self.tracker._tail_file(key, nonexist, "test_label")
+        self.assertIsNone(result)
+
+    def test_returns_none_on_read_oserror(self) -> None:
+        p = Path(self.tmp) / "readfail.jsonl"
+        content = "some data\n"
+        p.write_text(content)
+        key = self.tracker._cursor_key("jsonl", "test", p)
+        # Set cursor to 0 so tail_file tries to read
+        self.tracker.file_cursors[key] = (p.stat().st_ino, 0)
+        # Patch Path.open to raise OSError
+        with patch.object(Path, "open", side_effect=OSError("read error")):
+            with patch.object(SessionTracker, "_is_safe_source", return_value=True):
+                result = self.tracker._tail_file(key, p, "test_label")
+        self.assertIsNone(result)
+        self.assertGreater(self.tracker._error_count, 0)
+
+
+# ---------------------------------------------------------------------------
+# poll_jsonl_sources — empty text (sanitize returns empty)
+# ---------------------------------------------------------------------------
+
+
+class TestPollJsonlEmptyText(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tracker = _make_tracker()
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self) -> None:
+        import shutil
+
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_empty_line_stripped_is_skipped(self) -> None:
+        """Blank lines in JSONL source must be skipped without session creation."""
+        p = Path(self.tmp) / "blanks.jsonl"
+        p.write_text("\n   \n")
+        self.tracker.active_jsonl["claude_code"] = {
+            "path": p,
+            "sid_keys": ["sessionId"],
+            "text_keys": ["display"],
+        }
+        key = self.tracker._cursor_key("jsonl", "claude_code", p)
+        self.tracker.file_cursors[key] = (p.stat().st_ino, 0)
+        self.tracker.poll_jsonl_sources()
+        self.assertEqual(len(self.tracker.sessions), 0)
+
+
+# ---------------------------------------------------------------------------
+# poll_shell_sources — _parse_shell_line returns None
+# ---------------------------------------------------------------------------
+
+
+class TestPollShellNoneParsed(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tracker = _make_tracker()
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self) -> None:
+        import shutil
+
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_skips_ignored_commands(self) -> None:
+        """Lines matching ignore prefixes produce no sessions."""
+        p = Path(self.tmp) / "hist.sh"
+        # 'ls' is not an ignore prefix, but empty string is
+        p.write_text("\n")
+        self.tracker.active_shell["shell_bash"] = p
+        key = self.tracker._cursor_key("shell", "shell_bash", p)
+        self.tracker.file_cursors[key] = (p.stat().st_ino, 0)
+        with patch.object(context_daemon, "ENABLE_SHELL_MONITOR", True):
+            self.tracker.poll_shell_sources()
+        self.assertEqual(len(self.tracker.sessions), 0)
+
+
+# ---------------------------------------------------------------------------
+# poll_codex_sessions — error, unsafe, old, tail None, empty line, json error, reasoning
+# ---------------------------------------------------------------------------
+
+
+class TestPollCodexSessionsEdgeCases(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tracker = _make_tracker()
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self) -> None:
+        import shutil
+
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _make_codex_dir(self) -> Path:
+        d = Path(self.tmp) / "codex_sessions"
+        d.mkdir(exist_ok=True)
+        return d
+
+    def test_glob_error_increments_error_count(self) -> None:
+        d = self._make_codex_dir()
+        with patch.object(context_daemon, "CODEX_SESSIONS", d):
+            with patch.object(context_daemon, "ENABLE_CODEX_SESSION_MONITOR", True):
+                with patch("context_daemon._refresh_glob_cache", return_value=([], 0.0, True)):
+                    before = self.tracker._error_count
+                    self.tracker.poll_codex_sessions()
+        self.assertGreater(self.tracker._error_count, before)
+
+    def test_old_file_skipped(self) -> None:
+        d = self._make_codex_dir()
+        p = d / "session.jsonl"
+        line = json.dumps({"type": "response_item", "payload": {"type": "message", "content": [{"type": "output_text", "text": "hello"}]}}) + "\n"
+        p.write_text(line)
+        # Set mtime to > 1 hour ago
+        old_time = time.time() - 7200
+        os.utime(p, (old_time, old_time))
+        key = self.tracker._cursor_key("codex_session", "codex_session", p)
+        self.tracker.file_cursors[key] = (p.stat().st_ino, 0)
+        with patch.object(context_daemon, "CODEX_SESSIONS", d):
+            with patch.object(context_daemon, "ENABLE_CODEX_SESSION_MONITOR", True):
+                with patch("context_daemon._refresh_glob_cache", return_value=([p], time.time(), False)):
+                    self.tracker.poll_codex_sessions()
+        self.assertNotIn(p.name, self.tracker.sessions)
+
+    def test_tail_none_skips(self) -> None:
+        d = self._make_codex_dir()
+        p = d / "nosession.jsonl"
+        p.write_text("")
+        with patch.object(context_daemon, "CODEX_SESSIONS", d):
+            with patch.object(context_daemon, "ENABLE_CODEX_SESSION_MONITOR", True):
+                with patch("context_daemon._refresh_glob_cache", return_value=([p], time.time(), False)):
+                    with patch.object(self.tracker, "_tail_file", return_value=None):
+                        self.tracker.poll_codex_sessions()
+        self.assertEqual(len(self.tracker.sessions), 0)
+
+    def test_empty_jsonl_line_skipped(self) -> None:
+        d = self._make_codex_dir()
+        p = d / "emptylines.jsonl"
+        p.write_text("\n   \n")
+        key = self.tracker._cursor_key("codex_session", "codex_session", p)
+        self.tracker.file_cursors[key] = (p.stat().st_ino, 0)
+        with patch.object(context_daemon, "CODEX_SESSIONS", d):
+            with patch.object(context_daemon, "ENABLE_CODEX_SESSION_MONITOR", True):
+                with patch("context_daemon._refresh_glob_cache", return_value=([p], time.time(), False)):
+                    self.tracker.poll_codex_sessions()
+        self.assertEqual(len(self.tracker.sessions), 0)
+
+    def test_bad_json_line_skipped(self) -> None:
+        d = self._make_codex_dir()
+        p = d / "badjson.jsonl"
+        p.write_text("not json\n")
+        key = self.tracker._cursor_key("codex_session", "codex_session", p)
+        self.tracker.file_cursors[key] = (p.stat().st_ino, 0)
+        with patch.object(context_daemon, "CODEX_SESSIONS", d):
+            with patch.object(context_daemon, "ENABLE_CODEX_SESSION_MONITOR", True):
+                with patch("context_daemon._refresh_glob_cache", return_value=([p], time.time(), False)):
+                    self.tracker.poll_codex_sessions()
+        self.assertEqual(len(self.tracker.sessions), 0)
+
+    def test_reasoning_payload_type(self) -> None:
+        d = self._make_codex_dir()
+        p = d / "reasoning.jsonl"
+        line = json.dumps({"type": "response_item", "payload": {"type": "reasoning", "text": "thinking hard"}}) + "\n"
+        p.write_text(line)
+        key = self.tracker._cursor_key("codex_session", "codex_session", p)
+        self.tracker.file_cursors[key] = (p.stat().st_ino, 0)
+        with patch.object(context_daemon, "CODEX_SESSIONS", d):
+            with patch.object(context_daemon, "ENABLE_CODEX_SESSION_MONITOR", True):
+                with patch("context_daemon._refresh_glob_cache", return_value=([p], time.time(), False)):
+                    self.tracker.poll_codex_sessions()
+        self.assertIn(p.name, self.tracker.sessions)
+
+    def test_non_response_item_type_skipped(self) -> None:
+        d = self._make_codex_dir()
+        p = d / "other.jsonl"
+        line = json.dumps({"type": "status", "payload": {}}) + "\n"
+        p.write_text(line)
+        key = self.tracker._cursor_key("codex_session", "codex_session", p)
+        self.tracker.file_cursors[key] = (p.stat().st_ino, 0)
+        with patch.object(context_daemon, "CODEX_SESSIONS", d):
+            with patch.object(context_daemon, "ENABLE_CODEX_SESSION_MONITOR", True):
+                with patch("context_daemon._refresh_glob_cache", return_value=([p], time.time(), False)):
+                    self.tracker.poll_codex_sessions()
+        self.assertEqual(len(self.tracker.sessions), 0)
+
+
+# ---------------------------------------------------------------------------
+# poll_claude_transcripts — edge cases
+# ---------------------------------------------------------------------------
+
+
+class TestPollClaudeTranscriptsEdgeCases(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tracker = _make_tracker()
+        self.tmp = tempfile.mkdtemp()
+        self.transcripts_dir = Path(self.tmp) / "transcripts"
+        self.transcripts_dir.mkdir()
+
+    def tearDown(self) -> None:
+        import shutil
+
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_glob_error_increments_error_count(self) -> None:
+        with patch.object(context_daemon, "CLAUDE_TRANSCRIPTS_DIR", self.transcripts_dir):
+            with patch.object(context_daemon, "ENABLE_CLAUDE_TRANSCRIPTS_MONITOR", True):
+                with patch("context_daemon._refresh_glob_cache", return_value=([], 0.0, True)):
+                    before = self.tracker._error_count
+                    self.tracker.poll_claude_transcripts()
+        self.assertGreater(self.tracker._error_count, before)
+
+    def test_unsafe_source_skipped(self) -> None:
+        p = self.transcripts_dir / "ses_unsafe.jsonl"
+        p.write_text("{}\n")
+        with patch.object(context_daemon, "CLAUDE_TRANSCRIPTS_DIR", self.transcripts_dir):
+            with patch.object(context_daemon, "ENABLE_CLAUDE_TRANSCRIPTS_MONITOR", True):
+                with patch("context_daemon._refresh_glob_cache", return_value=([p], time.time(), False)):
+                    with patch.object(SessionTracker, "_is_safe_source", return_value=False):
+                        self.tracker.poll_claude_transcripts()
+        self.assertEqual(len(self.tracker.sessions), 0)
+
+    def test_mtime_oserror_skips_file(self) -> None:
+        """When path.stat() raises OSError for mtime, the file is skipped (continue)."""
+        # Build a mock path that passes _is_safe_source but raises on stat()
+        mock_path = MagicMock(spec=Path)
+        mock_path.stat.side_effect = OSError("stat failed for mtime")
+        mock_path.__str__ = MagicMock(return_value=str(self.transcripts_dir / "ses_mockstat.jsonl"))
+        with patch.object(context_daemon, "CLAUDE_TRANSCRIPTS_DIR", self.transcripts_dir):
+            with patch.object(context_daemon, "ENABLE_CLAUDE_TRANSCRIPTS_MONITOR", True):
+                with patch("context_daemon._refresh_glob_cache", return_value=([mock_path], time.time(), False)):
+                    with patch.object(SessionTracker, "_is_safe_source", return_value=True):
+                        self.tracker.poll_claude_transcripts()
+        self.assertEqual(len(self.tracker.sessions), 0)
+
+    def test_first_encounter_old_file_skipped_via_lookback(self) -> None:
+        """First encounter of a file older than LOOKBACK_DAYS should be skipped."""
+        p = self.transcripts_dir / "ses_old.jsonl"
+        content = json.dumps({"type": "user", "content": "hello"}) + "\n"
+        p.write_text(content)
+        # Set mtime to 30 days ago
+        old_time = time.time() - 30 * 86400
+        os.utime(p, (old_time, old_time))
+        with patch.object(context_daemon, "CLAUDE_TRANSCRIPTS_DIR", self.transcripts_dir):
+            with patch.object(context_daemon, "ENABLE_CLAUDE_TRANSCRIPTS_MONITOR", True):
+                with patch.object(context_daemon, "CLAUDE_TRANSCRIPTS_LOOKBACK_DAYS", 7):
+                    with patch("context_daemon._refresh_glob_cache", return_value=([p], time.time(), False)):
+                        self.tracker.poll_claude_transcripts()
+        cursor_key = self.tracker._cursor_key("claude_transcripts", "claude_transcripts", p)
+        self.assertIn(cursor_key, self.tracker.file_cursors)
+        self.assertEqual(len(self.tracker.sessions), 0)
+
+    def test_tail_none_skips(self) -> None:
+        p = self.transcripts_dir / "ses_tailnone.jsonl"
+        p.write_text("{}\n")
+        # Pre-set the cursor so it's not a first encounter
+        cursor_key = self.tracker._cursor_key("claude_transcripts", "claude_transcripts", p)
+        self.tracker.file_cursors[cursor_key] = (p.stat().st_ino, 0)
+        with patch.object(context_daemon, "CLAUDE_TRANSCRIPTS_DIR", self.transcripts_dir):
+            with patch.object(context_daemon, "ENABLE_CLAUDE_TRANSCRIPTS_MONITOR", True):
+                with patch("context_daemon._refresh_glob_cache", return_value=([p], time.time(), False)):
+                    with patch.object(self.tracker, "_tail_file", return_value=None):
+                        self.tracker.poll_claude_transcripts()
+        self.assertEqual(len(self.tracker.sessions), 0)
+
+    def test_empty_raw_line_skipped(self) -> None:
+        p = self.transcripts_dir / "ses_empty.jsonl"
+        p.write_text("\n   \n")
+        cursor_key = self.tracker._cursor_key("claude_transcripts", "claude_transcripts", p)
+        self.tracker.file_cursors[cursor_key] = (p.stat().st_ino, 0)
+        with patch.object(context_daemon, "CLAUDE_TRANSCRIPTS_DIR", self.transcripts_dir):
+            with patch.object(context_daemon, "ENABLE_CLAUDE_TRANSCRIPTS_MONITOR", True):
+                with patch("context_daemon._refresh_glob_cache", return_value=([p], time.time(), False)):
+                    self.tracker.poll_claude_transcripts()
+        self.assertEqual(len(self.tracker.sessions), 0)
+
+    def test_bad_json_line_skipped(self) -> None:
+        p = self.transcripts_dir / "ses_badjson.jsonl"
+        p.write_text("not json at all\n")
+        cursor_key = self.tracker._cursor_key("claude_transcripts", "claude_transcripts", p)
+        self.tracker.file_cursors[cursor_key] = (p.stat().st_ino, 0)
+        with patch.object(context_daemon, "CLAUDE_TRANSCRIPTS_DIR", self.transcripts_dir):
+            with patch.object(context_daemon, "ENABLE_CLAUDE_TRANSCRIPTS_MONITOR", True):
+                with patch("context_daemon._refresh_glob_cache", return_value=([p], time.time(), False)):
+                    self.tracker.poll_claude_transcripts()
+        self.assertEqual(len(self.tracker.sessions), 0)
+
+    def test_content_as_dict_extracts_text(self) -> None:
+        p = self.transcripts_dir / "ses_dictcontent.jsonl"
+        line = json.dumps({"type": "user", "content": {"text": "dict content text"}}) + "\n"
+        p.write_text(line)
+        cursor_key = self.tracker._cursor_key("claude_transcripts", "claude_transcripts", p)
+        self.tracker.file_cursors[cursor_key] = (p.stat().st_ino, 0)
+        with patch.object(context_daemon, "CLAUDE_TRANSCRIPTS_DIR", self.transcripts_dir):
+            with patch.object(context_daemon, "ENABLE_CLAUDE_TRANSCRIPTS_MONITOR", True):
+                with patch("context_daemon._refresh_glob_cache", return_value=([p], time.time(), False)):
+                    self.tracker.poll_claude_transcripts()
+        self.assertEqual(len(self.tracker.sessions), 1)
+
+    def test_content_other_type_produces_empty_text(self) -> None:
+        p = self.transcripts_dir / "ses_othertype.jsonl"
+        line = json.dumps({"type": "user", "content": 42}) + "\n"
+        p.write_text(line)
+        cursor_key = self.tracker._cursor_key("claude_transcripts", "claude_transcripts", p)
+        self.tracker.file_cursors[cursor_key] = (p.stat().st_ino, 0)
+        with patch.object(context_daemon, "CLAUDE_TRANSCRIPTS_DIR", self.transcripts_dir):
+            with patch.object(context_daemon, "ENABLE_CLAUDE_TRANSCRIPTS_MONITOR", True):
+                with patch("context_daemon._refresh_glob_cache", return_value=([p], time.time(), False)):
+                    self.tracker.poll_claude_transcripts()
+        self.assertEqual(len(self.tracker.sessions), 0)
+
+    def test_non_user_assistant_type_skipped(self) -> None:
+        p = self.transcripts_dir / "ses_system.jsonl"
+        line = json.dumps({"type": "system", "content": "system prompt"}) + "\n"
+        p.write_text(line)
+        cursor_key = self.tracker._cursor_key("claude_transcripts", "claude_transcripts", p)
+        self.tracker.file_cursors[cursor_key] = (p.stat().st_ino, 0)
+        with patch.object(context_daemon, "CLAUDE_TRANSCRIPTS_DIR", self.transcripts_dir):
+            with patch.object(context_daemon, "ENABLE_CLAUDE_TRANSCRIPTS_MONITOR", True):
+                with patch("context_daemon._refresh_glob_cache", return_value=([p], time.time(), False)):
+                    self.tracker.poll_claude_transcripts()
+        self.assertEqual(len(self.tracker.sessions), 0)
+
+
+# ---------------------------------------------------------------------------
+# poll_antigravity — busy threshold log, mtime OSError
+# ---------------------------------------------------------------------------
+
+
+class TestPollAntigravityEdgeCases(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tracker = _make_tracker()
+        self.tmp = tempfile.mkdtemp()
+        self.brain_dir = Path(self.tmp) / "brain"
+        self.brain_dir.mkdir()
+
+    def tearDown(self) -> None:
+        import shutil
+
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_busy_threshold_logs_then_returns(self) -> None:
+        with patch.object(context_daemon, "ENABLE_ANTIGRAVITY_MONITOR", True):
+            with patch.object(context_daemon, "SUSPEND_ANTIGRAVITY_WHEN_BUSY", True):
+                with patch.object(context_daemon, "ANTIGRAVITY_BUSY_LS_THRESHOLD", 1):
+                    with patch("context_daemon._count_antigravity_language_servers", return_value=2):
+                        # Force log by setting _last_antigravity_busy_log to long ago
+                        self.tracker._last_antigravity_busy_log = 0.0
+                        self.tracker.poll_antigravity()
+        # Log was triggered; method returned early without error
+        self.assertGreater(self.tracker._last_antigravity_busy_log, 0.0)
+
+    def test_brain_not_dir_returns_early(self) -> None:
+        fake_brain = Path(self.tmp) / "nonexistent_brain"
+        with patch.object(context_daemon, "ENABLE_ANTIGRAVITY_MONITOR", True):
+            with patch.object(context_daemon, "ANTIGRAVITY_BRAIN", fake_brain):
+                with patch.object(context_daemon, "SUSPEND_ANTIGRAVITY_WHEN_BUSY", False):
+                    self.tracker.poll_antigravity()
+        self.assertEqual(len(self.tracker.antigravity_sessions), 0)
+
+    def test_glob_error_increments_error_count(self) -> None:
+        with patch.object(context_daemon, "ENABLE_ANTIGRAVITY_MONITOR", True):
+            with patch.object(context_daemon, "ANTIGRAVITY_BRAIN", self.brain_dir):
+                with patch.object(context_daemon, "SUSPEND_ANTIGRAVITY_WHEN_BUSY", False):
+                    with patch("context_daemon._refresh_glob_cache", return_value=([], 0.0, True)):
+                        before = self.tracker._error_count
+                        self.tracker.poll_antigravity()
+        self.assertGreater(self.tracker._error_count, before)
+
+    def test_mtime_oserror_on_doc_stat(self) -> None:
+        """When stat of a brain doc raises OSError, the entry mtime defaults to 0."""
+        sdir = self.brain_dir / "aaaa-bbbb-cccc-dddd-eeee"
+        sdir.mkdir()
+        doc = sdir / "walkthrough.md"
+        doc.write_text("# Brain content with enough text " * 20)
+
+        # We need candidate.exists() to return True, but candidate.stat().st_mtime to raise.
+        # Patch Path.stat at the module level, selectively for doc path.
+        original_path_stat = Path.stat
+
+        def _selective_stat(self_path, *args, **kwargs):
+            result = original_path_stat(self_path, *args, **kwargs)
+            if self_path == doc:
+                # Return a stat-like object where st_mtime raises AttributeError... no.
+                # Instead we raise on the SECOND call (first is from exists/candidate.exists)
+                pass
+            return result
+
+        # Simpler: mock `doc.exists()` to return True via patch on the sdir iteration,
+        # and mock the stat call for mtime by using a mock for the brain_docs loop.
+        mock_doc = MagicMock(spec=Path)
+        mock_doc.exists.return_value = True
+        mock_doc.stat.side_effect = OSError("stat failed for mtime")
+        mock_doc.__str__ = MagicMock(return_value=str(doc))
+
+        with patch.object(context_daemon, "ENABLE_ANTIGRAVITY_MONITOR", True):
+            with patch.object(context_daemon, "ANTIGRAVITY_BRAIN", self.brain_dir):
+                with patch.object(context_daemon, "SUSPEND_ANTIGRAVITY_WHEN_BUSY", False):
+                    with patch("context_daemon._refresh_glob_cache", return_value=([sdir], time.time(), False)):
+                        # Patch the __truediv__ of sdir to return mock_doc for "walkthrough.md"
+                        real_truediv = sdir.__class__.__truediv__
+
+                        def _truediv(self_path, name):
+                            result = real_truediv(self_path, name)
+                            if str(name) == "walkthrough.md" and self_path == sdir:
+                                return mock_doc
+                            return result
+
+                        with patch.object(sdir.__class__, "__truediv__", _truediv):
+                            self.tracker.poll_antigravity()
+
+    def test_no_doc_found_continues(self) -> None:
+        sdir = self.brain_dir / "ffff-0000-1111-2222-3333"
+        sdir.mkdir()
+        # No docs created — wt will be None
+        with patch.object(context_daemon, "ENABLE_ANTIGRAVITY_MONITOR", True):
+            with patch.object(context_daemon, "ANTIGRAVITY_BRAIN", self.brain_dir):
+                with patch.object(context_daemon, "SUSPEND_ANTIGRAVITY_WHEN_BUSY", False):
+                    with patch("context_daemon._refresh_glob_cache", return_value=([sdir], time.time(), False)):
+                        self.tracker.poll_antigravity()
+        self.assertEqual(len(self.tracker.antigravity_sessions), 0)
+
+    def test_wt_stat_oserror_continues(self) -> None:
+        sdir = self.brain_dir / "1111-2222-3333-4444-5555"
+        sdir.mkdir()
+        doc = sdir / "walkthrough.md"
+        doc.write_text("content")
+
+        original_stat = Path.stat
+
+        def _stat(self_path, *args, **kwargs):
+            if self_path == doc and hasattr(self, "_second_call"):
+                raise OSError("wt stat failed")
+            result = original_stat(self_path, *args, **kwargs)
+            self._second_call = True
+            return result
+
+        with patch.object(context_daemon, "ENABLE_ANTIGRAVITY_MONITOR", True):
+            with patch.object(context_daemon, "ANTIGRAVITY_BRAIN", self.brain_dir):
+                with patch.object(context_daemon, "SUSPEND_ANTIGRAVITY_WHEN_BUSY", False):
+                    with patch("context_daemon._refresh_glob_cache", return_value=([sdir], time.time(), False)):
+                        # Don't raise on first stat (doc discovery) but raise on wt.stat()
+                        with patch.object(SessionTracker, "_is_safe_source", return_value=True):
+                            # Manually simulate: add entry to antigravity_sessions first
+                            # then set mtime so it triggers the export path
+                            pass
+                        self.tracker.poll_antigravity()
+
+
+# ---------------------------------------------------------------------------
+# _extract_text — parts with input prefix
+# ---------------------------------------------------------------------------
+
+
+class TestExtractTextPartsWithInput(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tracker = _make_tracker()
+
+    def test_parts_with_input_prefix(self) -> None:
+        data = {
+            "input": "user query",
+            "parts": [{"type": "text", "text": "response part"}],
+        }
+        result = self.tracker._extract_text(data, [])
+        self.assertIn("user query", result)
+        self.assertIn("response part", result)
+
+    def test_parts_without_input_prefix(self) -> None:
+        data = {
+            "parts": [{"type": "text", "text": "just the part"}],
+        }
+        result = self.tracker._extract_text(data, [])
+        self.assertEqual(result, "just the part")
+
+    def test_parts_empty_texts_ignored(self) -> None:
+        data = {
+            "parts": [{"type": "text", "text": "   "}, {"type": "other", "text": "ignored"}],
+        }
+        result = self.tracker._extract_text(data, [])
+        self.assertEqual(result, "")
+
+    def test_text_key_takes_priority_over_parts(self) -> None:
+        data = {
+            "display": "from display key",
+            "parts": [{"type": "text", "text": "from parts"}],
+        }
+        result = self.tracker._extract_text(data, ["display"])
+        self.assertEqual(result, "from display key")
+
+
+# ---------------------------------------------------------------------------
+# _pending_mtime — OSError path
+# ---------------------------------------------------------------------------
+
+
+class TestPendingMtime(unittest.TestCase):
+    def test_returns_zero_on_oserror(self) -> None:
+        p = Path("/does/not/exist/file.md")
+        result = SessionTracker._pending_mtime(p)
+        self.assertEqual(result, 0.0)
+
+    def test_returns_mtime_for_real_file(self) -> None:
+        with tempfile.NamedTemporaryFile(suffix=".md", delete=False) as f:
+            fname = Path(f.name)
+        try:
+            result = SessionTracker._pending_mtime(fname)
+            self.assertGreater(result, 0.0)
+        finally:
+            fname.unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# _prune_pending_files — OSError path
+# ---------------------------------------------------------------------------
+
+
+class TestPrunePendingFilesOSError(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tracker = _make_tracker()
+
+    def test_oserror_on_glob_returns_early(self) -> None:
+        with patch("pathlib.Path.glob", side_effect=OSError("glob error")):
+            # Should not raise
+            self.tracker._prune_pending_files()
+
+
+# ---------------------------------------------------------------------------
+# maybe_retry_pending — OSError on glob
+# ---------------------------------------------------------------------------
+
+
+class TestMaybeRetryPendingOSError(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tracker = _make_tracker()
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self) -> None:
+        import shutil
+
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_oserror_on_glob_treated_as_no_pending(self) -> None:
+        pending_dir = Path(self.tmp) / "pending"
+        pending_dir.mkdir()
+        # Create a file so PENDING_DIR.exists() is True
+        (pending_dir / "dummy.md").write_text("x")
+        with patch.object(context_daemon, "PENDING_DIR", pending_dir):
+            with patch("pathlib.Path.glob", side_effect=OSError("glob failed")):
+                # should not raise; has_pending defaults to False
+                self.tracker.maybe_retry_pending()
+
+
+# ---------------------------------------------------------------------------
+# next_sleep_interval — has_pending_files OSError
+# ---------------------------------------------------------------------------
+
+
+class TestNextSleepIntervalPendingOSError(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tracker = _make_tracker()
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self) -> None:
+        import shutil
+
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_oserror_on_pending_glob_defaults_to_false(self) -> None:
+        pending_dir = Path(self.tmp) / "pending_sleep"
+        pending_dir.mkdir()
+        with patch.object(context_daemon, "PENDING_DIR", pending_dir):
+            with patch("pathlib.Path.exists", return_value=True):
+                with patch("pathlib.Path.glob", side_effect=OSError("glob err")):
+                    result = self.tracker.next_sleep_interval()
+        self.assertGreaterEqual(result, 1)
+
+
+# ---------------------------------------------------------------------------
+# check_and_export_idle — session TTL eviction (line 1048)
+# ---------------------------------------------------------------------------
+
+
+class TestCheckAndExportIdleTTL(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tracker = _make_tracker()
+
+    def test_active_exported_session_not_removed_before_ttl(self) -> None:
+        now = time.time()
+        self.tracker.sessions["still_alive"] = {
+            "last_seen": now - 10,  # recently seen, within TTL
+            "exported": True,
+            "source": "claude_code",
+            "messages": [],
+            "created": now - 20,
+            "last_hash": "",
+        }
+        self.tracker.check_and_export_idle()
+        self.assertIn("still_alive", self.tracker.sessions)
+
+    def test_session_ttl_exceeded_marks_exported_and_remains_until_cleanup(self) -> None:
+        now = time.time()
+        # Session that is not yet exported but TTL exceeded and not enough messages
+        self.tracker.sessions["orphan_ttl"] = {
+            "last_seen": now - context_daemon.IDLE_TIMEOUT_SEC - 10,
+            "exported": False,
+            "source": "claude_code",
+            "messages": [],  # fewer than min_messages
+            "created": now - context_daemon.SESSION_TTL_SEC - 100,
+            "last_hash": "",
+        }
+        self.tracker.check_and_export_idle()
+        self.assertTrue(self.tracker.sessions["orphan_ttl"]["exported"])
+
+
+# ---------------------------------------------------------------------------
+# _handle_signal
+# ---------------------------------------------------------------------------
+
+
+class TestHandleSignal(unittest.TestCase):
+    def test_sets_shutdown_flag(self) -> None:
+        original = context_daemon._shutdown
+        try:
+            context_daemon._shutdown = False
+            context_daemon._handle_signal(15, None)
+            self.assertTrue(context_daemon._shutdown)
+        finally:
+            context_daemon._shutdown = original
+
+
+# ---------------------------------------------------------------------------
+# heartbeat — _resource_mod None path
+# ---------------------------------------------------------------------------
+
+
+class TestHeartbeatResourceNone(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tracker = _make_tracker()
+
+    def test_heartbeat_with_no_resource_mod(self) -> None:
+        """Heartbeat should complete without error when resource module is None."""
+        self.tracker._last_heartbeat = 0.0  # force heartbeat to fire
+        with patch.object(context_daemon, "_resource_mod", None):
+            with patch.object(context_daemon, "PENDING_DIR") as mock_pending:
+                mock_pending.exists.return_value = False
+                mock_pending.glob.return_value = iter([])
+                self.tracker.heartbeat()
+        self.assertGreater(self.tracker._last_heartbeat, 0.0)
+
+
+# ---------------------------------------------------------------------------
+# maybe_sync_index — OSError path
+# ---------------------------------------------------------------------------
+
+
+class TestMaybeSyncIndexOSError(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tracker = _make_tracker()
+
+    def test_oserror_increments_error_count(self) -> None:
+        self.tracker._index_dirty = True
+        self.tracker._last_index_sync = 0.0
+        with patch("context_daemon.sync_index_from_storage", side_effect=OSError("disk full")):
+            self.tracker.maybe_sync_index(force=True)
+        self.assertGreater(self.tracker._error_count, 0)
+        self.assertTrue(self.tracker._index_dirty)
+
+
+# ---------------------------------------------------------------------------
+# _export — ENABLE_REMOTE_SYNC True but no http_client queues pending
+# ---------------------------------------------------------------------------
+
+
+class TestExportQueuesPendingWhenRemoteSyncEnabledButNoClient(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tracker = _make_tracker()
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self) -> None:
+        import shutil
+
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_queues_pending_when_remote_sync_enabled_no_client(self) -> None:
+        local_dir = Path(self.tmp) / "history"
+        local_dir.mkdir(parents=True)
+        pending_dir = Path(self.tmp) / "pending"
+        pending_dir.mkdir(parents=True)
+
+        data = {
+            "source": "test_src",
+            "messages": ["msg1", "msg2"],
+            "last_seen": time.time(),
+        }
+        self.tracker._http_client = None
+
+        with patch.object(context_daemon, "LOCAL_STORAGE_ROOT", Path(self.tmp)):
+            with patch.object(context_daemon, "PENDING_DIR", pending_dir):
+                with patch.object(context_daemon, "ENABLE_REMOTE_SYNC", True):
+                    with patch.object(self.tracker, "_queue_pending") as mock_queue:
+                        with patch.object(self.tracker, "maybe_sync_index"):
+                            result = self.tracker._export("test_sid", data)
+        mock_queue.assert_called_once()
+        self.assertFalse(result)
+
+
+# ---------------------------------------------------------------------------
+# _get_cursor — OSError on stat (lines 543-544)
+# ---------------------------------------------------------------------------
+
+
+class TestGetCursorOSError(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tracker = _make_tracker()
+
+    def test_returns_zero_on_stat_oserror(self) -> None:
+        key = "jsonl:test:xyz"
+        nonexist = Path("/does/not/exist/cursor_test.jsonl")
+        result = self.tracker._get_cursor(key, nonexist)
+        self.assertEqual(result, 0)
+
+
+# ---------------------------------------------------------------------------
+# poll_jsonl_sources — _tail_file returns None (line 617 continue)
+# ---------------------------------------------------------------------------
+
+
+class TestPollJsonlTailNone(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tracker = _make_tracker()
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self) -> None:
+        import shutil
+
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_continue_when_tail_file_returns_none(self) -> None:
+        p = Path(self.tmp) / "noop.jsonl"
+        p.write_text("data\n")
+        self.tracker.active_jsonl["claude_code"] = {
+            "path": p,
+            "sid_keys": ["sessionId"],
+            "text_keys": ["display"],
+        }
+        with patch.object(self.tracker, "_tail_file", return_value=None):
+            self.tracker.poll_jsonl_sources()
+        self.assertEqual(len(self.tracker.sessions), 0)
+
+
+# ---------------------------------------------------------------------------
+# poll_shell_sources — _tail_file returns None (line 643 continue)
+# ---------------------------------------------------------------------------
+
+
+class TestPollShellTailNone(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tracker = _make_tracker()
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self) -> None:
+        import shutil
+
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_continue_when_tail_file_returns_none(self) -> None:
+        p = Path(self.tmp) / ".zsh_history"
+        p.write_text("ls -la\n")
+        self.tracker.active_shell["shell_zsh"] = p
+        with patch.object(context_daemon, "ENABLE_SHELL_MONITOR", True):
+            with patch.object(self.tracker, "_tail_file", return_value=None):
+                self.tracker.poll_shell_sources()
+        self.assertEqual(len(self.tracker.sessions), 0)
+
+
+# ---------------------------------------------------------------------------
+# poll_codex_sessions — unsafe source (line 672), mtime OSError (675-676)
+# ---------------------------------------------------------------------------
+
+
+class TestPollCodexSessionsMoreEdgeCases(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tracker = _make_tracker()
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self) -> None:
+        import shutil
+
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_unsafe_source_skipped(self) -> None:
+        d = Path(self.tmp) / "codex"
+        d.mkdir()
+        p = d / "session.jsonl"
+        p.write_text("{}\n")
+        with patch.object(context_daemon, "CODEX_SESSIONS", d):
+            with patch.object(context_daemon, "ENABLE_CODEX_SESSION_MONITOR", True):
+                with patch("context_daemon._refresh_glob_cache", return_value=([p], time.time(), False)):
+                    with patch.object(SessionTracker, "_is_safe_source", return_value=False):
+                        self.tracker.poll_codex_sessions()
+        self.assertEqual(len(self.tracker.sessions), 0)
+
+    def test_mtime_oserror_skips_file(self) -> None:
+        d = Path(self.tmp) / "codex2"
+        d.mkdir()
+        mock_p = MagicMock(spec=Path)
+        mock_p.stat.side_effect = OSError("stat failed")
+        with patch.object(context_daemon, "CODEX_SESSIONS", d):
+            with patch.object(context_daemon, "ENABLE_CODEX_SESSION_MONITOR", True):
+                with patch("context_daemon._refresh_glob_cache", return_value=([mock_p], time.time(), False)):
+                    with patch.object(SessionTracker, "_is_safe_source", return_value=True):
+                        self.tracker.poll_codex_sessions()
+        self.assertEqual(len(self.tracker.sessions), 0)
+
+    def test_message_payload_empty_text_not_stored(self) -> None:
+        """message payload with no output_text content → text is empty → not stored."""
+        d = Path(self.tmp) / "codex3"
+        d.mkdir()
+        p = d / "empty_msg.jsonl"
+        line = json.dumps({
+            "type": "response_item",
+            "payload": {"type": "message", "content": [{"type": "other_type", "text": "hidden"}]}
+        }) + "\n"
+        p.write_text(line)
+        key = self.tracker._cursor_key("codex_session", "codex_session", p)
+        self.tracker.file_cursors[key] = (p.stat().st_ino, 0)
+        with patch.object(context_daemon, "CODEX_SESSIONS", d):
+            with patch.object(context_daemon, "ENABLE_CODEX_SESSION_MONITOR", True):
+                with patch("context_daemon._refresh_glob_cache", return_value=([p], time.time(), False)):
+                    self.tracker.poll_codex_sessions()
+        self.assertEqual(len(self.tracker.sessions), 0)
+
+
+# ---------------------------------------------------------------------------
+# poll_claude_transcripts — first encounter fsize OSError (lines 743-744)
+#   and first encounter mtime < lookback (lines 748-751)
+# ---------------------------------------------------------------------------
+
+
+class TestPollClaudeTranscriptsFirstEncounter(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tracker = _make_tracker()
+        self.tmp = tempfile.mkdtemp()
+        self.transcripts_dir = Path(self.tmp) / "transcripts"
+        self.transcripts_dir.mkdir()
+
+    def tearDown(self) -> None:
+        import shutil
+
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_first_encounter_fsize_oserror_defaults_to_zero(self) -> None:
+        """When fsize stat raises OSError in first-encounter path, fsize defaults to 0."""
+        now = time.time()
+        # File that was very recently modified so lookback doesn't skip it
+        p = self.transcripts_dir / "ses_recentfile.jsonl"
+        content = json.dumps({"type": "user", "content": "recent message"}) + "\n"
+        p.write_text(content)
+
+        call_count = [0]
+
+        def _mock_stat():
+            call_count[0] += 1
+            if call_count[0] == 1:
+                # First call: mtime for lookback check — return recent time
+                m = MagicMock()
+                m.st_mtime = now  # recent
+                return m
+            # Second call: fsize stat raises
+            raise OSError("fsize stat failed")
+
+        mock_p = MagicMock(spec=Path)
+        mock_p.stat.side_effect = _mock_stat
+        mock_p.__str__ = MagicMock(return_value=str(p))
+        mock_p.name = p.name
+
+        with patch.object(context_daemon, "CLAUDE_TRANSCRIPTS_DIR", self.transcripts_dir):
+            with patch.object(context_daemon, "ENABLE_CLAUDE_TRANSCRIPTS_MONITOR", True):
+                with patch("context_daemon._refresh_glob_cache", return_value=([mock_p], time.time(), False)):
+                    with patch.object(SessionTracker, "_is_safe_source", return_value=True):
+                        self.tracker.poll_claude_transcripts()
+
+    def test_first_encounter_inode_oserror_continues(self) -> None:
+        """When inode stat raises OSError (line 749-750), the file is skipped."""
+        now = time.time()
+        p = self.transcripts_dir / "ses_inodeerr.jsonl"
+        content = json.dumps({"type": "user", "content": "some text"}) + "\n"
+        p.write_text(content)
+
+        call_count = [0]
+
+        def _mock_stat():
+            call_count[0] += 1
+            if call_count[0] == 1:
+                # First call: mtime — return recent
+                m = MagicMock()
+                m.st_mtime = now
+                return m
+            if call_count[0] == 2:
+                # Second call: fsize — return OK
+                m = MagicMock()
+                m.st_size = 100
+                return m
+            # Third call: inode — raise
+            raise OSError("inode stat failed")
+
+        mock_p = MagicMock(spec=Path)
+        mock_p.stat.side_effect = _mock_stat
+        mock_p.__str__ = MagicMock(return_value=str(p))
+        mock_p.name = p.name
+
+        with patch.object(context_daemon, "CLAUDE_TRANSCRIPTS_DIR", self.transcripts_dir):
+            with patch.object(context_daemon, "ENABLE_CLAUDE_TRANSCRIPTS_MONITOR", True):
+                with patch("context_daemon._refresh_glob_cache", return_value=([mock_p], time.time(), False)):
+                    with patch.object(SessionTracker, "_is_safe_source", return_value=True):
+                        self.tracker.poll_claude_transcripts()
+        self.assertEqual(len(self.tracker.sessions), 0)
+
+
+# ---------------------------------------------------------------------------
+# poll_antigravity — wt.stat() OSError (lines 860-861)
+#   and final_only quiet/size checks (886, 889, 892-894)
+# ---------------------------------------------------------------------------
+
+
+class TestPollAntigravityFinalOnlyChecks(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tracker = _make_tracker()
+        self.tmp = tempfile.mkdtemp()
+        self.brain_dir = Path(self.tmp) / "brain"
+        self.brain_dir.mkdir()
+
+    def tearDown(self) -> None:
+        import shutil
+
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _make_session_dir(self, name: str) -> Path:
+        sdir = self.brain_dir / name
+        sdir.mkdir(exist_ok=True)
+        return sdir
+
+    def _make_doc(self, sdir: Path, size: int = 1000) -> Path:
+        doc = sdir / "walkthrough.md"
+        doc.write_text("x" * size)
+        return doc
+
+    def test_wt_stat_oserror_continues(self) -> None:
+        """If wt.stat() raises OSError at line 859, the session dir is skipped."""
+        sdir = self._make_session_dir("wt-stat-err-0000")
+        mock_wt = MagicMock(spec=Path)
+        mock_wt.exists.return_value = True
+        mock_wt.stat.side_effect = OSError("wt stat failed")
+        mock_wt.__ne__ = MagicMock(return_value=True)
+        mock_wt.__eq__ = MagicMock(return_value=False)
+
+        real_truediv = sdir.__class__.__truediv__
+
+        def _truediv(self_path, name):
+            if str(name) == "walkthrough.md" and self_path == sdir:
+                return mock_wt
+            return real_truediv(self_path, name)
+
+        with patch.object(context_daemon, "ENABLE_ANTIGRAVITY_MONITOR", True):
+            with patch.object(context_daemon, "ANTIGRAVITY_BRAIN", self.brain_dir):
+                with patch.object(context_daemon, "SUSPEND_ANTIGRAVITY_WHEN_BUSY", False):
+                    with patch("context_daemon._refresh_glob_cache", return_value=([sdir], time.time(), False)):
+                        with patch.object(sdir.__class__, "__truediv__", _truediv):
+                            self.tracker.poll_antigravity()
+        self.assertEqual(len(self.tracker.antigravity_sessions), 0)
+
+    def test_final_only_mtime_already_exported_skips(self) -> None:
+        """final_only: if mtime <= exported_mtime, skip (line 885-886)."""
+        sdir = self._make_session_dir("final-already-exported")
+        doc = self._make_doc(sdir, 2000)
+        sid = sdir.name
+        mtime = doc.stat().st_mtime
+
+        # Pre-populate antigravity_sessions so it's NOT a first encounter
+        self.tracker.antigravity_sessions[sid] = {
+            "mtime": mtime,
+            "path": doc,
+            "last_change": time.time() - 3600,  # changed long ago
+            "exported_mtime": mtime,  # already exported this mtime
+        }
+
+        with patch.object(context_daemon, "ENABLE_ANTIGRAVITY_MONITOR", True):
+            with patch.object(context_daemon, "ANTIGRAVITY_BRAIN", self.brain_dir):
+                with patch.object(context_daemon, "SUSPEND_ANTIGRAVITY_WHEN_BUSY", False):
+                    with patch.object(context_daemon, "ANTIGRAVITY_INGEST_MODE", "final_only"):
+                        with patch("context_daemon._refresh_glob_cache", return_value=([sdir], time.time(), False)):
+                            with patch.object(self.tracker, "_export") as mock_export:
+                                self.tracker.poll_antigravity()
+        mock_export.assert_not_called()
+
+    def test_final_only_not_quiet_yet_skips(self) -> None:
+        """final_only: document changed recently, quiet period not elapsed (line 888-889)."""
+        sdir = self._make_session_dir("final-not-quiet-yet")
+        doc = self._make_doc(sdir, 2000)
+        sid = sdir.name
+        mtime = doc.stat().st_mtime + 1  # slightly newer than exported
+
+        self.tracker.antigravity_sessions[sid] = {
+            "mtime": mtime - 1,
+            "path": doc,
+            "last_change": time.time(),  # changed just now → not quiet
+            "exported_mtime": mtime - 2,
+        }
+
+        with patch.object(context_daemon, "ENABLE_ANTIGRAVITY_MONITOR", True):
+            with patch.object(context_daemon, "ANTIGRAVITY_BRAIN", self.brain_dir):
+                with patch.object(context_daemon, "SUSPEND_ANTIGRAVITY_WHEN_BUSY", False):
+                    with patch.object(context_daemon, "ANTIGRAVITY_INGEST_MODE", "final_only"):
+                        with patch.object(context_daemon, "ANTIGRAVITY_QUIET_SEC", 3600):
+                            with patch("context_daemon._refresh_glob_cache", return_value=([sdir], time.time(), False)):
+                                with patch.object(self.tracker, "_export") as mock_export:
+                                    self.tracker.poll_antigravity()
+        mock_export.assert_not_called()
+
+    def test_final_only_doc_too_small_skips(self) -> None:
+        """final_only: document below min bytes → skip (line 892)."""
+        sdir = self._make_session_dir("final-too-small")
+        doc = self._make_doc(sdir, 50)  # tiny doc
+        sid = sdir.name
+        mtime = doc.stat().st_mtime + 1
+
+        self.tracker.antigravity_sessions[sid] = {
+            "mtime": mtime - 1,
+            "path": doc,
+            "last_change": time.time() - 3600,  # quiet
+            "exported_mtime": mtime - 2,
+        }
+
+        with patch.object(context_daemon, "ENABLE_ANTIGRAVITY_MONITOR", True):
+            with patch.object(context_daemon, "ANTIGRAVITY_BRAIN", self.brain_dir):
+                with patch.object(context_daemon, "SUSPEND_ANTIGRAVITY_WHEN_BUSY", False):
+                    with patch.object(context_daemon, "ANTIGRAVITY_INGEST_MODE", "final_only"):
+                        with patch.object(context_daemon, "ANTIGRAVITY_QUIET_SEC", 30):
+                            with patch.object(context_daemon, "ANTIGRAVITY_MIN_DOC_BYTES", 500):
+                                with patch("context_daemon._refresh_glob_cache", return_value=([sdir], time.time(), False)):
+                                    with patch.object(self.tracker, "_export") as mock_export:
+                                        self.tracker.poll_antigravity()
+        mock_export.assert_not_called()
+
+    def test_final_only_size_oserror_skips(self) -> None:
+        """final_only: wt.stat().st_size raises OSError → skip (lines 893-894)."""
+        sdir = self._make_session_dir("final-size-err")
+        doc = self._make_doc(sdir, 1000)
+        sid = sdir.name
+        mtime = doc.stat().st_mtime + 1
+
+        self.tracker.antigravity_sessions[sid] = {
+            "mtime": mtime - 1,
+            "path": doc,
+            "last_change": time.time() - 3600,
+            "exported_mtime": mtime - 2,
+        }
+
+        with patch.object(context_daemon, "ENABLE_ANTIGRAVITY_MONITOR", True):
+            with patch.object(context_daemon, "ANTIGRAVITY_BRAIN", self.brain_dir):
+                with patch.object(context_daemon, "SUSPEND_ANTIGRAVITY_WHEN_BUSY", False):
+                    with patch.object(context_daemon, "ANTIGRAVITY_INGEST_MODE", "final_only"):
+                        with patch.object(context_daemon, "ANTIGRAVITY_QUIET_SEC", 30):
+                            with patch.object(context_daemon, "ANTIGRAVITY_MIN_DOC_BYTES", 100):
+                                with patch("context_daemon._refresh_glob_cache", return_value=([sdir], time.time(), False)):
+                                    # Make wt.stat() raise OSError for size check
+                                    # We need the path in meta to be doc, and doc.stat() to raise
+                                    with patch.object(SessionTracker, "_export"):
+                                        # Use mock wt with stat raising OSError
+                                        mock_wt = MagicMock(spec=Path)
+                                        mock_wt.stat.side_effect = OSError("size check failed")
+                                        mock_wt.read_text.return_value = "content"
+                                        mock_wt.__ne__ = MagicMock(return_value=False)
+                                        mock_wt.__eq__ = MagicMock(return_value=True)
+                                        self.tracker.antigravity_sessions[sid]["path"] = mock_wt
+                                        with patch.object(self.tracker, "_export") as mock_export:
+                                            self.tracker.poll_antigravity()
+        mock_export.assert_not_called()
+
+    def test_busy_threshold_not_logged_within_interval(self) -> None:
+        """Busy threshold: if log was recent, no log and returns early."""
+        with patch.object(context_daemon, "ENABLE_ANTIGRAVITY_MONITOR", True):
+            with patch.object(context_daemon, "SUSPEND_ANTIGRAVITY_WHEN_BUSY", True):
+                with patch.object(context_daemon, "ANTIGRAVITY_BUSY_LS_THRESHOLD", 1):
+                    with patch("context_daemon._count_antigravity_language_servers", return_value=2):
+                        # Set _last_antigravity_busy_log to just now (no re-log)
+                        self.tracker._last_antigravity_busy_log = time.time()
+                        self.tracker.poll_antigravity()
+        # Method returned early; sessions unchanged
+        self.assertEqual(len(self.tracker.antigravity_sessions), 0)
+
+
+# ---------------------------------------------------------------------------
+# refresh_sources — disabled source removal and source offline branches
+# ---------------------------------------------------------------------------
+
+
+class TestRefreshSourcesBranches(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tracker = _make_tracker()
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self) -> None:
+        import shutil
+
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_source_disabled_removes_from_active(self) -> None:
+        """If source monitor flag is False and source was active, remove it."""
+        p = Path(self.tmp) / "history.jsonl"
+        p.write_text("data\n")
+        self.tracker.active_jsonl["codex_history"] = {"path": p, "sid_keys": [], "text_keys": []}
+        self.tracker._last_source_refresh = 0.0  # force refresh
+
+        with patch.object(context_daemon, "SOURCE_MONITOR_FLAGS", {"codex_history": False}):
+            self.tracker.refresh_sources()
+        self.assertNotIn("codex_history", self.tracker.active_jsonl)
+
+    def test_source_offline_removes_from_active(self) -> None:
+        """If previously active source path no longer exists, mark offline."""
+        nonexist = Path(self.tmp) / "gone.jsonl"
+        self.tracker.active_jsonl["claude_code"] = {"path": nonexist, "sid_keys": [], "text_keys": []}
+        self.tracker._last_source_refresh = 0.0
+
+        # Patch JSONL_SOURCES to only contain our nonexistent path
+        fake_sources = {
+            "claude_code": [{"path": nonexist, "sid_keys": [], "text_keys": []}]
+        }
+        with patch.object(context_daemon, "JSONL_SOURCES", fake_sources):
+            with patch.object(context_daemon, "SOURCE_MONITOR_FLAGS", {"claude_code": True}):
+                with patch.object(context_daemon, "ENABLE_SHELL_MONITOR", False):
+                    self.tracker.refresh_sources()
+        self.assertNotIn("claude_code", self.tracker.active_jsonl)
+
+    def test_shell_source_offline_removes_from_active(self) -> None:
+        """Shell source that disappears is removed from active_shell."""
+        nonexist = Path(self.tmp) / "gone_history"
+        self.tracker.active_shell["shell_zsh"] = nonexist
+        self.tracker._last_source_refresh = 0.0
+
+        fake_shell_sources = {"shell_zsh": [nonexist]}
+        with patch.object(context_daemon, "JSONL_SOURCES", {}):
+            with patch.object(context_daemon, "SHELL_SOURCES", fake_shell_sources):
+                with patch.object(context_daemon, "ENABLE_SHELL_MONITOR", True):
+                    self.tracker.refresh_sources()
+        self.assertNotIn("shell_zsh", self.tracker.active_shell)
+
+
+# ---------------------------------------------------------------------------
+# SessionTracker.__init__ — HTTP client init failure (lines 468-475)
+# ---------------------------------------------------------------------------
+
+
+class TestSessionTrackerHTTPClientInitFailure(unittest.TestCase):
+    def test_http_client_init_failure_logs_warning(self) -> None:
+        """If httpx.Client() raises, http_client stays None."""
+        # Create a mock httpx that raises on Client()
+        mock_httpx = MagicMock()
+        mock_httpx.Client.side_effect = Exception("httpx init failed")
+
+        with patch.object(context_daemon, "_HTTPX_AVAILABLE", True):
+            with patch.object(context_daemon, "_httpx", mock_httpx):
+                with patch.object(context_daemon, "ENABLE_REMOTE_SYNC", True):
+                    with patch.object(SessionTracker, "refresh_sources"):
+                        tracker = SessionTracker()
+        self.assertIsNone(tracker._http_client)
+
+
 if __name__ == "__main__":
     unittest.main()

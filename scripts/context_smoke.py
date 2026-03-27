@@ -51,7 +51,7 @@ def run_cmd(
     merged_env: dict[str, str] | None = None
     if env:
         merged_env = {**os.environ, **env}
-    proc = subprocess.run(args, capture_output=True, timeout=timeout, env=merged_env)
+    proc = subprocess.run(args, capture_output=True, timeout=timeout, env=merged_env, check=False)
     stdout = (proc.stdout or b"").decode("utf-8", errors="replace")
     stderr = (proc.stderr or b"").decode("utf-8", errors="replace")
     return proc.returncode, stdout, stderr
