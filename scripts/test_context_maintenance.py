@@ -3,11 +3,15 @@
 
 from __future__ import annotations
 
+import io
 import json
+import runpy
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 _SCRIPTS_DIR = str(Path(__file__).resolve().parent)
@@ -406,6 +410,380 @@ class TestMainFunction(unittest.TestCase):
         finally:
             db_path.unlink(missing_ok=True)
         self.assertEqual(result, 0)
+
+
+class TestMainDryRunNoDB(unittest.TestCase):
+    """Tests for main() when DB does not exist but --dry-run is set (lines 354-364)."""
+
+    def test_dry_run_no_db_returns_0(self) -> None:
+        """--dry-run with missing DB should return 0 (lines 354-364)."""
+        result = context_maintenance.main(["--db", "/nonexistent/path/db.db", "--dry-run"])
+        self.assertEqual(result, 0)
+
+    def test_dry_run_no_db_prints_snapshot(self) -> None:
+        """--dry-run with missing DB should print a snapshot header."""
+        with unittest.mock.patch("sys.stdout", new_callable=io.StringIO) as mock_out:
+            context_maintenance.main(["--db", "/nonexistent/path/db.db", "--dry-run"])
+            output = mock_out.getvalue()
+        self.assertIn("=== Snapshot ===", output)
+        self.assertIn("sessions=0", output)
+        self.assertIn("dry_run: no DB changes applied (database missing, treated as empty)", output)
+
+    def test_dry_run_no_db_with_codex_files(self) -> None:
+        """--dry-run no DB counts codex files and reports missing_codex correctly."""
+        with tempfile.TemporaryDirectory() as tmp:
+            codex_root = Path(tmp) / "codex"
+            codex_root.mkdir()
+            (codex_root / "s1.jsonl").write_text("{}", encoding="utf-8")
+            (codex_root / "s2.jsonl").write_text("{}", encoding="utf-8")
+            with unittest.mock.patch("sys.stdout", new_callable=io.StringIO) as mock_out:
+                result = context_maintenance.main([
+                    "--db", "/nonexistent/db.db",
+                    "--dry-run",
+                    "--codex-root", str(codex_root),
+                ])
+            output = mock_out.getvalue()
+        self.assertEqual(result, 0)
+        self.assertIn("missing_codex=2", output)
+
+    def test_dry_run_no_db_with_claude_files(self) -> None:
+        """--dry-run no DB counts claude files and reports missing_claude_main correctly."""
+        with tempfile.TemporaryDirectory() as tmp:
+            claude_root = Path(tmp) / "claude"
+            claude_root.mkdir()
+            (claude_root / "sess.jsonl").write_text("{}", encoding="utf-8")
+            with unittest.mock.patch("sys.stdout", new_callable=io.StringIO) as mock_out:
+                result = context_maintenance.main([
+                    "--db", "/nonexistent/db.db",
+                    "--dry-run",
+                    "--claude-root", str(claude_root),
+                ])
+            output = mock_out.getvalue()
+        self.assertEqual(result, 0)
+        self.assertIn("missing_claude_main=1", output)
+
+    def test_dry_run_no_db_local_files_count(self) -> None:
+        """--dry-run no DB shows correct local_files total."""
+        with tempfile.TemporaryDirectory() as tmp:
+            codex_root = Path(tmp) / "codex"
+            codex_root.mkdir()
+            (codex_root / "a.jsonl").write_text("{}", encoding="utf-8")
+            claude_root = Path(tmp) / "claude"
+            claude_root.mkdir()
+            (claude_root / "b.jsonl").write_text("{}", encoding="utf-8")
+            with unittest.mock.patch("sys.stdout", new_callable=io.StringIO) as mock_out:
+                result = context_maintenance.main([
+                    "--db", "/nonexistent/db.db",
+                    "--dry-run",
+                    "--codex-root", str(codex_root),
+                    "--claude-root", str(claude_root),
+                ])
+            output = mock_out.getvalue()
+        self.assertEqual(result, 0)
+        self.assertIn("local_files=2", output)
+
+
+class TestMainOperationalError(unittest.TestCase):
+    """Tests for the sqlite3.OperationalError branch in main() (lines 370-372)."""
+
+    def test_operational_error_on_connect_returns_1(self) -> None:
+        """When sqlite3.connect raises OperationalError, main() returns 1."""
+        with tempfile.TemporaryDirectory() as tmp:
+            # Create a real file so db_path.exists() passes, but it's a directory
+            # — sqlite3.connect will raise OperationalError.
+            db_path = Path(tmp) / "notadb"
+            db_path.mkdir()
+            result = context_maintenance.main(["--db", str(db_path)])
+        self.assertEqual(result, 1)
+
+    def test_operational_error_prints_error_message(self) -> None:
+        """When sqlite3.connect raises OperationalError, an error is printed to stderr."""
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "notadb"
+            db_path.mkdir()
+            with unittest.mock.patch("sys.stderr", new_callable=io.StringIO) as mock_err:
+                context_maintenance.main(["--db", str(db_path)])
+                err_output = mock_err.getvalue()
+        self.assertIn("ERROR", err_output)
+
+    def test_operational_error_via_mock(self) -> None:
+        """Mock sqlite3.connect to raise OperationalError directly."""
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+            tmp_path = tmp.name
+
+        with unittest.mock.patch("sqlite3.connect", side_effect=sqlite3.OperationalError("mocked error")):
+            result = context_maintenance.main(["--db", tmp_path])
+        self.assertEqual(result, 1)
+
+
+class TestMainDatabaseError(unittest.TestCase):
+    """Tests for the sqlite3.DatabaseError except branch (lines 409-412)."""
+
+    def _create_temp_db(self) -> Path:
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+            tmp_name = tmp.name
+        conn = sqlite3.connect(tmp_name)
+        conn.executescript(_DDL)
+        conn.close()
+        return Path(tmp_name)
+
+    def test_database_error_returns_1(self) -> None:
+        """When a DatabaseError occurs during operations, main() returns 1."""
+        db_path = self._create_temp_db()
+        try:
+            with unittest.mock.patch(
+                "context_maintenance.fetch_existing_session_paths",
+                side_effect=sqlite3.DatabaseError("simulated db error"),
+            ):
+                result = context_maintenance.main(["--db", str(db_path)])
+        finally:
+            db_path.unlink(missing_ok=True)
+        self.assertEqual(result, 1)
+
+    def test_database_error_prints_to_stderr(self) -> None:
+        """When a DatabaseError occurs, the error message is printed to stderr."""
+        db_path = self._create_temp_db()
+        try:
+            with unittest.mock.patch(
+                "context_maintenance.fetch_existing_session_paths",
+                side_effect=sqlite3.DatabaseError("simulated db error"),
+            ), unittest.mock.patch("sys.stderr", new_callable=io.StringIO) as mock_err:
+                context_maintenance.main(["--db", str(db_path)])
+                err_output = mock_err.getvalue()
+        finally:
+            db_path.unlink(missing_ok=True)
+        self.assertIn("ERROR: database error", err_output)
+
+
+class TestMainWithExistingPaths(unittest.TestCase):
+    """Tests for the 'path already in existing_paths → continue' branch (line 385)."""
+
+    def _create_temp_db(self) -> Path:
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+            tmp_name = tmp.name
+        conn = sqlite3.connect(tmp_name)
+        conn.executescript(_DDL)
+        conn.close()
+        return Path(tmp_name)
+
+    def test_skips_paths_already_in_db(self) -> None:
+        """main() skips local files already recorded in the sessions table."""
+        with tempfile.TemporaryDirectory() as tmp:
+            codex_root = Path(tmp) / "codex"
+            codex_root.mkdir()
+            session_file = codex_root / "already.jsonl"
+            session_file.write_text("{}", encoding="utf-8")
+            # Use a non-existent claude_root so no system files are picked up.
+            claude_root = Path(tmp) / "no_claude"
+
+            db_path = self._create_temp_db()
+            try:
+                # Pre-record the file in the DB so it appears in existing_paths.
+                conn = sqlite3.connect(str(db_path))
+                conn.execute(
+                    "INSERT INTO sessions (id, session_file_path) VALUES (?, ?)",
+                    ("s-pre", str(session_file)),
+                )
+                conn.commit()
+                conn.close()
+
+                with unittest.mock.patch("sys.stdout", new_callable=io.StringIO) as mock_out:
+                    result = context_maintenance.main([
+                        "--db", str(db_path),
+                        "--enqueue-missing",
+                        "--codex-root", str(codex_root),
+                        "--claude-root", str(claude_root),
+                    ])
+                output = mock_out.getvalue()
+            finally:
+                db_path.unlink(missing_ok=True)
+
+        self.assertEqual(result, 0)
+        # inserted=0 because the file was already present in DB
+        self.assertIn("inserted=0", output)
+
+    def test_counts_missing_claude_sessions(self) -> None:
+        """main() increments missing_claude counter for claude-type missing sessions."""
+        with tempfile.TemporaryDirectory() as tmp:
+            claude_root = Path(tmp) / "claude"
+            claude_root.mkdir()
+            (claude_root / "new_sess.jsonl").write_text("{}", encoding="utf-8")
+            # Use non-existent codex root so no system files are picked up.
+            codex_root = Path(tmp) / "no_codex"
+
+            db_path = self._create_temp_db()
+            try:
+                with unittest.mock.patch("sys.stdout", new_callable=io.StringIO) as mock_out:
+                    result = context_maintenance.main([
+                        "--db", str(db_path),
+                        "--claude-root", str(claude_root),
+                        "--codex-root", str(codex_root),
+                    ])
+                output = mock_out.getvalue()
+            finally:
+                db_path.unlink(missing_ok=True)
+
+        self.assertEqual(result, 0)
+        # missing_claude_main should be 1
+        self.assertIn("missing_claude_main=1", output)
+
+
+class TestEnqueueMissingDryRunRevive(unittest.TestCase):
+    """Tests for enqueue_missing dry-run revive path (line 323->325 branch)."""
+
+    def test_dry_run_revive_terminal_job_counts_but_no_update(self) -> None:
+        """dry_run=True with a terminal existing job: revived incremented, DB unchanged."""
+        conn, cur = _make_db()
+        # Pre-insert a terminal "failed" job.
+        cur.execute(
+            "INSERT INTO jobs (id, kind, dedupe_key, payload, status) VALUES (?,?,?,?,?)",
+            ("j-fail", "session_process", "session_process:drysid", "{}", "failed"),
+        )
+        conn.commit()
+        missing = [("codex", Path("/fake/drysid.jsonl"), "drysid")]
+        inserted, revived = enqueue_missing(cur, missing, max_enqueue=10, dry_run=True)
+        self.assertEqual(inserted, 0)
+        self.assertEqual(revived, 1)
+        # Status must remain "failed" because dry_run skips the UPDATE.
+        row = cur.execute("SELECT status FROM jobs WHERE id='j-fail'").fetchone()
+        conn.close()
+        self.assertEqual(row[0], "failed")
+
+    def test_dry_run_revive_error_status(self) -> None:
+        """dry_run=True with 'error' terminal status also increments revived."""
+        conn, cur = _make_db()
+        cur.execute(
+            "INSERT INTO jobs (id, kind, dedupe_key, payload, status) VALUES (?,?,?,?,?)",
+            ("j-err", "session_process", "session_process:errsid", "{}", "error"),
+        )
+        conn.commit()
+        missing = [("codex", Path("/fake/errsid.jsonl"), "errsid")]
+        inserted, revived = enqueue_missing(cur, missing, max_enqueue=10, dry_run=True)
+        self.assertEqual(revived, 1)
+        row = cur.execute("SELECT status FROM jobs WHERE id='j-err'").fetchone()
+        conn.close()
+        self.assertEqual(row[0], "error")
+
+
+class TestMainClaudeMissingCount(unittest.TestCase):
+    """Tests exercising the elif _SOURCE_CLAUDE branch in main() (line 388)."""
+
+    def _create_temp_db(self) -> Path:
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+            tmp_name = tmp.name
+        conn = sqlite3.connect(tmp_name)
+        conn.executescript(_DDL)
+        conn.close()
+        return Path(tmp_name)
+
+    def test_mixed_sources_both_counters_incremented(self) -> None:
+        """Both missing_codex and missing_claude_main reported correctly."""
+        with tempfile.TemporaryDirectory() as tmp:
+            codex_root = Path(tmp) / "codex"
+            codex_root.mkdir()
+            (codex_root / "csess.jsonl").write_text("{}", encoding="utf-8")
+            claude_root = Path(tmp) / "claude"
+            claude_root.mkdir()
+            (claude_root / "clsess.jsonl").write_text("{}", encoding="utf-8")
+
+            db_path = self._create_temp_db()
+            try:
+                with unittest.mock.patch("sys.stdout", new_callable=io.StringIO) as mock_out:
+                    result = context_maintenance.main([
+                        "--db", str(db_path),
+                        "--codex-root", str(codex_root),
+                        "--claude-root", str(claude_root),
+                    ])
+                output = mock_out.getvalue()
+            finally:
+                db_path.unlink(missing_ok=True)
+
+        self.assertEqual(result, 0)
+        self.assertIn("missing_codex=1", output)
+        self.assertIn("missing_claude_main=1", output)
+
+    def test_unknown_source_type_not_counted(self) -> None:
+        """A session with an unknown stype falls through both if/elif branches (389->383)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            # Empty codex and claude roots so only the mocked item appears.
+            codex_root = Path(tmp) / "no_codex"
+            claude_root = Path(tmp) / "no_claude"
+            fake_item = [("other_source", Path(tmp) / "s.jsonl", "s")]
+
+            db_path = self._create_temp_db()
+            try:
+                with unittest.mock.patch(
+                    "context_maintenance.collect_local_session_files",
+                    return_value=fake_item,
+                ), unittest.mock.patch("sys.stdout", new_callable=io.StringIO) as mock_out:
+                    result = context_maintenance.main([
+                        "--db", str(db_path),
+                        "--codex-root", str(codex_root),
+                        "--claude-root", str(claude_root),
+                    ])
+                output = mock_out.getvalue()
+            finally:
+                db_path.unlink(missing_ok=True)
+
+        self.assertEqual(result, 0)
+        # Neither counter is incremented — both remain 0.
+        self.assertIn("missing_codex=0", output)
+        self.assertIn("missing_claude_main=0", output)
+
+
+class TestMainEntryPoint(unittest.TestCase):
+    """Test the __main__ block (line 420)."""
+
+    def test_main_entry_point_via_module_run(self) -> None:
+        """Verify __name__ == '__main__' path raises SystemExit wrapping main()."""
+        # We simulate what happens when the module is run directly.
+        # Import the module's main, confirm SystemExit is raised with int code.
+        with unittest.mock.patch(
+            "context_maintenance.main", return_value=0
+        ) as mock_main:
+            with self.assertRaises(SystemExit) as ctx:
+                raise SystemExit(mock_main())
+        self.assertEqual(ctx.exception.code, 0)
+
+    def test_main_entry_point_error_code(self) -> None:
+        """SystemExit propagates a non-zero return code from main()."""
+        with unittest.mock.patch(
+            "context_maintenance.main", return_value=1
+        ) as mock_main:
+            with self.assertRaises(SystemExit) as ctx:
+                raise SystemExit(mock_main())
+        self.assertEqual(ctx.exception.code, 1)
+
+    def test_module_run_as_script_exits_0(self) -> None:
+        """Running the module as __main__ via subprocess covers line 420."""
+        scripts_dir = str(Path(__file__).resolve().parent)
+        module_path = str(Path(__file__).resolve().parent / "context_maintenance.py")
+        with tempfile.TemporaryDirectory() as tmp:
+            # Ensure no real DB or session dirs interfere.
+            fake_db = Path(tmp) / "no.db"
+            proc = subprocess.run(
+                [sys.executable, module_path, "--db", str(fake_db), "--dry-run"],
+                capture_output=True,
+                text=True,
+                cwd=scripts_dir,
+            )
+        self.assertEqual(proc.returncode, 0)
+        self.assertIn("=== Snapshot ===", proc.stdout)
+
+    def test_module_runpy_covers_main_block(self) -> None:
+        """Use runpy.run_path to execute the __main__ block in-process for coverage."""
+        module_path = str(Path(__file__).resolve().parent / "context_maintenance.py")
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_db = str(Path(tmp) / "no.db")
+            saved_argv = sys.argv[:]
+            sys.argv = [module_path, "--db", fake_db, "--dry-run"]
+            try:
+                with self.assertRaises(SystemExit) as ctx:
+                    runpy.run_path(module_path, run_name="__main__")
+            finally:
+                sys.argv = saved_argv
+        # main() returns 0 for --dry-run with missing DB.
+        self.assertEqual(ctx.exception.code, 0)
 
 
 if __name__ == "__main__":

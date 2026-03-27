@@ -553,7 +553,9 @@ fn process_file(item: &WorkItem, query: &str) -> Result<SessionSummary> {
     let mut lines = 0usize;
     let query_lower = query.trim().to_lowercase();
     let mut matched = query_lower.is_empty();
-    let mut best_match: Option<(i32, String, String)> = None;
+    // Store (score, snippet, field).  field is &'static str to avoid a heap
+    // allocation every time a better candidate replaces the previous one.
+    let mut best_match: Option<(i32, String, &'static str)> = None;
     // Resolve the active workdir once per file, not per line.
     let current_workdir = active_workdir();
 
@@ -611,34 +613,41 @@ fn process_file(item: &WorkItem, query: &str) -> Result<SessionSummary> {
                         continue;
                     }
                     if let Some(candidate) = matched_snippet(&detail.text, &query_lower, 180) {
+                        // Lower-case the candidate once and reuse it for both
+                        // noise filtering and scoring to avoid a second alloc.
+                        let candidate_lower = candidate.to_lowercase();
                         if should_skip_meta_candidate(&candidate)
-                            || is_noise_line(&candidate.to_lowercase())
+                            || is_noise_line(&candidate_lower)
                         {
                             continue;
                         }
                         matched = true;
-                        let score = candidate_score(detail.field, &detail.text, &query_lower);
+                        let score =
+                            candidate_score_lower(detail.field, &candidate_lower, &query_lower);
                         let replace = best_match
                             .as_ref()
                             .is_none_or(|(best_score, _, _)| score > *best_score);
                         if replace {
-                            best_match = Some((score, candidate, detail.field.to_string()));
+                            // detail.field is &'static str — no heap alloc needed.
+                            best_match = Some((score, candidate, detail.field));
                         }
                     }
                 }
             }
         } else if !query_lower.is_empty() {
             if let Some(candidate) = matched_snippet(&line, &query_lower, 180) {
+                let candidate_lower = candidate.to_lowercase();
                 if !should_skip_meta_candidate(&candidate)
-                    && !is_noise_line(&candidate.to_lowercase())
+                    && !is_noise_line(&candidate_lower)
                 {
                     matched = true;
-                    let score = candidate_score(RAW_LINE_FIELD, &line, &query_lower);
+                    let score =
+                        candidate_score_lower(RAW_LINE_FIELD, &candidate_lower, &query_lower);
                     let replace = best_match
                         .as_ref()
                         .is_none_or(|(best_score, _, _)| score > *best_score);
                     if replace {
-                        best_match = Some((score, candidate, RAW_LINE_FIELD.to_string()));
+                        best_match = Some((score, candidate, RAW_LINE_FIELD));
                     }
                 }
             }
@@ -649,6 +658,10 @@ fn process_file(item: &WorkItem, query: &str) -> Result<SessionSummary> {
         anyhow::bail!(SKIPPED_QUERY_MISS);
     }
 
+    let (match_score, snippet, match_field) = match best_match {
+        Some((score, snip, field)) => (score, Some(snip), Some(field.to_string())),
+        None => (0, None, None),
+    };
     Ok(SessionSummary {
         source: item.source,
         path: item.path.clone(),
@@ -657,9 +670,9 @@ fn process_file(item: &WorkItem, query: &str) -> Result<SessionSummary> {
         size_bytes: metadata.len(),
         first_timestamp,
         last_timestamp,
-        snippet: best_match.as_ref().map(|(_, snip, _)| snip.clone()),
-        match_field: best_match.as_ref().map(|(_, _, field)| field.clone()),
-        match_score: best_match.as_ref().map_or(0, |(score, _, _)| *score),
+        snippet,
+        match_field,
+        match_score,
     })
 }
 
@@ -874,10 +887,11 @@ fn field_priority(field: &str) -> i32 {
 }
 
 /// Computes a match quality score combining field priority and query hit
-/// frequency.  Used to select the best snippet when multiple candidates match.
+/// frequency.  `text_lower` must already be lower-cased by the caller so that
+/// the allocation is shared with the preceding noise-filter check.
 #[inline]
-fn candidate_score(field: &str, text: &str, query_lower: &str) -> i32 {
-    let hits = text.to_lowercase().matches(query_lower).count() as i32;
+fn candidate_score_lower(field: &str, text_lower: &str, query_lower: &str) -> i32 {
+    let hits = text_lower.matches(query_lower).count() as i32;
     field_priority(field) + hits * 25
 }
 
@@ -1168,13 +1182,12 @@ mod tests {
 
     #[test]
     fn candidate_score_prefers_message_content_over_prompt() {
+        // candidate_score_lower expects pre-lowercased text, mirroring the hot path.
+        let text_lower = "notebooklm integration outline";
         let prompt_score =
-            candidate_score("payload.prompt", "NotebookLM integration outline", "notebooklm");
-        let content_score = candidate_score(
-            "message.content.text",
-            "NotebookLM integration outline",
-            "notebooklm",
-        );
+            candidate_score_lower("payload.prompt", text_lower, "notebooklm");
+        let content_score =
+            candidate_score_lower("message.content.text", text_lower, "notebooklm");
         assert!(content_score > prompt_score);
     }
 

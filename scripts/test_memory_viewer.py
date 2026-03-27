@@ -518,5 +518,396 @@ class TestHandlerCors(unittest.TestCase):
         self.assertEqual(sent, [])
 
 
+# ---------------------------------------------------------------------------
+# Tests: Handler.log_message (line 297 - silenced logger)
+# ---------------------------------------------------------------------------
+
+
+class TestHandlerLogMessage(unittest.TestCase):
+    def test_log_message_returns_none(self) -> None:
+        h, _ = _make_handler()
+        result = h.log_message("%s %s", "GET", "/api/health")
+        self.assertIsNone(result)
+
+
+# ---------------------------------------------------------------------------
+# Tests: _maybe_sync_index double-checked locking (line 98)
+# ---------------------------------------------------------------------------
+
+
+class TestMaybeSyncIndexDoubleLock(unittest.TestCase):
+    def test_double_checked_locking_returns_cached_after_lock(self) -> None:
+        """Exercise line 98: second check inside the lock when another thread
+        has already refreshed the cache between our stale read and lock acquire."""
+        import time
+
+        fresh_payload = {"total_observations": 42}
+        # Mark cache as stale initially so we enter the slow path.
+        memory_viewer._sync_at = 0.0
+        memory_viewer._sync_payload = {"total_observations": 1}
+
+        call_count = [0]
+
+        def fake_sync_that_refreshes_first():
+            # Simulate another thread having refreshed just before us by
+            # updating the module-level state before we can.
+            call_count[0] += 1
+            return {"total_observations": 99}
+
+        # Prime the module state so the inner lock check succeeds:
+        # set _sync_at to "now" and _sync_payload to fresh_payload so the
+        # re-check inside the lock (line 97) returns True and we hit line 98.
+        memory_viewer._sync_payload = dict(fresh_payload)
+        memory_viewer._sync_at = time.monotonic() + 10_000  # very far in future
+
+        # Reset stale read conditions so we enter the lock (bypass fast path)
+        # by temporarily setting _SYNC_MIN_INTERVAL_SEC to 0 so fast path is skipped.
+        orig_interval = memory_viewer._SYNC_MIN_INTERVAL_SEC
+        try:
+            memory_viewer._SYNC_MIN_INTERVAL_SEC = 0.0  # skip fast path
+            # With interval=0, inner check `_sync_at + 0 > now` is True (since _sync_at is future)
+            with patch("memory_viewer.sync_index_from_storage", side_effect=fake_sync_that_refreshes_first):
+                result = memory_viewer._maybe_sync_index()
+            # We should get the cached value back (line 98 was hit)
+            self.assertEqual(result["total_observations"], 42)
+            self.assertEqual(call_count[0], 0)  # sync_index_from_storage was NOT called
+        finally:
+            memory_viewer._SYNC_MIN_INTERVAL_SEC = orig_interval
+            memory_viewer._sync_at = 0.0
+            memory_viewer._sync_payload = None
+
+
+# ---------------------------------------------------------------------------
+# Tests: CORS exception path (lines 334-335)
+# ---------------------------------------------------------------------------
+
+
+class TestHandlerCorsException(unittest.TestCase):
+    def test_cors_exception_treated_as_non_loopback(self) -> None:
+        """Exercise lines 334-335: urlparse raises, origin_host becomes ''."""
+        h, _ = _make_handler(headers={"Origin": "http://localhost"})
+        sent: list[tuple[str, str]] = []
+        h.send_header = lambda k, v: sent.append((k, v))  # type: ignore[method-assign]
+
+        with patch("memory_viewer.urlparse", side_effect=Exception("parse error")):
+            h._add_cors_headers()
+
+        header_names = [k for k, _ in sent]
+        # Vary should still be sent (before the try/except), but no ACAO
+        self.assertNotIn("Access-Control-Allow-Origin", header_names)
+
+
+# ---------------------------------------------------------------------------
+# Tests: do_GET routing to all API handlers (lines 398, 400, 402, 404)
+# ---------------------------------------------------------------------------
+
+
+class TestHandlerDoGetRouting(unittest.TestCase):
+    def _setup_no_token(self):
+        memory_viewer.VIEWER_TOKEN = ""
+
+    def tearDown(self):
+        memory_viewer.VIEWER_TOKEN = ""
+
+    def test_do_get_health_route(self) -> None:
+        """Line 398: /api/health dispatched via do_GET."""
+        h, wfile = _make_handler(path="/api/health")
+        self._setup_no_token()
+        with (
+            patch("memory_viewer._maybe_sync_index", return_value={}),
+            patch("memory_viewer.index_stats", return_value={"total_observations": 5}),
+        ):
+            h.do_GET()
+        payload = _parse_json_response(wfile)
+        self.assertTrue(payload["ok"])
+
+    def test_do_get_search_route(self) -> None:
+        """Line 400: /api/search dispatched via do_GET."""
+        h, wfile = _make_handler(path="/api/search?query=test")
+        self._setup_no_token()
+        with (
+            patch("memory_viewer._maybe_sync_index", return_value={}),
+            patch("memory_viewer.search_index", return_value=[]),
+        ):
+            h.do_GET()
+        payload = _parse_json_response(wfile)
+        self.assertTrue(payload["ok"])
+
+    def test_do_get_timeline_route(self) -> None:
+        """Line 402: /api/timeline dispatched via do_GET."""
+        h, wfile = _make_handler(path="/api/timeline?anchor=0")
+        self._setup_no_token()
+        with (
+            patch("memory_viewer._maybe_sync_index", return_value={}),
+            patch("memory_viewer.timeline_index", return_value=[]),
+        ):
+            h.do_GET()
+        payload = _parse_json_response(wfile)
+        self.assertTrue(payload["ok"])
+
+    def test_do_get_events_route(self) -> None:
+        """Line 404: /api/events dispatched via do_GET, runs SSE for 1 tick."""
+        h, wfile = _make_handler(path="/api/events")
+        self._setup_no_token()
+        original_ticks = memory_viewer._SSE_MAX_TICKS
+        original_interval = memory_viewer._SSE_INTERVAL_SEC
+        try:
+            memory_viewer._SSE_MAX_TICKS = 1
+            memory_viewer._SSE_INTERVAL_SEC = 0.0
+            with (
+                patch("memory_viewer._maybe_sync_index", return_value={"synced": True}),
+                patch("memory_viewer.index_stats", return_value={"total_observations": 3}),
+                patch("memory_viewer.time.sleep"),
+            ):
+                h.do_GET()
+        finally:
+            memory_viewer._SSE_MAX_TICKS = original_ticks
+            memory_viewer._SSE_INTERVAL_SEC = original_interval
+        wfile.seek(0)
+        content = wfile.read().decode()
+        self.assertIn("data:", content)
+
+    def test_do_get_index_html_route(self) -> None:
+        """/index.html also returns HTML."""
+        h, wfile = _make_handler(path="/index.html")
+        h.do_GET()
+        wfile.seek(0)
+        content = wfile.read()
+        self.assertIn(b"ContextGO", content)
+
+
+# ---------------------------------------------------------------------------
+# Tests: do_POST routing to batch handler (line 419)
+# ---------------------------------------------------------------------------
+
+
+class TestHandlerDoPostRouting(unittest.TestCase):
+    def test_do_post_batch_route(self) -> None:
+        """Line 419: /api/observations/batch dispatched via do_POST."""
+        body = json.dumps({"ids": [1, 2]}).encode()
+        h, wfile = _make_handler(
+            method="POST",
+            path="/api/observations/batch",
+            headers={"Content-Length": str(len(body))},
+            body=body,
+        )
+        memory_viewer.VIEWER_TOKEN = ""
+        try:
+            with (
+                patch("memory_viewer._maybe_sync_index", return_value={}),
+                patch("memory_viewer.get_observations_by_ids", return_value=[{"id": 1}, {"id": 2}]),
+            ):
+                h.do_POST()
+        finally:
+            memory_viewer.VIEWER_TOKEN = ""
+        payload = _parse_json_response(wfile)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["count"], 2)
+
+
+# ---------------------------------------------------------------------------
+# Tests: _handle_sse (lines 481-502)
+# ---------------------------------------------------------------------------
+
+
+class TestHandlerSse(unittest.TestCase):
+    def test_sse_emits_data_lines(self) -> None:
+        """Lines 481-499: SSE emits JSON data lines."""
+        h, wfile = _make_handler(path="/api/events")
+        original_ticks = memory_viewer._SSE_MAX_TICKS
+        original_interval = memory_viewer._SSE_INTERVAL_SEC
+        try:
+            memory_viewer._SSE_MAX_TICKS = 2
+            memory_viewer._SSE_INTERVAL_SEC = 0.0
+            with (
+                patch("memory_viewer._maybe_sync_index", return_value={"total": 1}),
+                patch("memory_viewer.index_stats", return_value={"total_observations": 7}),
+                patch("memory_viewer.time.sleep"),
+            ):
+                h._handle_sse()
+        finally:
+            memory_viewer._SSE_MAX_TICKS = original_ticks
+            memory_viewer._SSE_INTERVAL_SEC = original_interval
+        wfile.seek(0)
+        content = wfile.read().decode()
+        lines = [l for l in content.split("\n") if l.startswith("data:")]
+        self.assertEqual(len(lines), 2)
+        parsed = json.loads(lines[0][len("data: "):])
+        self.assertIn("total_observations", parsed)
+        self.assertIn("at", parsed)
+
+    def test_sse_stops_on_broken_pipe(self) -> None:
+        """Lines 501-502: BrokenPipeError breaks the loop."""
+        h, wfile = _make_handler(path="/api/events")
+        original_ticks = memory_viewer._SSE_MAX_TICKS
+        try:
+            memory_viewer._SSE_MAX_TICKS = 5
+            with (
+                patch("memory_viewer._maybe_sync_index", return_value={}),
+                patch("memory_viewer.index_stats", return_value={"total_observations": 0}),
+            ):
+                # Make wfile.write raise BrokenPipeError after headers are done
+                write_calls = [0]
+                original_write = wfile.write
+
+                def failing_write(data):
+                    write_calls[0] += 1
+                    if write_calls[0] > 1:  # let headers pass, fail on first data
+                        raise BrokenPipeError("pipe broken")
+                    return original_write(data)
+
+                h.wfile.write = failing_write
+                h._handle_sse()
+        finally:
+            memory_viewer._SSE_MAX_TICKS = original_ticks
+        # Should have exited loop early (only 1 data write attempted)
+        self.assertLess(write_calls[0], 5)
+
+    def test_sse_stops_on_connection_reset(self) -> None:
+        """Lines 501-502: ConnectionResetError also breaks the loop."""
+        h, wfile = _make_handler(path="/api/events")
+        original_ticks = memory_viewer._SSE_MAX_TICKS
+        try:
+            memory_viewer._SSE_MAX_TICKS = 5
+            with (
+                patch("memory_viewer._maybe_sync_index", return_value={}),
+                patch("memory_viewer.index_stats", return_value={"total_observations": 0}),
+            ):
+                write_calls = [0]
+
+                def failing_write(data):
+                    write_calls[0] += 1
+                    if write_calls[0] > 1:
+                        raise ConnectionResetError("reset")
+                    return len(data)
+
+                h.wfile.write = failing_write
+                h._handle_sse()
+        finally:
+            memory_viewer._SSE_MAX_TICKS = original_ticks
+        self.assertLess(write_calls[0], 5)
+
+
+# ---------------------------------------------------------------------------
+# Tests: _handle_batch_fetch non-integer IDs and exception (lines 548-549, 556-558)
+# ---------------------------------------------------------------------------
+
+
+class TestHandlerBatchFetchExtended(unittest.TestCase):
+    def _make_post_handler(self, body: bytes, content_length: int | None = None) -> tuple[Handler, io.BytesIO]:
+        cl = str(content_length if content_length is not None else len(body))
+        return _make_handler(
+            method="POST",
+            path="/api/observations/batch",
+            headers={"Content-Length": cl},
+            body=body,
+        )
+
+    def test_non_integer_ids_are_skipped(self) -> None:
+        """Lines 548-549: non-int IDs are silently skipped."""
+        body = json.dumps({"ids": [1, "bad", None, 3, "also_bad"]}).encode()
+        h, wfile = self._make_post_handler(body)
+        captured_ids = []
+
+        def fake_get(ids, limit):
+            captured_ids.extend(ids)
+            return [{"id": i} for i in ids]
+
+        with (
+            patch("memory_viewer._maybe_sync_index", return_value={}),
+            patch("memory_viewer.get_observations_by_ids", side_effect=fake_get),
+        ):
+            h._handle_batch_fetch()
+        payload = _parse_json_response(wfile)
+        self.assertTrue(payload["ok"])
+        # Only integer-parseable IDs should pass through
+        self.assertEqual(sorted(captured_ids), [1, 3])
+
+    def test_get_observations_exception_returns_500(self) -> None:
+        """Lines 556-558: exception from get_observations_by_ids returns 500."""
+        body = json.dumps({"ids": [1, 2]}).encode()
+        h, wfile = self._make_post_handler(body)
+        with (
+            patch("memory_viewer._maybe_sync_index", return_value={}),
+            patch("memory_viewer.get_observations_by_ids", side_effect=RuntimeError("db exploded")),
+        ):
+            h._handle_batch_fetch()
+        self.assertEqual(h._status_code, 500)
+        payload = _parse_json_response(wfile)
+        self.assertFalse(payload["ok"])
+        self.assertIn("db exploded", payload["detail"])
+
+    def test_batch_with_all_invalid_ids(self) -> None:
+        """All IDs are non-integer; parsed_ids is empty list."""
+        body = json.dumps({"ids": ["x", "y", None]}).encode()
+        h, wfile = self._make_post_handler(body)
+        with (
+            patch("memory_viewer._maybe_sync_index", return_value={}),
+            patch("memory_viewer.get_observations_by_ids", return_value=[]) as m,
+        ):
+            h._handle_batch_fetch()
+        payload = _parse_json_response(wfile)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["count"], 0)
+        m.assert_called_once_with([], limit=100)
+
+
+# ---------------------------------------------------------------------------
+# Tests: main() function (lines 574-583, 587)
+# ---------------------------------------------------------------------------
+
+
+class TestMainFunction(unittest.TestCase):
+    def test_main_exits_for_non_loopback_without_token(self) -> None:
+        """Line 574-575: raises SystemExit when binding non-loopback without token."""
+        original_host = memory_viewer.HOST
+        original_token = memory_viewer.VIEWER_TOKEN
+        try:
+            memory_viewer.HOST = "0.0.0.0"
+            memory_viewer.VIEWER_TOKEN = ""
+            with self.assertRaises(SystemExit):
+                memory_viewer.main()
+        finally:
+            memory_viewer.HOST = original_host
+            memory_viewer.VIEWER_TOKEN = original_token
+
+    def test_main_starts_and_stops_server(self) -> None:
+        """Lines 576-583: server is started and stopped on KeyboardInterrupt."""
+        original_host = memory_viewer.HOST
+        original_token = memory_viewer.VIEWER_TOKEN
+        try:
+            memory_viewer.HOST = "127.0.0.1"
+            memory_viewer.VIEWER_TOKEN = ""
+            mock_server = MagicMock()
+            mock_server.serve_forever.side_effect = KeyboardInterrupt
+
+            with patch("memory_viewer.ThreadingHTTPServer", return_value=mock_server):
+                memory_viewer.main()  # should not raise
+
+            mock_server.serve_forever.assert_called_once()
+            mock_server.server_close.assert_called_once()
+        finally:
+            memory_viewer.HOST = original_host
+            memory_viewer.VIEWER_TOKEN = original_token
+
+    def test_main_with_token_on_non_loopback_starts_server(self) -> None:
+        """Lines 576-583: non-loopback with token does not exit."""
+        original_host = memory_viewer.HOST
+        original_token = memory_viewer.VIEWER_TOKEN
+        try:
+            memory_viewer.HOST = "0.0.0.0"
+            memory_viewer.VIEWER_TOKEN = "securetoken"
+            mock_server = MagicMock()
+            mock_server.serve_forever.side_effect = KeyboardInterrupt
+
+            with patch("memory_viewer.ThreadingHTTPServer", return_value=mock_server):
+                memory_viewer.main()
+
+            mock_server.server_close.assert_called_once()
+        finally:
+            memory_viewer.HOST = original_host
+            memory_viewer.VIEWER_TOKEN = original_token
+
+
 if __name__ == "__main__":
     unittest.main()

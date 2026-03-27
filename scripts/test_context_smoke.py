@@ -247,6 +247,484 @@ class TestHealthcheckSkipsWhenMissing(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertTrue(result["detail"].get("skipped"))
 
+    def test_runs_when_script_exists(self) -> None:
+        """test_healthcheck runs the bash command when the script file exists."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            script = Path(tmpdir) / "context_healthcheck.sh"
+            script.write_text("#!/usr/bin/env bash\necho ok\n", encoding="utf-8")
+            with mock.patch.object(context_smoke, "run_cmd", return_value=(0, "ok\n", "")) as mock_run:
+                result = context_smoke.test_healthcheck(script)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["rc"], 0)
+        mock_run.assert_called_once()
+        call_args = mock_run.call_args[0][0]
+        self.assertEqual(call_args[0], "bash")
+
+    def test_runs_and_reports_failure_when_script_fails(self) -> None:
+        """test_healthcheck reports failure when the script exits non-zero."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            script = Path(tmpdir) / "context_healthcheck.sh"
+            script.write_text("#!/usr/bin/env bash\nexit 1\n", encoding="utf-8")
+            with mock.patch.object(context_smoke, "run_cmd", return_value=(1, "", "error output")):
+                result = context_smoke.test_healthcheck(script)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["rc"], 1)
+        self.assertEqual(result["detail"]["stderr"], "error output")
+
+
+class TestTestHealth(unittest.TestCase):
+    def test_returns_ok_when_all_ok(self) -> None:
+        """test_health returns ok=True when health payload has all_ok=True."""
+        payload = {"all_ok": True, "checks": {}}
+        with mock.patch.object(context_smoke, "run_cmd", return_value=(0, json.dumps(payload), "")):
+            result = context_smoke.test_health(Path("/tmp/context_cli.py"))
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["name"], "health")
+        self.assertEqual(result["rc"], 0)
+        self.assertEqual(result["detail"]["all_ok"], True)
+
+    def test_returns_fail_when_all_ok_false(self) -> None:
+        """test_health returns ok=False when all_ok is missing or False."""
+        payload = {"all_ok": False}
+        with mock.patch.object(context_smoke, "run_cmd", return_value=(0, json.dumps(payload), "")):
+            result = context_smoke.test_health(Path("/tmp/context_cli.py"))
+        self.assertFalse(result["ok"])
+
+    def test_handles_json_decode_error(self) -> None:
+        """test_health handles non-JSON output gracefully."""
+        with mock.patch.object(context_smoke, "run_cmd", return_value=(0, "not-json", "")):
+            result = context_smoke.test_health(Path("/tmp/context_cli.py"))
+        self.assertFalse(result["ok"])
+        self.assertIn("error", result["detail"])
+        self.assertIn("raw", result["detail"])
+
+    def test_uses_stderr_when_stdout_empty(self) -> None:
+        """test_health falls back to stderr when stdout is empty."""
+        payload = {"all_ok": True}
+        with mock.patch.object(context_smoke, "run_cmd", return_value=(0, "", json.dumps(payload))):
+            result = context_smoke.test_health(Path("/tmp/context_cli.py"))
+        self.assertTrue(result["ok"])
+
+    def test_env_forwarded(self) -> None:
+        """test_health forwards env to run_cmd."""
+        payload = {"all_ok": True}
+        with mock.patch.object(context_smoke, "run_cmd", return_value=(0, json.dumps(payload), "")) as mock_run:
+            context_smoke.test_health(Path("/tmp/context_cli.py"), env={"X": "y"})
+        self.assertEqual(mock_run.call_args.kwargs.get("env"), {"X": "y"})
+
+
+class TestTestQualityGate(unittest.TestCase):
+    def test_returns_ok_on_zero_exit(self) -> None:
+        """test_quality_gate returns ok=True when rc==0."""
+        with mock.patch.object(context_smoke, "run_cmd", return_value=(0, "All checks passed", "")):
+            result = context_smoke.test_quality_gate(Path("/tmp/e2e_quality_gate.py"))
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["rc"], 0)
+        self.assertEqual(result["name"], "quality_gate")
+
+    def test_returns_fail_on_nonzero_exit(self) -> None:
+        """test_quality_gate returns ok=False when rc!=0."""
+        with mock.patch.object(context_smoke, "run_cmd", return_value=(1, "", "Error occurred")):
+            result = context_smoke.test_quality_gate(Path("/tmp/e2e_quality_gate.py"))
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["rc"], 1)
+
+    def test_env_forwarded(self) -> None:
+        """test_quality_gate forwards env to run_cmd."""
+        with mock.patch.object(context_smoke, "run_cmd", return_value=(0, "ok", "")) as mock_run:
+            context_smoke.test_quality_gate(Path("/tmp/e2e_quality_gate.py"), env={"KEY": "val"})
+        self.assertEqual(mock_run.call_args.kwargs.get("env"), {"KEY": "val"})
+
+
+class TestTestMaintain(unittest.TestCase):
+    def test_returns_ok_when_snapshot_in_output(self) -> None:
+        """test_maintain returns ok=True when rc==0 and 'Snapshot' in output."""
+        with mock.patch.object(context_smoke, "run_cmd", return_value=(0, "Snapshot created ok", "")):
+            result = context_smoke.test_maintain(Path("/tmp/context_cli.py"))
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["name"], "maintain")
+        self.assertEqual(result["rc"], 0)
+
+    def test_returns_fail_when_snapshot_missing(self) -> None:
+        """test_maintain returns ok=False when 'Snapshot' is not in output."""
+        with mock.patch.object(context_smoke, "run_cmd", return_value=(0, "done", "")):
+            result = context_smoke.test_maintain(Path("/tmp/context_cli.py"))
+        self.assertFalse(result["ok"])
+
+    def test_returns_fail_on_nonzero_exit(self) -> None:
+        """test_maintain returns ok=False on non-zero rc."""
+        with mock.patch.object(context_smoke, "run_cmd", return_value=(1, "Snapshot error", "")):
+            result = context_smoke.test_maintain(Path("/tmp/context_cli.py"))
+        self.assertFalse(result["ok"])
+
+    def test_uses_stderr_when_stdout_empty(self) -> None:
+        """test_maintain uses stderr when stdout is empty."""
+        with mock.patch.object(context_smoke, "run_cmd", return_value=(0, "", "Snapshot from stderr")):
+            result = context_smoke.test_maintain(Path("/tmp/context_cli.py"))
+        self.assertTrue(result["ok"])
+
+    def test_env_forwarded(self) -> None:
+        """test_maintain forwards env to run_cmd."""
+        with mock.patch.object(context_smoke, "run_cmd", return_value=(0, "Snapshot", "")) as mock_run:
+            context_smoke.test_maintain(Path("/tmp/context_cli.py"), env={"ENV": "val"})
+        self.assertEqual(mock_run.call_args.kwargs.get("env"), {"ENV": "val"})
+
+
+class TestTestRwCycle(unittest.TestCase):
+    def _make_rw_run_cmd(
+        self,
+        save_rc: int = 0,
+        semantic_rc: int = 0,
+        export_rc: int = 0,
+        import_rc: int = 0,
+        semantic_found: bool = True,
+        export_count: int = 1,
+        write_export: bool = True,
+    ):
+        """Return a fake run_cmd for test_rw_cycle that simulates the subprocess calls."""
+
+        def fake_run_cmd(args: list[str], timeout: int = 60, env: dict | None = None) -> tuple[int, str, str]:
+            cmd = args[2] if len(args) > 2 else ""
+            if cmd == "save":
+                return save_rc, "saved", ""
+            if cmd == "semantic":
+                query = args[3] if len(args) > 3 else ""
+                out = query if semantic_found else "nothing"
+                return semantic_rc, out, ""
+            if cmd == "export":
+                # write the export file if requested
+                if write_export and export_rc == 0:
+                    export_file = Path(args[4])
+                    payload = {"total_observations": export_count}
+                    export_file.write_text(json.dumps(payload), encoding="utf-8")
+                return export_rc, "exported", ""
+            if cmd == "import":
+                return import_rc, "imported", ""
+            return 0, "", ""
+
+        return fake_run_cmd
+
+    def test_returns_ok_on_full_success(self) -> None:
+        """test_rw_cycle returns ok=True when all sub-commands succeed."""
+        fake = self._make_rw_run_cmd()
+        with mock.patch.object(context_smoke, "run_cmd", side_effect=fake):
+            result = context_smoke.test_rw_cycle(Path("/tmp/context_cli.py"))
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["name"], "rw_cycle")
+        self.assertEqual(result["rc"], 0)
+        self.assertTrue(result["detail"]["semantic_found"])
+        self.assertGreaterEqual(result["detail"]["export_count"], 1)
+
+    def test_returns_fail_when_save_fails(self) -> None:
+        """test_rw_cycle returns ok=False when save sub-command fails."""
+        fake = self._make_rw_run_cmd(save_rc=1)
+        with mock.patch.object(context_smoke, "run_cmd", side_effect=fake):
+            result = context_smoke.test_rw_cycle(Path("/tmp/context_cli.py"))
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["rc"], 1)
+
+    def test_returns_fail_when_semantic_not_found(self) -> None:
+        """test_rw_cycle returns ok=False when marker not in semantic results."""
+        fake = self._make_rw_run_cmd(semantic_found=False)
+        with mock.patch.object(context_smoke, "run_cmd", side_effect=fake):
+            result = context_smoke.test_rw_cycle(Path("/tmp/context_cli.py"))
+        self.assertFalse(result["ok"])
+        self.assertFalse(result["detail"]["semantic_found"])
+
+    def test_returns_fail_when_export_not_produced(self) -> None:
+        """test_rw_cycle returns ok=False when export file is not produced."""
+        fake = self._make_rw_run_cmd(write_export=False, export_rc=1)
+        with mock.patch.object(context_smoke, "run_cmd", side_effect=fake):
+            result = context_smoke.test_rw_cycle(Path("/tmp/context_cli.py"))
+        self.assertFalse(result["ok"])
+
+    def test_no_export_file_sets_import_failure(self) -> None:
+        """test_rw_cycle uses placeholder import failure when export not produced."""
+
+        def fake_run_cmd(args: list[str], timeout: int = 60, env: dict | None = None) -> tuple[int, str, str]:
+            cmd = args[2] if len(args) > 2 else ""
+            if cmd == "save":
+                return 0, "saved", ""
+            if cmd == "semantic":
+                query = args[3] if len(args) > 3 else ""
+                return 0, query, ""
+            if cmd == "export":
+                return 1, "", "export failed"
+            return 0, "", ""
+
+        with mock.patch.object(context_smoke, "run_cmd", side_effect=fake_run_cmd):
+            result = context_smoke.test_rw_cycle(Path("/tmp/context_cli.py"))
+        self.assertEqual(result["detail"]["import_rc"], 1)
+
+    def test_env_forwarded(self) -> None:
+        """test_rw_cycle forwards env to run_cmd."""
+        received_envs: list[dict | None] = []
+
+        def fake_run_cmd(args: list[str], timeout: int = 60, env: dict | None = None) -> tuple[int, str, str]:
+            received_envs.append(env)
+            cmd = args[2] if len(args) > 2 else ""
+            if cmd == "export":
+                export_file = Path(args[4])
+                export_file.write_text(json.dumps({"total_observations": 1}), encoding="utf-8")
+                return 0, "", ""
+            if cmd == "semantic":
+                query = args[3] if len(args) > 3 else ""
+                return 0, query, ""
+            return 0, "", ""
+
+        env = {"MY_ENV": "value"}
+        with mock.patch.object(context_smoke, "run_cmd", side_effect=fake_run_cmd):
+            context_smoke.test_rw_cycle(Path("/tmp/context_cli.py"), env=env)
+        self.assertTrue(all(e == env for e in received_envs))
+
+
+class TestTestViewer(unittest.TestCase):
+    def test_returns_ok_when_server_responds(self) -> None:
+        """test_viewer returns ok=True when health endpoint responds with 200."""
+        mock_proc = mock.MagicMock()
+        mock_proc.terminate = mock.MagicMock()
+        mock_proc.wait = mock.MagicMock()
+
+        mock_resp = mock.MagicMock()
+        mock_resp.__enter__ = mock.Mock(return_value=mock_resp)
+        mock_resp.__exit__ = mock.Mock(return_value=False)
+        mock_resp.read.return_value = b'{"status": "ok"}'
+        mock_resp.status = 200
+
+        with (
+            mock.patch("context_smoke.subprocess.Popen", return_value=mock_proc),
+            mock.patch("context_smoke.urllib.request.urlopen", return_value=mock_resp),
+            mock.patch.object(context_smoke, "_free_port", return_value=19999),
+        ):
+            result = context_smoke.test_viewer(Path("/tmp/context_cli.py"))
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["name"], "viewer")
+        self.assertEqual(result["rc"], 0)
+        self.assertIn("port", result["detail"])
+
+    def test_returns_fail_when_server_never_responds(self) -> None:
+        """test_viewer returns ok=False when server never responds within deadline."""
+        import urllib.error
+
+        mock_proc = mock.MagicMock()
+        mock_proc.terminate = mock.MagicMock()
+        mock_proc.wait = mock.MagicMock()
+
+        with (
+            mock.patch("context_smoke.subprocess.Popen", return_value=mock_proc),
+            mock.patch(
+                "context_smoke.urllib.request.urlopen",
+                side_effect=urllib.error.URLError("connection refused"),
+            ),
+            mock.patch.object(context_smoke, "_free_port", return_value=19998),
+            mock.patch("context_smoke.time.time", side_effect=[100.0, 100.1, 116.0]),
+            mock.patch("context_smoke.time.sleep"),
+        ):
+            result = context_smoke.test_viewer(Path("/tmp/context_cli.py"))
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["rc"], 1)
+
+    def test_kills_process_on_timeout_expiry(self) -> None:
+        """test_viewer kills the process when wait() times out."""
+        mock_proc = mock.MagicMock()
+        mock_proc.terminate = mock.MagicMock()
+        mock_proc.wait = mock.MagicMock(side_effect=context_smoke.subprocess.TimeoutExpired("cmd", 3))
+        mock_proc.kill = mock.MagicMock()
+
+        mock_resp = mock.MagicMock()
+        mock_resp.__enter__ = mock.Mock(return_value=mock_resp)
+        mock_resp.__exit__ = mock.Mock(return_value=False)
+        mock_resp.read.return_value = b'{"status": "ok"}'
+        mock_resp.status = 200
+
+        with (
+            mock.patch("context_smoke.subprocess.Popen", return_value=mock_proc),
+            mock.patch("context_smoke.urllib.request.urlopen", return_value=mock_resp),
+            mock.patch.object(context_smoke, "_free_port", return_value=19997),
+        ):
+            context_smoke.test_viewer(Path("/tmp/context_cli.py"))
+
+        mock_proc.kill.assert_called_once()
+
+
+class TestRunSmoke(unittest.TestCase):
+    def _stub_result(self, name: str, ok: bool = True) -> dict:
+        return {"name": name, "rc": 0 if ok else 1, "ok": ok, "detail": {}}
+
+    def test_orchestrates_all_tests(self) -> None:
+        """run_smoke calls all seven test functions and returns aggregated report."""
+        stub = self._stub_result
+        with (
+            mock.patch.object(context_smoke, "test_health", return_value=stub("health")) as m_health,
+            mock.patch.object(
+                context_smoke,
+                "test_native_scan_contract",
+                return_value=stub("native_scan"),
+            ) as m_native,
+            mock.patch.object(
+                context_smoke,
+                "test_healthcheck",
+                return_value=stub("healthcheck"),
+            ) as m_hc,
+            mock.patch.object(
+                context_smoke,
+                "test_quality_gate",
+                return_value=stub("quality_gate"),
+            ) as m_qg,
+            mock.patch.object(
+                context_smoke,
+                "test_rw_cycle",
+                return_value=stub("rw_cycle"),
+            ) as m_rw,
+            mock.patch.object(
+                context_smoke,
+                "test_maintain",
+                return_value=stub("maintain"),
+            ) as m_maintain,
+            mock.patch.object(
+                context_smoke,
+                "test_viewer",
+                return_value=stub("viewer"),
+            ) as m_viewer,
+        ):
+            report = context_smoke.run_smoke(
+                Path("/tmp/context_cli.py"),
+                Path("/tmp/e2e_quality_gate.py"),
+            )
+
+        for m in (m_health, m_native, m_hc, m_qg, m_rw, m_maintain, m_viewer):
+            m.assert_called_once()
+
+        self.assertIn("summary", report)
+        self.assertIn("results", report)
+        self.assertEqual(len(report["results"]), 7)
+        self.assertEqual(report["summary"]["status"], "pass")
+
+    def test_healthcheck_path_derived_from_cli_path(self) -> None:
+        """run_smoke derives healthcheck path as sibling of cli_path."""
+        stub = self._stub_result
+        captured: list[Path] = []
+
+        def fake_healthcheck(p: Path) -> dict:
+            captured.append(p)
+            return stub("healthcheck")
+
+        with (
+            mock.patch.object(context_smoke, "test_health", return_value=stub("health")),
+            mock.patch.object(context_smoke, "test_native_scan_contract", return_value=stub("native_scan")),
+            mock.patch.object(context_smoke, "test_healthcheck", side_effect=fake_healthcheck),
+            mock.patch.object(context_smoke, "test_quality_gate", return_value=stub("quality_gate")),
+            mock.patch.object(context_smoke, "test_rw_cycle", return_value=stub("rw_cycle")),
+            mock.patch.object(context_smoke, "test_maintain", return_value=stub("maintain")),
+            mock.patch.object(context_smoke, "test_viewer", return_value=stub("viewer")),
+        ):
+            context_smoke.run_smoke(
+                Path("/some/dir/context_cli.py"),
+                Path("/some/dir/e2e_quality_gate.py"),
+            )
+
+        self.assertEqual(len(captured), 1)
+        self.assertEqual(captured[0].name, "context_healthcheck.sh")
+        self.assertEqual(captured[0].parent, Path("/some/dir"))
+
+    def test_env_forwarded_to_all_tests(self) -> None:
+        """run_smoke forwards env kwarg to all test functions that accept it."""
+        stub = self._stub_result
+        received_envs: list[dict | None] = []
+
+        def capture_env(*args, env: dict | None = None, **kwargs) -> dict:
+            received_envs.append(env)
+            return stub("x")
+
+        with (
+            mock.patch.object(context_smoke, "test_health", side_effect=capture_env),
+            mock.patch.object(context_smoke, "test_native_scan_contract", side_effect=capture_env),
+            mock.patch.object(context_smoke, "test_healthcheck", return_value=stub("healthcheck")),
+            mock.patch.object(context_smoke, "test_quality_gate", side_effect=capture_env),
+            mock.patch.object(context_smoke, "test_rw_cycle", side_effect=capture_env),
+            mock.patch.object(context_smoke, "test_maintain", side_effect=capture_env),
+            mock.patch.object(context_smoke, "test_viewer", side_effect=capture_env),
+        ):
+            context_smoke.run_smoke(
+                Path("/tmp/context_cli.py"),
+                Path("/tmp/e2e_quality_gate.py"),
+                env={"CONTEXTGO_STORAGE_ROOT": "/tmp/test"},
+            )
+
+        for env in received_envs:
+            self.assertEqual(env, {"CONTEXTGO_STORAGE_ROOT": "/tmp/test"})
+
+
+class TestMain(unittest.TestCase):
+    def _make_passing_report(self) -> dict:
+        return {
+            "summary": {"status": "pass", "total": 7, "failed": 0, "failed_names": []},
+            "results": [],
+        }
+
+    def _make_failing_report(self) -> dict:
+        return {
+            "summary": {"status": "fail", "total": 7, "failed": 1, "failed_names": ["health"]},
+            "results": [],
+        }
+
+    def test_exits_zero_on_all_pass(self) -> None:
+        """main() returns 0 when all smoke tests pass."""
+        with (
+            mock.patch.object(context_smoke, "run_smoke", return_value=self._make_passing_report()),
+            mock.patch("builtins.print"),
+        ):
+            rc = context_smoke.main()
+        self.assertEqual(rc, 0)
+
+    def test_exits_one_on_failure(self) -> None:
+        """main() returns 1 when any smoke test fails."""
+        with (
+            mock.patch.object(context_smoke, "run_smoke", return_value=self._make_failing_report()),
+            mock.patch("builtins.print"),
+        ):
+            rc = context_smoke.main()
+        self.assertEqual(rc, 1)
+
+    def test_prints_valid_json_to_stdout(self) -> None:
+        """main() prints a valid JSON document to stdout."""
+        printed: list[str] = []
+        with (
+            mock.patch.object(context_smoke, "run_smoke", return_value=self._make_passing_report()),
+            mock.patch("builtins.print", side_effect=lambda s: printed.append(s)),
+        ):
+            context_smoke.main()
+
+        self.assertEqual(len(printed), 1)
+        parsed = json.loads(printed[0])
+        self.assertIn("scope", parsed)
+        self.assertIn("workspace_root", parsed)
+        self.assertIn("cli_path", parsed)
+        self.assertIn("quality_gate_path", parsed)
+        self.assertIn("summary", parsed)
+
+    def test_passes_correct_paths_to_run_smoke(self) -> None:
+        """main() derives cli_path and quality_gate_path relative to context_smoke module."""
+        captured: list[tuple] = []
+
+        def fake_run_smoke(cli_path, quality_gate_path, env=None) -> dict:
+            captured.append((cli_path, quality_gate_path))
+            return self._make_passing_report()
+
+        with (
+            mock.patch.object(context_smoke, "run_smoke", side_effect=fake_run_smoke),
+            mock.patch("builtins.print"),
+        ):
+            context_smoke.main()
+
+        self.assertEqual(len(captured), 1)
+        cli_path, qg_path = captured[0]
+        self.assertEqual(cli_path.name, "context_cli.py")
+        self.assertEqual(qg_path.name, "e2e_quality_gate.py")
+        self.assertEqual(cli_path.parent, qg_path.parent)
+
 
 if __name__ == "__main__":
     unittest.main()
