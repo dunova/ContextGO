@@ -22,7 +22,7 @@
 
 ---
 
-> **No Docker. No MCP broker. No external vector database. Just `pip install contextgo`.**
+> **No Docker. No MCP broker. No external vector database. Just `pipx install contextgo`.**
 >
 > ContextGO unifies Codex, Claude, and shell session histories into one searchable,
 > auditable index stored entirely on your machine. Hybrid semantic search (model2vec + BM25).
@@ -33,30 +33,35 @@
 ## Quick Start
 
 ```bash
-pip install contextgo          # zero runtime dependencies
-contextgo health               # verify everything works
+pipx install contextgo          # zero runtime dependencies, isolated env
+contextgo health                # verify everything works
 contextgo search "auth root cause" --limit 10
 ```
 
 **With hybrid semantic search (optional):**
 
 ```bash
-pip install "contextgo[vector]"                              # adds model2vec + bm25s
+pipx install "contextgo[vector]"                             # adds model2vec + bm25s
 export CONTEXTGO_EXPERIMENTAL_SEARCH_BACKEND=vector
 contextgo vector-sync                                        # embed all session docs
 contextgo search "authentication token validation" --limit 5 # hybrid vector + keyword search
 ```
 
+> **Note:** On macOS (Homebrew Python 3.12+) and many Linux distros, `pip install` is blocked
+> by [PEP 668](https://peps.python.org/pep-0668/). Use `pipx` instead — it manages a virtual
+> environment automatically. Install pipx: `brew install pipx` (macOS) or `apt install pipx` (Debian/Ubuntu).
+
 <details>
 <summary><strong>Alternative install methods</strong></summary>
 
 ```bash
-# From source
+# From source (in a venv)
 git clone https://github.com/dunova/ContextGO.git
-cd ContextGO && pip install -e ".[vector]"
+cd ContextGO && python3 -m venv .venv && source .venv/bin/activate
+pip install -e ".[vector]"
 
-# With pipx (isolated environment)
-pipx install "contextgo[vector]"
+# pip install (if your system allows it)
+pip install "contextgo[vector]"
 ```
 
 </details>
@@ -185,7 +190,7 @@ contextgo serve --port 37677        # start local viewer at 127.0.0.1:37677
 ### Step 1 -- Install
 
 ```bash
-pip install "contextgo[vector]"
+pipx install "contextgo[vector]"   # or: pip install "contextgo[vector]" (inside a venv)
 contextgo health
 ```
 
@@ -306,7 +311,7 @@ Copyright 2025--2026 [Dunova](https://github.com/dunova).
 
 ---
 
-> **无需 Docker，无需 MCP 代理，无需外部向量数据库。只需 `pip install contextgo`。**
+> **无需 Docker，无需 MCP 代理，无需外部向量数据库。只需 `pipx install contextgo`。**
 >
 > ContextGO 将 Codex、Claude 和 Shell 会话历史统一为一条可检索、可追溯的索引，
 > 全部存储在本机。内置混合语义搜索（model2vec + BM25）。Rust/Go 原生扫描引擎。
@@ -317,30 +322,35 @@ Copyright 2025--2026 [Dunova](https://github.com/dunova).
 ## 快速上手
 
 ```bash
-pip install contextgo          # 零运行时依赖
-contextgo health               # 验证安装
+pipx install contextgo          # 零运行时依赖，隔离环境
+contextgo health                # 验证安装
 contextgo search "认证根因" --limit 10
 ```
 
 **启用混合语义搜索（可选）：**
 
 ```bash
-pip install "contextgo[vector]"                              # 添加 model2vec + bm25s
+pipx install "contextgo[vector]"                             # 添加 model2vec + bm25s
 export CONTEXTGO_EXPERIMENTAL_SEARCH_BACKEND=vector
 contextgo vector-sync                                        # 嵌入所有会话文档
 contextgo search "认证 token 校验" --limit 5                  # 混合向量+关键词搜索
 ```
 
+> **提示：** macOS (Homebrew Python 3.12+) 和部分 Linux 发行版已禁止 `pip install` 直接安装
+> （[PEP 668](https://peps.python.org/pep-0668/)）。请使用 `pipx`，它会自动管理虚拟环境。
+> 安装 pipx：`brew install pipx`（macOS）或 `apt install pipx`（Debian/Ubuntu）。
+
 <details>
 <summary><strong>其他安装方式</strong></summary>
 
 ```bash
-# 从源码安装
+# 从源码安装（使用 venv）
 git clone https://github.com/dunova/ContextGO.git
-cd ContextGO && pip install -e ".[vector]"
+cd ContextGO && python3 -m venv .venv && source .venv/bin/activate
+pip install -e ".[vector]"
 
-# 使用 pipx（隔离环境）
-pipx install "contextgo[vector]"
+# pip install（如果系统允许）
+pip install "contextgo[vector]"
 ```
 
 </details>
@@ -469,7 +479,7 @@ contextgo serve --port 37677           # 在 127.0.0.1:37677 启动本地 Viewer
 ### 第一步 -- 安装
 
 ```bash
-pip install "contextgo[vector]"
+pipx install "contextgo[vector]"   # 或在 venv 中: pip install "contextgo[vector]"
 contextgo health
 ```
 
