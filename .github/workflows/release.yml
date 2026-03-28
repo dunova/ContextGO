@@ -128,4 +128,4 @@ jobs:
         run: twine check dist/*
 
       - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@76f52bc884231f62b54f72e44af3222aff7e3a36  # release/v1
+        uses: pypa/gh-action-pypi-publish@ed0c53931b1dc9bd32cbe73a98c7f6766f8a527e  # v1.13.0
