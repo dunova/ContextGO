@@ -19,6 +19,9 @@ import pytest
 # Ensure scripts/ is on sys.path (same pattern as other test files)
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+# Skip entire module when numpy is not installed (CI without [vector] extra)
+np = pytest.importorskip("numpy", reason="numpy not installed — vector tests require numpy")
+
 # ---------------------------------------------------------------------------
 # Helpers: mock model2vec + numpy
 # ---------------------------------------------------------------------------
@@ -28,8 +31,6 @@ _DIM = 256
 
 def _fake_numpy():
     """Return real numpy module."""
-    import numpy as np
-
     return np
 
 
@@ -180,14 +181,12 @@ class TestModelLoading:
 
 class TestEmbedding:
     def test_embed_texts_empty(self, vi):
-        import numpy as np
 
         result = vi.embed_texts([])
         assert result.shape == (0, _DIM)
         assert result.dtype == np.float32
 
     def test_embed_texts_single(self, vi):
-        import numpy as np
 
         result = vi.embed_texts(["hello world"])
         assert result.shape == (1, _DIM)
@@ -203,14 +202,12 @@ class TestEmbedding:
         assert result.shape == (_DIM,)
 
     def test_embed_deterministic(self, vi):
-        import numpy as np
 
         r1 = vi.embed_single("same text")
         r2 = vi.embed_single("same text")
         np.testing.assert_array_equal(r1, r2)
 
     def test_embed_different_texts_differ(self, vi):
-        import numpy as np
 
         r1 = vi.embed_single("hello")
         r2 = vi.embed_single("completely different text")
@@ -224,7 +221,6 @@ class TestEmbedding:
 
 class TestPackUnpack:
     def test_roundtrip(self, vi):
-        import numpy as np
 
         vec = np.random.randn(_DIM).astype(np.float32)
         packed = vi._pack_vector(vec)
@@ -233,7 +229,6 @@ class TestPackUnpack:
         np.testing.assert_array_almost_equal(vec, unpacked)
 
     def test_packed_size(self, vi):
-        import numpy as np
 
         vec = np.zeros(_DIM, dtype=np.float32)
         packed = vi._pack_vector(vec)
@@ -247,27 +242,23 @@ class TestPackUnpack:
 
 class TestCosineSimilarity:
     def test_identical_vectors(self, vi):
-        import numpy as np
 
         v = np.array([1.0, 2.0, 3.0], dtype=np.float32)
         assert vi.cosine_similarity(v, v) == pytest.approx(1.0)
 
     def test_orthogonal_vectors(self, vi):
-        import numpy as np
 
         a = np.array([1.0, 0.0], dtype=np.float32)
         b = np.array([0.0, 1.0], dtype=np.float32)
         assert vi.cosine_similarity(a, b) == pytest.approx(0.0)
 
     def test_opposite_vectors(self, vi):
-        import numpy as np
 
         a = np.array([1.0, 0.0], dtype=np.float32)
         b = np.array([-1.0, 0.0], dtype=np.float32)
         assert vi.cosine_similarity(a, b) == pytest.approx(-1.0)
 
     def test_zero_vector(self, vi):
-        import numpy as np
 
         a = np.zeros(3, dtype=np.float32)
         b = np.array([1.0, 2.0, 3.0], dtype=np.float32)
