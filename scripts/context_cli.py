@@ -683,8 +683,11 @@ def cmd_vector_sync(args: object) -> int:
     try:
         from vector_index import embed_pending_session_docs, get_vector_db_path, vector_available  # noqa: PLC0415
     except ImportError:
-        print("Error: vector dependencies not installed. Run: pip install contextgo[vector]", file=sys.stderr)
-        return 1
+        try:
+            from .vector_index import embed_pending_session_docs, get_vector_db_path, vector_available  # type: ignore[import-not-found]  # noqa: PLC0415, I001
+        except ImportError:
+            print("Error: vector dependencies not installed. Run: pip install contextgo[vector]", file=sys.stderr)
+            return 1
 
     if not vector_available():
         print("Error: model2vec or numpy not available. Run: pip install contextgo[vector]", file=sys.stderr)
@@ -715,8 +718,11 @@ def cmd_vector_status(args: object) -> int:
     try:
         from vector_index import get_vector_db_path, vector_status  # noqa: PLC0415
     except ImportError:
-        print("Error: vector dependencies not installed. Run: pip install contextgo[vector]", file=sys.stderr)
-        return 1
+        try:
+            from .vector_index import get_vector_db_path, vector_status  # type: ignore[import-not-found]  # noqa: PLC0415, I001
+        except ImportError:
+            print("Error: vector dependencies not installed. Run: pip install contextgo[vector]", file=sys.stderr)
+            return 1
 
     vdb = get_vector_db_path(db_path)
     status = vector_status(db_path, vdb)

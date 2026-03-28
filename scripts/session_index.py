@@ -1114,7 +1114,10 @@ def sync_session_index(force: bool = False) -> dict[str, int]:
         # --- Vector embedding: embed new/updated session documents ---
         if EXPERIMENTAL_SEARCH_BACKEND == "vector":
             try:
-                from vector_index import embed_pending_session_docs, get_vector_db_path, vector_available  # noqa: PLC0415, I001
+                try:
+                    from vector_index import embed_pending_session_docs, get_vector_db_path, vector_available  # noqa: PLC0415, I001
+                except ImportError:
+                    from .vector_index import embed_pending_session_docs, get_vector_db_path, vector_available  # type: ignore[import-not-found]  # noqa: PLC0415, I001
 
                 if vector_available():
                     _vdb = get_vector_db_path(db_path)
@@ -1707,12 +1710,20 @@ def _search_rows(query: str, limit: int = 10, literal: bool = False) -> list[dic
         # --- Vector hybrid search backend ---
         if EXPERIMENTAL_SEARCH_BACKEND == "vector":
             try:
-                from vector_index import (  # noqa: PLC0415
-                    fetch_enriched_results,
-                    get_vector_db_path,
-                    hybrid_search_session,
-                    vector_available,
-                )
+                try:
+                    from vector_index import (  # noqa: PLC0415
+                        fetch_enriched_results,
+                        get_vector_db_path,
+                        hybrid_search_session,
+                        vector_available,
+                    )
+                except ImportError:
+                    from .vector_index import (  # type: ignore[import-not-found]  # noqa: PLC0415
+                        fetch_enriched_results,
+                        get_vector_db_path,
+                        hybrid_search_session,
+                        vector_available,
+                    )
 
                 if vector_available():
                     _vdb = get_vector_db_path(db_path)
