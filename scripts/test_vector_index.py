@@ -35,10 +35,15 @@ def _fake_numpy():
 
 
 def _make_fake_embedding(text: str, dim: int = _DIM) -> Any:
-    """Deterministic fake embedding based on text hash."""
+    """Deterministic fake embedding based on text content.
+
+    Uses a simple bag-of-characters approach so texts sharing common substrings
+    produce similar (positive cosine) embeddings — essential for search tests.
+    """
     np = _fake_numpy()
-    rng = np.random.RandomState(abs(hash(text)) % (2**31))
-    vec = rng.randn(dim).astype(np.float32)
+    vec = np.zeros(dim, dtype=np.float32)
+    for ch in text.lower():
+        vec[ord(ch) % dim] += 1.0
     norm = np.linalg.norm(vec)
     if norm > 0:
         vec /= norm
