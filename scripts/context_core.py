@@ -442,12 +442,7 @@ def write_memory_markdown(
     if not path.resolve().is_relative_to(root.resolve()):
         raise ValueError(f"timestamp produces a path outside the storage root: {timestamp!r}")
 
-    body = (
-        f"# {clean_title}\n\n"
-        f"Tags: {', '.join(normalized_tags)}\n"
-        f"Date: {now.isoformat()}\n\n"
-        f"{clean_content}\n"
-    )
+    body = f"# {clean_title}\n\nTags: {', '.join(normalized_tags)}\nDate: {now.isoformat()}\n\n{clean_content}\n"
 
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as fh:

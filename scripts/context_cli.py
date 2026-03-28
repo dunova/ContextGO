@@ -191,6 +191,7 @@ def _save_local_memory(title: str, content: str, tags: list[str]) -> str:
 
     # Security: non-localhost remote URLs must use HTTPS.
     from urllib.parse import urlparse as _urlparse
+
     _parsed_remote = _urlparse(REMOTE_MEMORY_URL)
     _remote_host = _parsed_remote.hostname or ""
     if _remote_host not in ("127.0.0.1", "localhost", "::1") and _parsed_remote.scheme != "https":
@@ -375,7 +376,7 @@ def cmd_semantic(args: object) -> int:
     _SEARCH_TIMEOUT = 5.0  # seconds per search path
 
     pool = _get_thread_pool()
-    if not hasattr(pool, 'submit'):
+    if not hasattr(pool, "submit"):
         raise RuntimeError("Thread pool is not properly initialized")
 
     # Submit both search paths in parallel.
@@ -483,7 +484,9 @@ def cmd_import(args: object) -> int:
             file=sys.stderr,
         )
         return 1
-    print(f"import done inserted={result.get('inserted', 0)} skipped={result.get('skipped', 0)} db={result.get('db_path', '')}")
+    print(
+        f"import done inserted={result.get('inserted', 0)} skipped={result.get('skipped', 0)} db={result.get('db_path', '')}"
+    )
     return 0
 
 
@@ -594,7 +597,7 @@ def cmd_health(args: object) -> int:
     _HEALTH_TIMEOUT = 10.0  # seconds per health sub-check
 
     pool = _get_thread_pool()
-    if not hasattr(pool, 'submit'):
+    if not hasattr(pool, "submit"):
         raise RuntimeError("Thread pool is not properly initialized")
 
     # Submit all three independent health checks in parallel.
@@ -700,13 +703,15 @@ def cmd_vector_sync(args: object) -> int:
     result = embed_pending_session_docs(db_path, vdb, force=force)
     elapsed = _time.monotonic() - t0
 
-    _print_json({
-        "embedded": result.get("embedded", 0),
-        "skipped": result.get("skipped", 0),
-        "deleted": result.get("deleted", 0),
-        "elapsed_sec": round(elapsed, 3),
-        "vector_db": str(vdb),
-    })
+    _print_json(
+        {
+            "embedded": result.get("embedded", 0),
+            "skipped": result.get("skipped", 0),
+            "deleted": result.get("deleted", 0),
+            "elapsed_sec": round(elapsed, 3),
+            "vector_db": str(vdb),
+        }
+    )
     return 0
 
 

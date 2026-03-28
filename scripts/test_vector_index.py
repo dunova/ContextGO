@@ -29,6 +29,7 @@ _DIM = 256
 def _fake_numpy():
     """Return real numpy module."""
     import numpy as np
+
     return np
 
 
@@ -180,12 +181,14 @@ class TestModelLoading:
 class TestEmbedding:
     def test_embed_texts_empty(self, vi):
         import numpy as np
+
         result = vi.embed_texts([])
         assert result.shape == (0, _DIM)
         assert result.dtype == np.float32
 
     def test_embed_texts_single(self, vi):
         import numpy as np
+
         result = vi.embed_texts(["hello world"])
         assert result.shape == (1, _DIM)
         assert result.dtype == np.float32
@@ -201,12 +204,14 @@ class TestEmbedding:
 
     def test_embed_deterministic(self, vi):
         import numpy as np
+
         r1 = vi.embed_single("same text")
         r2 = vi.embed_single("same text")
         np.testing.assert_array_equal(r1, r2)
 
     def test_embed_different_texts_differ(self, vi):
         import numpy as np
+
         r1 = vi.embed_single("hello")
         r2 = vi.embed_single("completely different text")
         assert not np.array_equal(r1, r2)
@@ -220,6 +225,7 @@ class TestEmbedding:
 class TestPackUnpack:
     def test_roundtrip(self, vi):
         import numpy as np
+
         vec = np.random.randn(_DIM).astype(np.float32)
         packed = vi._pack_vector(vec)
         assert isinstance(packed, bytes)
@@ -228,6 +234,7 @@ class TestPackUnpack:
 
     def test_packed_size(self, vi):
         import numpy as np
+
         vec = np.zeros(_DIM, dtype=np.float32)
         packed = vi._pack_vector(vec)
         assert len(packed) == _DIM * 4  # float32 = 4 bytes
@@ -241,23 +248,27 @@ class TestPackUnpack:
 class TestCosineSimilarity:
     def test_identical_vectors(self, vi):
         import numpy as np
+
         v = np.array([1.0, 2.0, 3.0], dtype=np.float32)
         assert vi.cosine_similarity(v, v) == pytest.approx(1.0)
 
     def test_orthogonal_vectors(self, vi):
         import numpy as np
+
         a = np.array([1.0, 0.0], dtype=np.float32)
         b = np.array([0.0, 1.0], dtype=np.float32)
         assert vi.cosine_similarity(a, b) == pytest.approx(0.0)
 
     def test_opposite_vectors(self, vi):
         import numpy as np
+
         a = np.array([1.0, 0.0], dtype=np.float32)
         b = np.array([-1.0, 0.0], dtype=np.float32)
         assert vi.cosine_similarity(a, b) == pytest.approx(-1.0)
 
     def test_zero_vector(self, vi):
         import numpy as np
+
         a = np.zeros(3, dtype=np.float32)
         b = np.array([1.0, 2.0, 3.0], dtype=np.float32)
         assert vi.cosine_similarity(a, b) == 0.0
@@ -307,10 +318,13 @@ class TestEmbedPending:
     def test_embed_new_docs(self, vi, tmp_path):
         sdb = tmp_path / "session.db"
         vdb = tmp_path / "vector_index.db"
-        _create_session_db(sdb, [
-            {"file_path": "/a.md", "title": "Alpha", "content": "Alpha content"},
-            {"file_path": "/b.md", "title": "Beta", "content": "Beta content"},
-        ])
+        _create_session_db(
+            sdb,
+            [
+                {"file_path": "/a.md", "title": "Alpha", "content": "Alpha content"},
+                {"file_path": "/b.md", "title": "Beta", "content": "Beta content"},
+            ],
+        )
 
         result = vi.embed_pending_session_docs(sdb, vdb)
         assert result["embedded"] == 2
@@ -319,9 +333,12 @@ class TestEmbedPending:
     def test_skip_already_embedded(self, vi, tmp_path):
         sdb = tmp_path / "session.db"
         vdb = tmp_path / "vector_index.db"
-        _create_session_db(sdb, [
-            {"file_path": "/a.md", "title": "Alpha", "content": "Alpha content"},
-        ])
+        _create_session_db(
+            sdb,
+            [
+                {"file_path": "/a.md", "title": "Alpha", "content": "Alpha content"},
+            ],
+        )
 
         # First embed
         r1 = vi.embed_pending_session_docs(sdb, vdb)
@@ -335,9 +352,12 @@ class TestEmbedPending:
     def test_force_reembed(self, vi, tmp_path):
         sdb = tmp_path / "session.db"
         vdb = tmp_path / "vector_index.db"
-        _create_session_db(sdb, [
-            {"file_path": "/a.md", "title": "Alpha", "content": "Alpha content"},
-        ])
+        _create_session_db(
+            sdb,
+            [
+                {"file_path": "/a.md", "title": "Alpha", "content": "Alpha content"},
+            ],
+        )
 
         vi.embed_pending_session_docs(sdb, vdb)
         r2 = vi.embed_pending_session_docs(sdb, vdb, force=True)
@@ -346,10 +366,13 @@ class TestEmbedPending:
     def test_delete_stale_vectors(self, vi, tmp_path):
         sdb = tmp_path / "session.db"
         vdb = tmp_path / "vector_index.db"
-        _create_session_db(sdb, [
-            {"file_path": "/a.md", "title": "Alpha", "content": "Alpha content"},
-            {"file_path": "/b.md", "title": "Beta", "content": "Beta content"},
-        ])
+        _create_session_db(
+            sdb,
+            [
+                {"file_path": "/a.md", "title": "Alpha", "content": "Alpha content"},
+                {"file_path": "/b.md", "title": "Beta", "content": "Beta content"},
+            ],
+        )
         vi.embed_pending_session_docs(sdb, vdb)
 
         # Remove one doc from session DB
@@ -379,11 +402,14 @@ class TestVectorSearch:
     def test_basic_search(self, vi, tmp_path):
         sdb = tmp_path / "session.db"
         vdb = tmp_path / "vector_index.db"
-        _create_session_db(sdb, [
-            {"file_path": "/python.md", "title": "Python Guide", "content": "Python programming language tutorial"},
-            {"file_path": "/rust.md", "title": "Rust Guide", "content": "Rust systems programming language"},
-            {"file_path": "/cooking.md", "title": "Cooking Recipes", "content": "How to make pasta and pizza"},
-        ])
+        _create_session_db(
+            sdb,
+            [
+                {"file_path": "/python.md", "title": "Python Guide", "content": "Python programming language tutorial"},
+                {"file_path": "/rust.md", "title": "Rust Guide", "content": "Rust systems programming language"},
+                {"file_path": "/cooking.md", "title": "Cooking Recipes", "content": "How to make pasta and pizza"},
+            ],
+        )
         vi.embed_pending_session_docs(sdb, vdb)
 
         results = vi.vector_search_session("Python", sdb, vdb, limit=3)
@@ -423,10 +449,13 @@ class TestVectorSearch:
 class TestBM25Search:
     def test_basic_bm25(self, vi, tmp_path):
         sdb = tmp_path / "session.db"
-        _create_session_db(sdb, [
-            {"file_path": "/python.md", "title": "Python Guide", "content": "Python programming language tutorial"},
-            {"file_path": "/rust.md", "title": "Rust Guide", "content": "Rust systems programming language"},
-        ])
+        _create_session_db(
+            sdb,
+            [
+                {"file_path": "/python.md", "title": "Python Guide", "content": "Python programming language tutorial"},
+                {"file_path": "/rust.md", "title": "Rust Guide", "content": "Rust systems programming language"},
+            ],
+        )
 
         try:
             import bm25s  # noqa: F401
@@ -451,9 +480,12 @@ class TestBM25Search:
 
     def test_bm25_no_bm25s_module(self, vi, tmp_path):
         sdb = tmp_path / "session.db"
-        _create_session_db(sdb, [
-            {"file_path": "/a.md", "title": "Test", "content": "Test content"},
-        ])
+        _create_session_db(
+            sdb,
+            [
+                {"file_path": "/a.md", "title": "Test", "content": "Test content"},
+            ],
+        )
         with mock.patch.dict(sys.modules, {"bm25s": None}):
             results = vi.bm25s_search_session("test", sdb)
             assert results == []
@@ -510,10 +542,13 @@ class TestHybridSearch:
     def test_hybrid_returns_results(self, vi, tmp_path):
         sdb = tmp_path / "session.db"
         vdb = tmp_path / "vector_index.db"
-        _create_session_db(sdb, [
-            {"file_path": "/python.md", "title": "Python Guide", "content": "Python programming language tutorial"},
-            {"file_path": "/rust.md", "title": "Rust Guide", "content": "Rust systems programming"},
-        ])
+        _create_session_db(
+            sdb,
+            [
+                {"file_path": "/python.md", "title": "Python Guide", "content": "Python programming language tutorial"},
+                {"file_path": "/rust.md", "title": "Rust Guide", "content": "Rust systems programming"},
+            ],
+        )
         vi.embed_pending_session_docs(sdb, vdb)
 
         results = vi.hybrid_search_session("Python", sdb, vdb, limit=5)
@@ -537,9 +572,12 @@ class TestHybridSearch:
 class TestFetchEnriched:
     def test_enrich_basic(self, vi, tmp_path):
         sdb = tmp_path / "session.db"
-        _create_session_db(sdb, [
-            {"file_path": "/a.md", "title": "Alpha", "content": "Alpha content about testing"},
-        ])
+        _create_session_db(
+            sdb,
+            [
+                {"file_path": "/a.md", "title": "Alpha", "content": "Alpha content about testing"},
+            ],
+        )
         ranked = [{"file_path": "/a.md", "rrf_score": 0.5}]
         results = vi.fetch_enriched_results(ranked, sdb, "testing")
         assert len(results) == 1
@@ -599,10 +637,13 @@ class TestVectorStatus:
     def test_status_with_data(self, vi, tmp_path):
         sdb = tmp_path / "session.db"
         vdb = tmp_path / "vector_index.db"
-        _create_session_db(sdb, [
-            {"file_path": "/a.md", "title": "Alpha", "content": "Content A"},
-            {"file_path": "/b.md", "title": "Beta", "content": "Content B"},
-        ])
+        _create_session_db(
+            sdb,
+            [
+                {"file_path": "/a.md", "title": "Alpha", "content": "Content A"},
+                {"file_path": "/b.md", "title": "Beta", "content": "Content B"},
+            ],
+        )
         vi.embed_pending_session_docs(sdb, vdb)
 
         status = vi.vector_status(sdb, vdb)
@@ -659,16 +700,31 @@ class TestIntegration:
         vdb = tmp_path / "vector_index.db"
 
         docs = [
-            {"file_path": "/proj/auth.py", "title": "Authentication Module",
-             "content": "OAuth2 token validation and JWT parsing for user authentication"},
-            {"file_path": "/proj/db.py", "title": "Database Layer",
-             "content": "SQLite connection pool and query builder for data persistence"},
-            {"file_path": "/proj/api.py", "title": "REST API",
-             "content": "FastAPI routes for user management and session handling"},
-            {"file_path": "/proj/cache.py", "title": "Cache Service",
-             "content": "Redis-backed LRU cache for frequently accessed data"},
-            {"file_path": "/proj/logs.py", "title": "Logging Setup",
-             "content": "Structured logging with JSON formatter and rotation"},
+            {
+                "file_path": "/proj/auth.py",
+                "title": "Authentication Module",
+                "content": "OAuth2 token validation and JWT parsing for user authentication",
+            },
+            {
+                "file_path": "/proj/db.py",
+                "title": "Database Layer",
+                "content": "SQLite connection pool and query builder for data persistence",
+            },
+            {
+                "file_path": "/proj/api.py",
+                "title": "REST API",
+                "content": "FastAPI routes for user management and session handling",
+            },
+            {
+                "file_path": "/proj/cache.py",
+                "title": "Cache Service",
+                "content": "Redis-backed LRU cache for frequently accessed data",
+            },
+            {
+                "file_path": "/proj/logs.py",
+                "title": "Logging Setup",
+                "content": "Structured logging with JSON formatter and rotation",
+            },
         ]
         _create_session_db(sdb, docs)
 
@@ -699,9 +755,12 @@ class TestIntegration:
         vdb = tmp_path / "vector_index.db"
 
         # Initial docs
-        _create_session_db(sdb, [
-            {"file_path": "/a.md", "title": "A", "content": "Content A"},
-        ])
+        _create_session_db(
+            sdb,
+            [
+                {"file_path": "/a.md", "title": "A", "content": "Content A"},
+            ],
+        )
         r1 = vi.embed_pending_session_docs(sdb, vdb)
         assert r1["embedded"] == 1
 

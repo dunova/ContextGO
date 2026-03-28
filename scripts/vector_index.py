@@ -237,8 +237,7 @@ def embed_pending_session_docs(
         # Find pending documents
         if force:
             pending = conn.execute(
-                "SELECT sd.file_path, sd.title, sd.content, sd.updated_at_epoch "
-                "FROM sessions.session_documents sd"
+                "SELECT sd.file_path, sd.title, sd.content, sd.updated_at_epoch FROM sessions.session_documents sd"
             ).fetchall()
         else:
             pending = conn.execute(
@@ -274,14 +273,11 @@ def embed_pending_session_docs(
             _store_batch(conn, batch_paths, vectors, batch_epochs, now_epoch)
             embedded += len(batch_texts)
 
-        skipped = max(0, conn.execute(
-            "SELECT COUNT(*) FROM session_vectors"
-        ).fetchone()[0] - embedded)
+        skipped = max(0, conn.execute("SELECT COUNT(*) FROM session_vectors").fetchone()[0] - embedded)
 
         # Delete stale vectors
         cur = conn.execute(
-            "DELETE FROM session_vectors "
-            "WHERE file_path NOT IN (SELECT file_path FROM sessions.session_documents)"
+            "DELETE FROM session_vectors WHERE file_path NOT IN (SELECT file_path FROM sessions.session_documents)"
         )
         deleted = cur.rowcount
 
@@ -336,9 +332,7 @@ def vector_search_session(
 
     conn = sqlite3.connect(vdb, timeout=30)
     try:
-        rows = conn.execute(
-            "SELECT file_path, embedding FROM session_vectors"
-        ).fetchall()
+        rows = conn.execute("SELECT file_path, embedding FROM session_vectors").fetchall()
     finally:
         conn.close()
 
@@ -387,9 +381,7 @@ def bm25s_search_session(
 
     conn = sqlite3.connect(sdb, timeout=30)
     try:
-        rows = conn.execute(
-            "SELECT file_path, title, content FROM session_documents"
-        ).fetchall()
+        rows = conn.execute("SELECT file_path, title, content FROM session_documents").fetchall()
     finally:
         conn.close()
 
@@ -407,7 +399,9 @@ def bm25s_search_session(
         retriever.index(tokenized_corpus, show_progress=False)
 
         tokenized_query = bm25s.tokenize([query], show_progress=False)
-        results, scores = retriever.retrieve(tokenized_query, corpus=paths, k=min(limit * VECTOR_SEARCH_MULT, len(paths)))
+        results, scores = retriever.retrieve(
+            tokenized_query, corpus=paths, k=min(limit * VECTOR_SEARCH_MULT, len(paths))
+        )
 
         output: list[dict[str, Any]] = []
         for rank_idx in range(results.shape[1]):
@@ -465,9 +459,14 @@ def hybrid_search_session(
     if not vec_results and not bm25_results:
         return []
     if not vec_results:
-        return [{"file_path": r["file_path"], "rrf_score": 1.0 / (VECTOR_HYBRID_K + r["rank"])} for r in bm25_results[:limit]]
+        return [
+            {"file_path": r["file_path"], "rrf_score": 1.0 / (VECTOR_HYBRID_K + r["rank"])}
+            for r in bm25_results[:limit]
+        ]
     if not bm25_results:
-        return [{"file_path": r["file_path"], "rrf_score": 1.0 / (VECTOR_HYBRID_K + r["rank"])} for r in vec_results[:limit]]
+        return [
+            {"file_path": r["file_path"], "rrf_score": 1.0 / (VECTOR_HYBRID_K + r["rank"])} for r in vec_results[:limit]
+        ]
 
     return _rrf_merge(vec_results, bm25_results, k=VECTOR_HYBRID_K, limit=limit)
 
@@ -521,15 +520,17 @@ def fetch_enriched_results(
         content = row["content"] or ""
         snippet = _build_snippet(content, ql)
 
-        results.append({
-            "source_type": row["source_type"],
-            "session_id": row["session_id"],
-            "title": row["title"],
-            "file_path": row["file_path"],
-            "created_at": row["created_at"],
-            "created_at_epoch": row["created_at_epoch"],
-            "snippet": snippet,
-        })
+        results.append(
+            {
+                "source_type": row["source_type"],
+                "session_id": row["session_id"],
+                "title": row["title"],
+                "file_path": row["file_path"],
+                "created_at": row["created_at"],
+                "created_at_epoch": row["created_at_epoch"],
+                "snippet": snippet,
+            }
+        )
 
     return results
 
@@ -538,7 +539,7 @@ def _build_snippet(content: str, query_lower: str, radius: int = 120) -> str:
     """Extract a snippet centred on the first query match."""
     idx = content.lower().find(query_lower)
     if idx < 0:
-        return content[:radius * 2].strip() if content else ""
+        return content[: radius * 2].strip() if content else ""
     start = max(0, idx - radius)
     end = min(len(content), idx + len(query_lower) + radius)
     return content[start:end].strip()
@@ -571,13 +572,9 @@ def vector_status(
     conn = sqlite3.connect(str(vdb), timeout=10)
     try:
         with contextlib.suppress(sqlite3.OperationalError):
-            result["indexed_sessions"] = conn.execute(
-                "SELECT COUNT(*) FROM session_vectors"
-            ).fetchone()[0]
+            result["indexed_sessions"] = conn.execute("SELECT COUNT(*) FROM session_vectors").fetchone()[0]
         with contextlib.suppress(sqlite3.OperationalError):
-            result["indexed_observations"] = conn.execute(
-                "SELECT COUNT(*) FROM observation_vectors"
-            ).fetchone()[0]
+            result["indexed_observations"] = conn.execute("SELECT COUNT(*) FROM observation_vectors").fetchone()[0]
     finally:
         conn.close()
 

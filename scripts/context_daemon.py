@@ -1610,8 +1610,9 @@ class SessionTracker:
         Stops on the first HTTP failure to preserve ordering.
         """
         if not self._http_client:
-            logger.warning("Cannot retry pending exports: HTTP client not initialized. "
-                           "Check remote sync configuration.")
+            logger.warning(
+                "Cannot retry pending exports: HTTP client not initialized. Check remote sync configuration."
+            )
             return
 
         pending = sorted(
