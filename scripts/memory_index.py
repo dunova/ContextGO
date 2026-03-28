@@ -349,6 +349,9 @@ def _retry_sqlite_many(
     max_retries: int = 3,
 ) -> sqlite3.Cursor:
     """Like :func:`_retry_sqlite` but calls ``executemany`` instead of ``execute``."""
+    # Materialise iterators so retries don't see an exhausted sequence.
+    if not isinstance(params_seq, list):
+        params_seq = list(params_seq)
     last_exc: sqlite3.OperationalError | None = None
     for attempt in range(max_retries + 1):
         try:
@@ -599,8 +602,10 @@ def sync_index_from_storage() -> dict[str, int]:
             try:
                 if _fts5_available(conn, db_path):
                     conn.execute(_SQL_FTS5_REBUILD)
-            except sqlite3.OperationalError:
-                pass  # FTS5 not available; LIKE fallback will be used.
+            except sqlite3.OperationalError as fts_exc:
+                import logging as _logging
+
+                _logging.getLogger(__name__).warning("FTS5 rebuild failed: %s", fts_exc)
 
         _retry_commit(conn)
 
@@ -989,7 +994,7 @@ def _normalize_import_observation(raw: dict[str, Any]) -> dict[str, Any]:
     clean_tags = [cleaned for tag in raw_tags if (cleaned := _sanitize_text(str(tag))[:80])]
 
     raw_path = _sanitize_text(str(raw.get("file_path") or "import://json"))[:300]
-    if raw_path.startswith(("/", "~")):
+    if raw_path.startswith(("/", "~", "\\")) or (len(raw_path) >= 2 and raw_path[1] == ":"):
         raw_path = "import://local-path-redacted"
 
     title = _sanitize_text(str(raw.get("title") or "imported memory"))[:240]
