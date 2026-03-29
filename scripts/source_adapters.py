@@ -372,7 +372,12 @@ def _sync_openclaw_sessions(home: Path) -> dict[str, object]:
     removed = _prune_stale(adapter_dir, keep)
     if changed or removed:
         _mark_dirty(home)
-    return {"detected": bool(session_files), "sessions": sessions_written, "removed": removed, "path": str(session_files[0].parent) if session_files else None}
+    return {
+        "detected": bool(session_files),
+        "sessions": sessions_written,
+        "removed": removed,
+        "path": str(session_files[0].parent) if session_files else None,
+    }
 
 
 def sync_all_adapters(home: Path | None = None) -> dict[str, dict[str, object]]:

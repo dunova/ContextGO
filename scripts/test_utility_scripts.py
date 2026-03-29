@@ -733,8 +733,9 @@ class TestSmokeInstalledCli(unittest.TestCase):
         import smoke_installed_cli
 
         printed: list[str] = []
-        with patch("smoke_installed_cli.resolve_contextgo_executable", return_value=None), patch(
-            "builtins.print", side_effect=lambda s: printed.append(s)
+        with (
+            patch("smoke_installed_cli.resolve_contextgo_executable", return_value=None),
+            patch("builtins.print", side_effect=lambda s: printed.append(s)),
         ):
             rc = smoke_installed_cli.main()
         self.assertEqual(rc, 1)
@@ -760,9 +761,11 @@ class TestSmokeInstalledCli(unittest.TestCase):
                 text = 'eval "$(contextgo shell-init)"'
             return type("Proc", (), {"returncode": 0, "stdout": text, "stderr": ""})()
 
-        with patch("smoke_installed_cli.resolve_contextgo_executable", return_value=exe), patch(
-            "smoke_installed_cli.subprocess.run", side_effect=fake_run
-        ), patch("builtins.print"):
+        with (
+            patch("smoke_installed_cli.resolve_contextgo_executable", return_value=exe),
+            patch("smoke_installed_cli.subprocess.run", side_effect=fake_run),
+            patch("builtins.print"),
+        ):
             rc = smoke_installed_cli.main()
         self.assertEqual(rc, 0)
 

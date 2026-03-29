@@ -918,14 +918,21 @@ class SessionIndexParserTests(unittest.TestCase):
                 conn.execute(
                     "CREATE TABLE session (id TEXT PRIMARY KEY, title TEXT, directory TEXT, time_created INTEGER, time_updated INTEGER)"
                 )
-                conn.execute("CREATE TABLE part (session_id TEXT, id TEXT PRIMARY KEY, data TEXT, time_created INTEGER)")
+                conn.execute(
+                    "CREATE TABLE part (session_id TEXT, id TEXT PRIMARY KEY, data TEXT, time_created INTEGER)"
+                )
                 conn.execute(
                     "INSERT INTO session VALUES (?, ?, ?, ?, ?)",
                     ("ses_adapter", "Adapter Session", "/tmp/demo", 1700001000000, 1700001005000),
                 )
                 conn.execute(
                     "INSERT INTO part VALUES (?, ?, ?, ?)",
-                    ("ses_adapter", "prt_adapter", json.dumps({"type": "text", "text": "adapter incremental content updated"}), 1700001001000),
+                    (
+                        "ses_adapter",
+                        "prt_adapter",
+                        json.dumps({"type": "text", "text": "adapter incremental content updated"}),
+                        1700001001000,
+                    ),
                 )
                 conn.commit()
                 conn.close()

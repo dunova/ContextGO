@@ -275,7 +275,9 @@ class ContextCliTests(unittest.TestCase):
         inventory = {"platforms": [{"platform": "opencode", "detected": True}], "discovered_sources": {}}
 
         with (
-            mock.patch.dict(sys.modules, {"source_adapters": mock.Mock(source_inventory=mock.Mock(return_value=inventory))}),
+            mock.patch.dict(
+                sys.modules, {"source_adapters": mock.Mock(source_inventory=mock.Mock(return_value=inventory))}
+            ),
             mock.patch("builtins.print") as mock_print,
         ):
             rc = context_cli.run(args)

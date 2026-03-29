@@ -200,9 +200,7 @@ class SourceAdaptersTests(unittest.TestCase):
         self.assertEqual(source_adapters._normalize_text_value("  "), None)
         self.assertEqual(source_adapters._normalize_text_value('"quoted value"'), "quoted value")
         self.assertEqual(source_adapters._normalize_text_value('"unterminated'), '"unterminated')
-        self.assertFalse(
-            source_adapters._write_adapter_file(self.storage / "empty.jsonl", [], 1700000000, meta=None)
-        )
+        self.assertFalse(source_adapters._write_adapter_file(self.storage / "empty.jsonl", [], 1700000000, meta=None))
 
         texts = source_adapters._extract_text_fragments(
             {
@@ -246,7 +244,9 @@ class SourceAdaptersTests(unittest.TestCase):
         part_path = storage_root / "part" / "msg_2" / "prt_2.json"
         part_path.parent.mkdir(parents=True, exist_ok=True)
         session_path.parent.mkdir(parents=True, exist_ok=True)
-        session_path.write_text(json.dumps({"id": "ses_kilo_sparse", "time": {"updated": 1700000020000}}), encoding="utf-8")
+        session_path.write_text(
+            json.dumps({"id": "ses_kilo_sparse", "time": {"updated": 1700000020000}}), encoding="utf-8"
+        )
         part_path.write_text(
             json.dumps({"id": "prt_2", "sessionID": "ses_kilo_sparse", "type": "text", "text": '"Sparse text"'}),
             encoding="utf-8",
