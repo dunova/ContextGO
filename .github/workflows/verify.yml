@@ -45,16 +45,16 @@ jobs:
         run: bash -n scripts/*.sh
 
       - name: Check Python syntax
-        run: python -m py_compile scripts/*.py benchmarks/*.py
+        run: python -m py_compile src/contextgo/*.py tests/*.py scripts/*.py benchmarks/*.py
 
       - name: Ruff lint
-        run: ruff check scripts/ benchmarks/
+        run: ruff check src/contextgo/ tests/ scripts/ benchmarks/
 
       - name: Ruff format check
-        run: ruff format --check scripts/ benchmarks/
+        run: ruff format --check src/contextgo/ tests/ scripts/ benchmarks/
 
       - name: Bandit security scan
-        run: bandit -r scripts/ -c pyproject.toml --quiet || true
+        run: bandit -r src/contextgo/ scripts/ -c pyproject.toml --quiet || true
 
       - name: Secret and path scan
         run: |
@@ -112,8 +112,8 @@ jobs:
       - name: Run tests with coverage
         run: |
           python -m pytest \
-            scripts \
-            --cov=scripts \
+            tests \
+            --cov=src/contextgo \
             --cov-report=term-missing \
             --cov-report=xml \
             --cov-fail-under=97 \
