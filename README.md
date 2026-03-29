@@ -22,7 +22,7 @@
 
 ---
 
-> **No Docker. No MCP broker. No external vector database. Just `pipx install contextgo`.**
+> **No Docker. No MCP broker. No external vector database. Install with `pipx`, run one health check, and ContextGO starts discovering local AI chat history immediately.**
 >
 > ContextGO unifies Codex, Claude, and shell session histories into one searchable,
 > auditable index stored entirely on your machine. Hybrid semantic search (model2vec + BM25).
@@ -33,24 +33,94 @@
 ## Quick Start
 
 ```bash
-pipx install contextgo          # zero runtime dependencies, isolated env
-contextgo health                # verify everything works
-contextgo search "auth root cause" --limit 10
+# 1) Install pipx once (skip if you already have it)
+brew install pipx              # macOS
+# sudo apt install pipx        # Debian/Ubuntu
+pipx ensurepath
+
+# Open a new shell if pipx was just installed, then:
+pipx install "contextgo[vector]"
+eval "$(contextgo shell-init)"
+
+# Verify the runtime on a brand-new machine
+contextgo health
+contextgo sources
+contextgo search "authentication" --limit 5
 ```
 
-**With hybrid semantic search (optional):**
+**Prefer the zero-dependency core install?**
 
 ```bash
-pipx install "contextgo[vector]"                             # adds model2vec + bm25s
-export CONTEXTGO_EXPERIMENTAL_SEARCH_BACKEND=vector
-contextgo vector-sync                                        # embed all session docs
-contextgo search "authentication token validation" --limit 5 # hybrid vector + keyword search
+pipx install contextgo
+eval "$(contextgo shell-init)"
+contextgo health
 ```
 
 > **Note:** On macOS (especially Homebrew Python 3.12+) and many Linux distros, direct `pip install`
 > is not a supported end-user install path because of [PEP 668](https://peps.python.org/pep-0668/)
 > and system Python restrictions. Use `pipx` instead. Install pipx with `brew install pipx` (macOS)
 > or `apt install pipx` (Debian/Ubuntu).
+
+**See what ContextGO auto-detected**
+
+```bash
+contextgo sources
+```
+
+ContextGO automatically discovers and normalizes supported local sources including:
+
+- `Codex`
+- `Claude Code`
+- `OpenCode`
+- `Kilo`
+- `OpenClaw`
+- `zsh` / `bash` shell history
+
+If you install a new supported tool later, you do not need to reconfigure ContextGO.
+The next `contextgo health`, `contextgo sources`, or `contextgo search ...` run will
+rescan local source registries and absorb the new history.
+
+**Enable hybrid search once you already have history**
+
+```bash
+contextgo sources
+export CONTEXTGO_EXPERIMENTAL_SEARCH_BACKEND=vector
+contextgo health
+contextgo vector-sync
+contextgo vector-status
+```
+
+`contextgo vector-sync` now initializes a fresh local index cleanly, including a brand-new install
+that has no `session_index.db` yet.
+
+**Upgrade cleanly**
+
+```bash
+pipx upgrade contextgo || pipx install "contextgo[vector]"
+eval "$(contextgo shell-init)"
+contextgo health
+contextgo sources
+```
+
+If you are upgrading from a local checkout instead of PyPI:
+
+```bash
+bash scripts/upgrade_contextgo.sh
+```
+
+ContextGO now versions its adapter cache and automatically refreshes normalized
+source mirrors when the adapter schema changes, so upgrades do not leave stale
+OpenCode / Kilo / OpenClaw adapter artifacts behind.
+
+**One-command uninstall**
+
+```bash
+# Keep indexed data and memories
+bash scripts/uninstall_contextgo.sh
+
+# Remove everything, including ~/.contextgo data
+bash scripts/uninstall_contextgo.sh --purge-data
+```
 
 <details>
 <summary><strong>Source install for contributors</strong></summary>
@@ -60,6 +130,13 @@ contextgo search "authentication token validation" --limit 5 # hybrid vector + k
 git clone https://github.com/dunova/ContextGO.git
 cd ContextGO
 bash scripts/unified_context_deploy.sh
+export PATH="$HOME/.local/bin:$PATH"
+eval "$(contextgo shell-init)"
+contextgo health
+```
+
+```bash
+# Optional maintainer validation gate
 contextgo smoke --sandbox
 ```
 
@@ -149,6 +226,7 @@ flowchart LR
 ### Search & Recall
 
 ```bash
+contextgo sources                                 # show detected platforms and adapter status
 contextgo search "schema migration" --limit 10    # full-text keyword search
 contextgo semantic "database design" --limit 5    # memory-first search with keyword fallback
 contextgo native-scan --backend auto --threads 4  # Rust/Go scanner directly
@@ -175,7 +253,7 @@ contextgo import /tmp/export.json
 ```bash
 contextgo health                    # verify installation and storage integrity
 contextgo maintain --enqueue-missing # index all existing sessions
-contextgo smoke                     # run full smoke test suite
+contextgo smoke                     # maintainer smoke suite
 contextgo maintain --dry-run        # clean and repair local index
 contextgo serve --port 37677        # start local viewer at 127.0.0.1:37677
 ```
@@ -189,16 +267,21 @@ contextgo serve --port 37677        # start local viewer at 127.0.0.1:37677
 ### Step 1 -- Install
 
 ```bash
+pipx ensurepath
 pipx install "contextgo[vector]"
+eval "$(contextgo shell-init)"
 contextgo health
+contextgo sources
 ```
 
 ### Step 2 -- Build the initial index
 
 ```bash
-contextgo maintain --enqueue-missing    # discover all existing sessions
-contextgo vector-sync                   # build vector embeddings
-contextgo search "test" --limit 1       # verify index works
+contextgo sources
+export CONTEXTGO_EXPERIMENTAL_SEARCH_BACKEND=vector
+contextgo health
+contextgo vector-sync
+contextgo vector-status
 ```
 
 ### Step 3 -- Add to your AI tool's instructions
@@ -276,6 +359,16 @@ ContextGO/
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for local dev setup, test commands, and PR quality gates.
 
+First-time contributor setup from a fresh machine:
+
+```bash
+git clone https://github.com/dunova/ContextGO.git
+cd ContextGO
+bash scripts/unified_context_deploy.sh
+export PATH="$HOME/.local/bin:$PATH"
+contextgo health
+```
+
 | Resource | |
 |---|---|
 | Security | [SECURITY.md](SECURITY.md) -- threat model and responsible disclosure |
@@ -310,7 +403,7 @@ Copyright 2025--2026 [Dunova](https://github.com/dunova).
 
 ---
 
-> **无需 Docker，无需 MCP 代理，无需外部向量数据库。只需 `pipx install contextgo`。**
+> **无需 Docker，无需 MCP 代理，无需外部向量数据库。使用 `pipx` 安装，跑一次 health，ContextGO 就会开始自动发现本地 AI 聊天历史。**
 >
 > ContextGO 将 Codex、Claude 和 Shell 会话历史统一为一条可检索、可追溯的索引，
 > 全部存储在本机。内置混合语义搜索（model2vec + BM25）。Rust/Go 原生扫描引擎。
@@ -321,23 +414,92 @@ Copyright 2025--2026 [Dunova](https://github.com/dunova).
 ## 快速上手
 
 ```bash
-pipx install contextgo          # 零运行时依赖，隔离环境
-contextgo health                # 验证安装
-contextgo search "认证根因" --limit 10
+# 1) 首次安装 pipx（已安装可跳过）
+brew install pipx              # macOS
+# sudo apt install pipx        # Debian/Ubuntu
+pipx ensurepath
+
+# 如果刚安装完 pipx，请重新打开一个 shell，然后执行：
+pipx install "contextgo[vector]"
+eval "$(contextgo shell-init)"
+
+# 在一台全新机器上验证运行时
+contextgo health
+contextgo sources
+contextgo search "authentication" --limit 5
 ```
 
-**启用混合语义搜索（可选）：**
+**如果你只想安装零依赖核心版：**
 
 ```bash
-pipx install "contextgo[vector]"                             # 添加 model2vec + bm25s
-export CONTEXTGO_EXPERIMENTAL_SEARCH_BACKEND=vector
-contextgo vector-sync                                        # 嵌入所有会话文档
-contextgo search "认证 token 校验" --limit 5                  # 混合向量+关键词搜索
+pipx install contextgo
+eval "$(contextgo shell-init)"
+contextgo health
 ```
 
 > **提示：** macOS（尤其 Homebrew Python 3.12+）和部分 Linux 发行版不再适合把 `pip install`
 > 作为终端用户安装路径（见 [PEP 668](https://peps.python.org/pep-0668/)）。请使用 `pipx`。
 > 安装 pipx：`brew install pipx`（macOS）或 `apt install pipx`（Debian/Ubuntu）。
+
+**先看看 ContextGO 自动发现了哪些平台**
+
+```bash
+contextgo sources
+```
+
+默认会自动探测并吸收这些本地来源：
+
+- `Codex`
+- `Claude Code`
+- `OpenCode`
+- `Kilo`
+- `OpenClaw`
+- `zsh` / `bash` 终端历史
+
+以后如果你又安装了新的受支持工具，不需要重新配置。下一次执行
+`contextgo health`、`contextgo sources` 或 `contextgo search ...` 时，
+ContextGO 会重新扫描并自动吸收这些新增来源。
+
+**已有历史会话后，再启用混合搜索：**
+
+```bash
+contextgo sources
+export CONTEXTGO_EXPERIMENTAL_SEARCH_BACKEND=vector
+contextgo health
+contextgo vector-sync
+contextgo vector-status
+```
+
+`contextgo vector-sync` 现在会在全新环境中自动初始化本地索引，即使本地还没有
+`session_index.db` 也能正常运行。
+
+**升级到最新版本**
+
+```bash
+pipx upgrade contextgo || pipx install "contextgo[vector]"
+eval "$(contextgo shell-init)"
+contextgo health
+contextgo sources
+```
+
+如果你是从本地仓库升级而不是从 PyPI 升级：
+
+```bash
+bash scripts/upgrade_contextgo.sh
+```
+
+ContextGO 现在会对 adapter 缓存做 schema 版本管理。升级后如果 OpenCode / Kilo /
+OpenClaw 的规范化缓存格式发生变化，会自动刷新，不会残留旧版本的 adapter 产物。
+
+**一键卸载**
+
+```bash
+# 保留 ~/.contextgo 数据
+bash scripts/uninstall_contextgo.sh
+
+# 连同索引与记忆数据一起彻底删除
+bash scripts/uninstall_contextgo.sh --purge-data
+```
 
 <details>
 <summary><strong>贡献者源码安装</strong></summary>
@@ -347,6 +509,13 @@ contextgo search "认证 token 校验" --limit 5                  # 混合向量
 git clone https://github.com/dunova/ContextGO.git
 cd ContextGO
 bash scripts/unified_context_deploy.sh
+export PATH="$HOME/.local/bin:$PATH"
+eval "$(contextgo shell-init)"
+contextgo health
+```
+
+```bash
+# 可选的维护者验证门禁
 contextgo smoke --sandbox
 ```
 
@@ -436,6 +605,7 @@ flowchart LR
 ### 检索与召回
 
 ```bash
+contextgo sources                                 # 查看已探测的平台与 adapter 状态
 contextgo search "schema 迁移" --limit 10         # 全文关键词检索
 contextgo semantic "数据库设计决策" --limit 5       # 记忆优先检索，关键词兜底
 contextgo native-scan --backend auto --threads 4  # 直接调用原生扫描器
@@ -462,7 +632,7 @@ contextgo import /tmp/export.json
 ```bash
 contextgo health                       # 验证安装状态与存储完整性
 contextgo maintain --enqueue-missing   # 索引所有已有会话
-contextgo smoke                        # 执行完整 smoke 测试套件
+contextgo smoke                        # 维护者 smoke 测试套件
 contextgo maintain --dry-run           # 清理并修复本地索引
 contextgo serve --port 37677           # 在 127.0.0.1:37677 启动本地 Viewer
 ```
@@ -476,16 +646,21 @@ contextgo serve --port 37677           # 在 127.0.0.1:37677 启动本地 Viewer
 ### 第一步 -- 安装
 
 ```bash
+pipx ensurepath
 pipx install "contextgo[vector]"
+eval "$(contextgo shell-init)"
 contextgo health
+contextgo sources
 ```
 
 ### 第二步 -- 构建初始索引
 
 ```bash
-contextgo maintain --enqueue-missing    # 发现并索引所有已有会话
-contextgo vector-sync                   # 构建向量嵌入
-contextgo search "test" --limit 1       # 验证索引正常工作
+contextgo sources
+export CONTEXTGO_EXPERIMENTAL_SEARCH_BACKEND=vector
+contextgo health
+contextgo vector-sync
+contextgo vector-status
 ```
 
 ### 第三步 -- 添加到你的 AI 工具配置
@@ -562,6 +737,16 @@ ContextGO/
 ## 参与贡献
 
 见 [CONTRIBUTING.md](CONTRIBUTING.md) 了解本地开发环境、测试命令和 PR 质量门。
+
+全新机器上的首次贡献者接管流程：
+
+```bash
+git clone https://github.com/dunova/ContextGO.git
+cd ContextGO
+bash scripts/unified_context_deploy.sh
+export PATH="$HOME/.local/bin:$PATH"
+contextgo health
+```
 
 | 资源 | |
 |---|---|

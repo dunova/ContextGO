@@ -12,7 +12,7 @@ BENCHMARKS := benchmarks
 .PHONY: help install install-remote dev-check \
         lint format type-check \
         test test-fast test-cov \
-        smoke health bench \
+        smoke smoke-installed health bench \
         build dist check-dist \
         release-dry-run \
         clean clean-dist clean-all
@@ -65,8 +65,10 @@ TEST_FILES := \
 	$(SCRIPTS)/test_context_core.py \
 	$(SCRIPTS)/test_context_native.py \
 	$(SCRIPTS)/test_context_smoke.py \
+	$(SCRIPTS)/test_source_adapters.py \
 	$(SCRIPTS)/test_session_index.py \
-	$(SCRIPTS)/test_autoresearch_contextgo.py
+	$(SCRIPTS)/test_autoresearch_contextgo.py \
+	$(SCRIPTS)/test_utility_scripts.py
 
 test: ## Run full pytest suite with coverage
 	$(PYTEST) $(TEST_FILES) \
@@ -85,6 +87,10 @@ test-cov: test ## Run tests and open HTML coverage report
 
 smoke: ## Run smoke suite in sandboxed mode
 	$(PYTHON) $(SCRIPTS)/context_cli.py smoke --sandbox
+
+smoke-installed: ## Run installed runtime and installed CLI wrapper smoke
+	$(PYTHON) $(SCRIPTS)/smoke_installed_runtime.py
+	$(PYTHON) $(SCRIPTS)/smoke_installed_cli.py
 
 health: ## Run health check via CLI
 	$(PYTHON) $(SCRIPTS)/context_cli.py health

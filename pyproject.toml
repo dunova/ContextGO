@@ -91,10 +91,15 @@ exclude = [
     "coverage.xml",
 ]
 
+[tool.hatch.build.targets.wheel.force-include]
+"config/noise_markers.json" = "config/noise_markers.json"
+
 [tool.hatch.build.targets.sdist]
 include = [
     "/scripts",
+    "/config",
     "/docs",
+    "/templates",
     "/VERSION",
     "/README.md",
     "/CHANGELOG.md",

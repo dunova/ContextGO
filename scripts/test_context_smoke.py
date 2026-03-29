@@ -38,7 +38,10 @@ class TestRunCmd(unittest.TestCase):
 
 class TestFreePort(unittest.TestCase):
     def test_returns_integer_port(self) -> None:
-        port = context_smoke._free_port()
+        try:
+            port = context_smoke._free_port()
+        except PermissionError:
+            self.skipTest("loopback socket bind is not permitted in this environment")
         self.assertIsInstance(port, int)
         self.assertGreater(port, 0)
         self.assertLessEqual(port, 65535)
@@ -479,6 +482,15 @@ class TestTestRwCycle(unittest.TestCase):
 
 
 class TestTestViewer(unittest.TestCase):
+    def test_returns_skipped_when_loopback_bind_not_permitted(self) -> None:
+        """test_viewer skips gracefully when the environment forbids loopback sockets."""
+        with mock.patch.object(context_smoke, "_free_port", side_effect=PermissionError(1, "Operation not permitted")):
+            result = context_smoke.test_viewer(Path("/tmp/context_cli.py"))
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["rc"], 0)
+        self.assertTrue(result["detail"]["skipped"])
+
     def test_returns_ok_when_server_responds(self) -> None:
         """test_viewer returns ok=True when health endpoint responds with 200."""
         mock_proc = mock.MagicMock()

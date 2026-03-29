@@ -17,6 +17,7 @@ Each ``test_*`` function returns a result dict with the shape::
 from __future__ import annotations
 
 import contextlib
+import errno
 import json
 import os
 import socket
@@ -208,14 +209,45 @@ def test_maintain(cli_path: Path, env: dict[str, str] | None = None) -> dict[str
 
 def test_viewer(cli_path: Path, env: dict[str, str] | None = None) -> dict[str, Any]:
     """Start the local viewer server and confirm the health endpoint responds."""
-    port = _free_port()
-    proc = subprocess.Popen(
-        [sys.executable, str(cli_path), "serve", "--host", "127.0.0.1", "--port", str(port)],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
-        text=True,
-        env={**os.environ, **(env or {})},
-    )
+    try:
+        port = _free_port()
+    except OSError as exc:
+        if exc.errno in {errno.EPERM, errno.EACCES}:
+            return {
+                "name": "viewer",
+                "rc": 0,
+                "ok": True,
+                "detail": {"skipped": True, "reason": f"loopback socket unavailable: {exc}"},
+            }
+        return {
+            "name": "viewer",
+            "rc": 1,
+            "ok": False,
+            "detail": {"error": f"failed to reserve loopback port: {exc}"},
+        }
+
+    try:
+        proc = subprocess.Popen(
+            [sys.executable, str(cli_path), "serve", "--host", "127.0.0.1", "--port", str(port)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            env={**os.environ, **(env or {})},
+        )
+    except OSError as exc:
+        if exc.errno in {errno.EPERM, errno.EACCES}:
+            return {
+                "name": "viewer",
+                "rc": 0,
+                "ok": True,
+                "detail": {"skipped": True, "reason": f"viewer launch not permitted: {exc}"},
+            }
+        return {
+            "name": "viewer",
+            "rc": 1,
+            "ok": False,
+            "detail": {"error": f"failed to launch viewer: {exc}"},
+        }
     try:
         deadline = time.time() + 15
         body = ""

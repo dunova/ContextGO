@@ -193,6 +193,7 @@ class TestBuildParser(unittest.TestCase):
             "health",
             "vector-sync",
             "vector-status",
+            "sources",
             "q",
             "shell-init",
         }

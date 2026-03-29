@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Tests for utility scripts: export_memories, import_memories,
 e2e_quality_gate, memory_hit_first_regression, smoke_installed_runtime,
+smoke_installed_cli,
 and autoresearch_contextgo.
 
 All external calls are mocked so no real CLI or filesystem side-effects occur.
@@ -708,6 +709,65 @@ class TestSmokeInstalledRuntime(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# smoke_installed_cli — unit-level
+# ---------------------------------------------------------------------------
+
+
+class TestSmokeInstalledCli(unittest.TestCase):
+    def test_resolve_contextgo_executable_from_env(self) -> None:
+        import smoke_installed_cli
+
+        with patch.dict(os.environ, {"CONTEXTGO_EXECUTABLE": "/tmp/contextgo-bin"}):
+            result = smoke_installed_cli.resolve_contextgo_executable()
+        self.assertEqual(result, Path("/tmp/contextgo-bin"))
+
+    def test_resolve_contextgo_executable_from_path(self) -> None:
+        import smoke_installed_cli
+
+        with patch.dict(os.environ, {}, clear=False), patch("shutil.which", return_value="/usr/local/bin/contextgo"):
+            os.environ.pop("CONTEXTGO_EXECUTABLE", None)
+            result = smoke_installed_cli.resolve_contextgo_executable()
+        self.assertEqual(result, Path("/usr/local/bin/contextgo"))
+
+    def test_main_returns_one_when_executable_missing(self) -> None:
+        import smoke_installed_cli
+
+        printed: list[str] = []
+        with patch("smoke_installed_cli.resolve_contextgo_executable", return_value=None), patch(
+            "builtins.print", side_effect=lambda s: printed.append(s)
+        ):
+            rc = smoke_installed_cli.main()
+        self.assertEqual(rc, 1)
+        payload = json.loads(printed[0])
+        self.assertFalse(payload["ok"])
+
+    def test_main_returns_zero_on_success(self) -> None:
+        import smoke_installed_cli
+
+        exe = Path("/usr/local/bin/contextgo")
+
+        def fake_run(cmd, **kwargs):  # noqa: ANN001
+            text = ""
+            if cmd[1:] == ["--help"]:
+                text = "ContextGO unified CLI"
+            elif cmd[1:] == ["health"]:
+                text = json.dumps({"all_ok": True})
+            elif cmd[1:] == ["serve", "--help"]:
+                text = "--port"
+            elif cmd[1:] == ["maintain", "--help"]:
+                text = "--dry-run"
+            elif cmd[1:] == ["shell-init"]:
+                text = 'eval "$(contextgo shell-init)"'
+            return type("Proc", (), {"returncode": 0, "stdout": text, "stderr": ""})()
+
+        with patch("smoke_installed_cli.resolve_contextgo_executable", return_value=exe), patch(
+            "smoke_installed_cli.subprocess.run", side_effect=fake_run
+        ), patch("builtins.print"):
+            rc = smoke_installed_cli.main()
+        self.assertEqual(rc, 0)
+
+
+# ---------------------------------------------------------------------------
 # autoresearch_contextgo — unit-level
 # ---------------------------------------------------------------------------
 
@@ -1008,7 +1068,10 @@ class TestContextSmoke(unittest.TestCase):
     def test_free_port_returns_int(self) -> None:
         import context_smoke
 
-        port = context_smoke._free_port()
+        try:
+            port = context_smoke._free_port()
+        except PermissionError:
+            self.skipTest("loopback socket bind is not permitted in this environment")
         self.assertIsInstance(port, int)
         self.assertGreater(port, 0)
         self.assertLess(port, 65536)

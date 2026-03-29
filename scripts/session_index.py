@@ -34,12 +34,14 @@ from typing import Any
 try:
     import context_native
     from context_config import env_int, storage_root
+    from source_adapters import adapter_dirty_epoch, discover_index_sources, sync_all_adapters
     from sqlite_retry import retry_commit as _rc
     from sqlite_retry import retry_sqlite as _rs
     from sqlite_retry import retry_sqlite_many as _rsm
 except ImportError:  # pragma: no cover
     from . import context_native  # type: ignore[import-not-found]
     from .context_config import env_int, storage_root  # type: ignore[import-not-found]
+    from .source_adapters import adapter_dirty_epoch, discover_index_sources, sync_all_adapters  # type: ignore[import-not-found]
     from .sqlite_retry import retry_commit as _rc  # type: ignore[import-not-found]
     from .sqlite_retry import retry_sqlite as _rs
     from .sqlite_retry import retry_sqlite_many as _rsm
@@ -244,9 +246,13 @@ CJK_STOPWORDS: frozenset[str] = frozenset(
 SOURCE_WEIGHT: dict[str, int] = {
     "codex_session": 40,
     "claude_session": 40,
+    "opencode_session": 36,
+    "kilo_session": 36,
+    "openclaw_session": 36,
     "codex_history": 8,
     "claude_history": 8,
     "opencode_history": 6,
+    "kilo_history": 6,
     "shell_zsh": 2,
     "shell_bash": 2,
 }
@@ -658,6 +664,88 @@ def _parse_history_jsonl(
     return _make_flat_doc(path, source_type, texts, mtime, file_size)
 
 
+def _parse_generic_session_jsonl(
+    path: Path, source_type: str, file_stat: os.stat_result | None = None
+) -> SessionDocument | None:
+    """Parse a generic JSONL session transcript into a ``SessionDocument``.
+
+    This is intentionally permissive so newly-supported tools can be indexed
+    from normalized adapter output or native JSONL session files without
+    needing a bespoke parser for every vendor-specific event envelope.
+    """
+
+    def _extract_texts(node: Any) -> list[str]:
+        texts: list[str] = []
+        seen: set[str] = set()
+
+        def add(value: Any) -> None:
+            if not isinstance(value, str):
+                return
+            text = value.strip()
+            if not text or text in seen:
+                return
+            seen.add(text)
+            texts.append(text)
+
+        def walk(value: Any) -> None:
+            if value is None:
+                return
+            if isinstance(value, str):
+                add(value)
+                return
+            if isinstance(value, list):
+                for item in value:
+                    walk(item)
+                return
+            if not isinstance(value, dict):
+                return
+            node_type = str(value.get("type") or "").strip().lower()
+            if node_type in {"text", "input_text", "output_text", "reasoning"}:
+                add(value.get("text"))
+            for key in ("text", "input", "prompt", "display", "message", "body", "summary", "title"):
+                add(value.get(key))
+            for key in ("content", "parts", "messages", "items", "payload", "data", "state", "response"):
+                if key in value:
+                    walk(value[key])
+
+        walk(node)
+        return texts
+
+    st = file_stat if file_stat is not None else path.stat()
+    mtime = int(st.st_mtime)
+    file_size = st.st_size
+    texts: list[str] = []
+    session_id = path.stem
+    title = path.name
+    try:
+        for obj in _iter_jsonl_objects(path):
+            if not isinstance(obj, dict):
+                continue
+            raw_session_id = obj.get("session_id") or obj.get("sessionId") or obj.get("id")
+            if isinstance(raw_session_id, str) and raw_session_id.strip():
+                session_id = raw_session_id.strip()
+            raw_title = obj.get("title")
+            if isinstance(raw_title, str) and raw_title.strip():
+                title = raw_title.strip()
+            texts.extend(_extract_texts(obj))
+    except (OSError, UnicodeDecodeError, ValueError):
+        return None
+    content = _truncate(texts)
+    if not content:
+        return None
+    return SessionDocument(
+        file_path=str(path),
+        source_type=source_type,
+        session_id=session_id,
+        title=title,
+        content=content,
+        created_at=datetime.fromtimestamp(mtime).isoformat(),
+        created_at_epoch=mtime,
+        file_mtime=mtime,
+        file_size=file_size,
+    )
+
+
 def _parse_shell_history(
     path: Path, source_type: str, file_stat: os.stat_result | None = None
 ) -> SessionDocument | None:
@@ -697,6 +785,8 @@ def _parse_source(source_type: str, path: Path, file_stat: os.stat_result | None
         return _parse_codex_session(path, file_stat)
     if source_type == "claude_session":
         return _parse_claude_session(path, file_stat)
+    if source_type in {"opencode_session", "kilo_session", "openclaw_session"} and path.suffix == ".jsonl":
+        return _parse_generic_session_jsonl(path, source_type, file_stat)
     if source_type.endswith("_history") and path.suffix == ".jsonl":
         return _parse_history_jsonl(path, source_type, file_stat)
     if source_type.startswith("shell_"):
@@ -738,26 +828,7 @@ def _iter_sources() -> list[tuple[str, Path]]:
             pass
 
     home = Path(current_home)
-    discovered: list[tuple[str, Path]] = []
-
-    for source_type, root in [
-        ("codex_session", home / ".codex" / "sessions"),
-        ("codex_session", home / ".codex" / "archived_sessions"),
-        ("claude_session", home / ".claude" / "projects"),
-    ]:
-        if root.is_dir():
-            for path in root.rglob("*.jsonl"):
-                discovered.append((source_type, path))
-
-    for source_type, path in [
-        ("codex_history", home / ".codex" / "history.jsonl"),
-        ("claude_history", home / ".claude" / "history.jsonl"),
-        ("opencode_history", home / ".local" / "state" / "opencode" / "prompt-history.jsonl"),
-        ("shell_zsh", home / ".zsh_history"),
-        ("shell_bash", home / ".bash_history"),
-    ]:
-        if path.is_file():
-            discovered.append((source_type, path))
+    discovered = discover_index_sources(home)
 
     _update_source_cache(discovered, now, current_home)
     return discovered
@@ -900,7 +971,17 @@ def sync_session_index(force: bool = False) -> dict[str, int]:
             last_sync_epoch = int(last_sync_raw or "0")
         except (ValueError, TypeError):
             last_sync_epoch = 0
-        if not force and last_sync_epoch and (now_epoch - last_sync_epoch) < SYNC_MIN_INTERVAL_SEC:
+        # External adapters may surface brand-new tools after the previous sync.
+        # Refresh them before enforcing the min-interval guard so newly installed
+        # platforms are searchable immediately instead of waiting for TTL expiry.
+        sync_all_adapters(_home())
+        adapter_dirty = adapter_dirty_epoch(_home())
+        if (
+            not force
+            and last_sync_epoch
+            and (now_epoch - last_sync_epoch) < SYNC_MIN_INTERVAL_SEC
+            and adapter_dirty < last_sync_epoch
+        ):
             total = _retry_sqlite(conn, _SQL_COUNT_DOCS).fetchone()[0]
             _logger.debug(
                 "sync_session_index skipped (last_sync %ds ago, threshold %ds)",

@@ -293,33 +293,12 @@ def _print_json(payload: object, *, pretty: bool = False) -> None:
 
 def _source_freshness() -> dict[str, dict[str, object]]:
     """Return a mapping of known history source names to their path and mtime."""
-    from datetime import datetime  # deferred: only needed for health/freshness output
+    try:
+        from source_adapters import source_freshness_snapshot  # noqa: PLC0415
+    except ImportError:
+        from .source_adapters import source_freshness_snapshot  # type: ignore[import-not-found]  # noqa: PLC0415, I001
 
-    _core = _get_context_core()
-    antigravity_candidates = sorted(
-        (HOME / ".gemini" / "antigravity" / "brain").glob("*/walkthrough.md"),
-        key=_core.safe_mtime,
-        reverse=True,
-    )
-    sources: dict[str, Path | None] = {
-        "codex_history": HOME / ".codex" / "history.jsonl",
-        "claude_history": HOME / ".claude" / "history.jsonl",
-        "opencode_history": HOME / ".local" / "state" / "opencode" / "prompt-history.jsonl",
-        "shell_zsh": HOME / ".zsh_history",
-        "antigravity_latest": antigravity_candidates[0] if antigravity_candidates else None,
-    }
-    result: dict[str, dict[str, object]] = {}
-    for name, path in sources.items():
-        if path is None:
-            result[name] = {"exists": False}
-            continue
-        p = Path(path)
-        result[name] = {
-            "exists": p.exists(),
-            "path": str(p),
-            "mtime": datetime.fromtimestamp(_core.safe_mtime(p)).isoformat() if p.exists() else None,
-        }
-    return result
+    return source_freshness_snapshot(HOME)
 
 
 def _remote_process_count() -> int:
@@ -692,7 +671,7 @@ def cmd_vector_sync(args: object) -> int:
     import time as _time  # noqa: PLC0415
 
     si = _get_session_index()
-    db_path = si.get_session_db_path()
+    db_path = si.ensure_session_db() if hasattr(si, "ensure_session_db") else si.get_session_db_path()
 
     try:
         from vector_index import embed_pending_session_docs, get_vector_db_path, vector_available  # noqa: PLC0415
@@ -701,14 +680,14 @@ def cmd_vector_sync(args: object) -> int:
             from .vector_index import embed_pending_session_docs, get_vector_db_path, vector_available  # type: ignore[import-not-found]  # noqa: PLC0415, I001
         except ImportError:
             print(
-                "Error: vector dependencies not installed. Run: pip install contextgo[vector] / 错误：向量依赖未安装，请运行：pip install contextgo[vector]",
+                'Error: vector dependencies not installed. Run: pipx install "contextgo[vector]" / 错误：向量依赖未安装，请运行：pipx install "contextgo[vector]"',
                 file=sys.stderr,
             )
             return 1
 
     if not vector_available():
         print(
-            "Error: model2vec or numpy not available. Run: pip install contextgo[vector] / 错误：model2vec 或 numpy 不可用，请运行：pip install contextgo[vector]",
+            'Error: model2vec or numpy not available. Run: pipx install "contextgo[vector]" / 错误：model2vec 或 numpy 不可用，请运行：pipx install "contextgo[vector]"',
             file=sys.stderr,
         )
         return 1
@@ -744,7 +723,7 @@ def cmd_vector_status(args: object) -> int:
             from .vector_index import get_vector_db_path, vector_status  # type: ignore[import-not-found]  # noqa: PLC0415, I001
         except ImportError:
             print(
-                "Error: vector dependencies not installed. Run: pip install contextgo[vector] / 错误：向量依赖未安装，请运行：pip install contextgo[vector]",
+                'Error: vector dependencies not installed. Run: pipx install "contextgo[vector]" / 错误：向量依赖未安装，请运行：pipx install "contextgo[vector]"',
                 file=sys.stderr,
             )
             return 1
@@ -752,6 +731,17 @@ def cmd_vector_status(args: object) -> int:
     vdb = get_vector_db_path(db_path)
     status = vector_status(db_path, vdb)
     _print_json(status)
+    return 0
+
+
+def cmd_sources(args: object) -> int:
+    """Print detected source platforms and adapter status."""
+    try:
+        from source_adapters import source_inventory  # noqa: PLC0415
+    except ImportError:
+        from .source_adapters import source_inventory  # type: ignore[import-not-found]  # noqa: PLC0415, I001
+
+    _print_json(source_inventory(HOME), pretty=True)
     return 0
 
 
@@ -906,6 +896,7 @@ COMMANDS: dict[str, object] = {
     "health": cmd_health,
     "vector-sync": cmd_vector_sync,
     "vector-status": cmd_vector_status,
+    "sources": cmd_sources,
     "q": cmd_q,
     "shell-init": cmd_shell_init,
 }
@@ -1023,6 +1014,9 @@ def build_parser() -> object:
 
     # vector-status
     sub.add_parser("vector-status", help="Show vector index statistics")
+
+    # sources
+    sub.add_parser("sources", help="Show detected source platforms and adapter status")
 
     # q (quick recall)
     p = sub.add_parser("q", help="Quick recall — search or session ID lookup")

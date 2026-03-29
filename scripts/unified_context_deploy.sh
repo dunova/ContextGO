@@ -11,9 +11,11 @@
 # Environment variables:
 #   CONTEXTGO_INSTALL_ROOT    Installation root  (default: ~/.local/share/contextgo)
 #   CONTEXTGO_STORAGE_ROOT    Storage root       (default: ~/.contextgo)
+#   CONTEXTGO_BIN_DIR         CLI shim dir       (default: ~/.local/bin)
 #   PATCH_LAUNCHD             Patch plists       (default: 1)
 #   RELOAD_LAUNCHD            Reload agents      (default: 1)
 #   APPLY_CONTEXT_POLICY      Apply CF policy    (default: 1)
+#   CREATE_CONTEXTGO_SHIM     auto|force|0       (default: auto)
 set -euo pipefail
 umask 077
 
@@ -27,9 +29,11 @@ launchd plists, and optionally reload LaunchAgents.
 Environment variables:
   CONTEXTGO_INSTALL_ROOT  Installation root (default: ~/.local/share/contextgo)
   CONTEXTGO_STORAGE_ROOT  Storage root      (default: ~/.contextgo)
+  CONTEXTGO_BIN_DIR       CLI shim dir      (default: ~/.local/bin)
   PATCH_LAUNCHD           Patch plists: 1=yes, 0=no  (default: 1)
   RELOAD_LAUNCHD          Reload agents: 1=yes, 0=no  (default: 1)
   APPLY_CONTEXT_POLICY    Apply context-first policy  (default: 1)
+  CREATE_CONTEXTGO_SHIM   auto|force|0  (default: auto)
 EOF
     exit 0
 }
@@ -48,12 +52,16 @@ INSTALL_ROOT="${CONTEXTGO_INSTALL_ROOT:-$HOME_DIR/.local/share/contextgo}"
 readonly INSTALL_ROOT
 CONTEXTGO_STORAGE_ROOT="${CONTEXTGO_STORAGE_ROOT:-$HOME_DIR/.contextgo}"
 readonly CONTEXTGO_STORAGE_ROOT
+CONTEXTGO_BIN_DIR="${CONTEXTGO_BIN_DIR:-$HOME_DIR/.local/bin}"
+readonly CONTEXTGO_BIN_DIR
 PATCH_LAUNCHD="${PATCH_LAUNCHD:-1}"
 readonly PATCH_LAUNCHD
 RELOAD_LAUNCHD="${RELOAD_LAUNCHD:-1}"
 readonly RELOAD_LAUNCHD
 APPLY_CONTEXT_POLICY="${APPLY_CONTEXT_POLICY:-1}"
 readonly APPLY_CONTEXT_POLICY
+CREATE_CONTEXTGO_SHIM="${CREATE_CONTEXTGO_SHIM:-auto}"
+readonly CREATE_CONTEXTGO_SHIM
 
 log() { printf '[deploy] %s\n' "$*"; }
 
@@ -89,6 +97,58 @@ chmod 700 "$CONTEXTGO_STORAGE_ROOT" "$CONTEXTGO_STORAGE_ROOT/logs" 2>/dev/null |
 sync_dir "$REPO_ROOT/scripts"   "$INSTALL_ROOT/scripts"
 sync_dir "$REPO_ROOT/templates" "$INSTALL_ROOT/templates"
 log "installed canonical runtime at: $INSTALL_ROOT"
+
+resolve_python3() {
+    local candidate
+    for candidate in \
+        /opt/homebrew/opt/python@3.13/libexec/bin/python3 \
+        /opt/homebrew/opt/python@3.12/libexec/bin/python3 \
+        /opt/homebrew/opt/python@3.11/libexec/bin/python3
+    do
+        if [ -x "$candidate" ]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+    command -v python3
+}
+
+maybe_create_contextgo_shim() {
+    local mode="$1" python_bin shim_path existing_bin
+    python_bin="$(resolve_python3)"
+    shim_path="$CONTEXTGO_BIN_DIR/contextgo"
+    mkdir -p "$CONTEXTGO_BIN_DIR"
+    existing_bin="$(command -v contextgo 2>/dev/null || true)"
+
+    if [ "$mode" = "0" ]; then
+        log "skipping contextgo shim creation (CREATE_CONTEXTGO_SHIM=0)"
+        return 0
+    fi
+
+    if [ "$mode" = "auto" ] && [ -n "$existing_bin" ] && [ "$existing_bin" != "$shim_path" ]; then
+        log "leaving existing contextgo on PATH untouched: $existing_bin"
+        return 0
+    fi
+
+    cat >"$shim_path" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+exec "$python_bin" "$INSTALL_ROOT/scripts/context_cli.py" "\$@"
+EOF
+    chmod 755 "$shim_path"
+    log "installed contextgo shim at: $shim_path"
+
+    case ":$PATH:" in
+        *":$CONTEXTGO_BIN_DIR:"*)
+            ;;
+        *)
+            log "PATH does not contain $CONTEXTGO_BIN_DIR"
+            log "add it with: export PATH=\"$CONTEXTGO_BIN_DIR:\$PATH\""
+            ;;
+    esac
+}
+
+maybe_create_contextgo_shim "$CREATE_CONTEXTGO_SHIM"
 
 if [ "$APPLY_CONTEXT_POLICY" = "1" ] && \
    [ -f "$REPO_ROOT/scripts/apply_context_first_policy.sh" ]; then
@@ -258,4 +318,5 @@ PY
 fi
 
 bash "$INSTALL_ROOT/scripts/context_healthcheck.sh" --quiet || true
+log "verify with: contextgo health"
 log "unified context deploy done"

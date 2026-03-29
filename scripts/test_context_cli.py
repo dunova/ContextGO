@@ -244,6 +244,46 @@ class ContextCliTests(unittest.TestCase):
         printed = "\n".join(" ".join(str(x) for x in call.args) for call in mock_print.call_args_list)
         self.assertIn('"source_freshness": {', printed)
 
+    def test_vector_sync_bootstraps_session_db_before_embedding(self) -> None:
+        args = context_cli.build_parser().parse_args(["vector-sync"])
+        session_db = Path("/tmp/test_session.db")
+        session_index = mock.Mock()
+        session_index.ensure_session_db.return_value = session_db
+
+        fake_vector = mock.Mock()
+        fake_vector.vector_available.return_value = True
+        fake_vector.get_vector_db_path.return_value = Path("/tmp/vector_index.db")
+        fake_vector.embed_pending_session_docs.return_value = {"embedded": 0, "skipped": 0, "deleted": 0}
+
+        with (
+            mock.patch.object(context_cli, "_get_session_index", return_value=session_index),
+            mock.patch.dict(sys.modules, {"vector_index": fake_vector}),
+            mock.patch("builtins.print"),
+        ):
+            rc = context_cli.run(args)
+
+        self.assertEqual(rc, 0)
+        session_index.ensure_session_db.assert_called_once()
+        fake_vector.embed_pending_session_docs.assert_called_once_with(
+            session_db,
+            Path("/tmp/vector_index.db"),
+            force=False,
+        )
+
+    def test_sources_command_prints_inventory(self) -> None:
+        args = context_cli.build_parser().parse_args(["sources"])
+        inventory = {"platforms": [{"platform": "opencode", "detected": True}], "discovered_sources": {}}
+
+        with (
+            mock.patch.dict(sys.modules, {"source_adapters": mock.Mock(source_inventory=mock.Mock(return_value=inventory))}),
+            mock.patch("builtins.print") as mock_print,
+        ):
+            rc = context_cli.run(args)
+
+        self.assertEqual(rc, 0)
+        printed = "\n".join(" ".join(str(x) for x in call.args) for call in mock_print.call_args_list)
+        self.assertIn('"platform": "opencode"', printed)
+
     def test_package_import_context_cli(self) -> None:
         sys.path.insert(0, str(SCRIPT_DIR.parent))
         try:

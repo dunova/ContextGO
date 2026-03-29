@@ -1241,14 +1241,16 @@ class SessionTracker:
             latest_mtime = 0.0
             for doc in brain_docs:
                 candidate = sdir / doc
-                if candidate.exists():
-                    try:
-                        m = candidate.stat().st_mtime
-                    except OSError:
-                        m = 0.0
-                    if m > latest_mtime:
-                        latest_mtime = m
-                        wt = candidate
+                try:
+                    st = candidate.stat()
+                    if not stat.S_ISREG(st.st_mode):
+                        continue
+                    m = candidate.stat().st_mtime
+                except OSError:
+                    m = 0.0
+                if m > latest_mtime:
+                    latest_mtime = m
+                    wt = candidate
             if wt is None:
                 continue
 

@@ -14,6 +14,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import session_index
+import source_adapters
 
 
 class SessionIndexTests(unittest.TestCase):
@@ -890,6 +891,47 @@ class SessionIndexParserTests(unittest.TestCase):
                 )
                 stats2 = session_index.sync_session_index(force=True)
                 self.assertEqual(stats2["updated"], 1)
+
+    def test_sync_rechecks_immediately_when_adapter_dirty(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            storage = root / ".contextgo"
+            db_path = storage / "index" / "session_index.db"
+            with (
+                mock.patch.object(session_index, "_home", return_value=root),
+                mock.patch.object(source_adapters, "_home", return_value=root),
+                mock.patch.dict(
+                    os.environ,
+                    {
+                        session_index.SESSION_DB_PATH_ENV: str(db_path),
+                        "CONTEXTGO_STORAGE_ROOT": str(storage),
+                    },
+                    clear=False,
+                ),
+            ):
+                first = session_index.sync_session_index(force=True)
+                self.assertEqual(first["added"], 0)
+
+                opdb = root / ".local" / "share" / "opencode" / "opencode.db"
+                opdb.parent.mkdir(parents=True, exist_ok=True)
+                conn = sqlite3.connect(opdb)
+                conn.execute(
+                    "CREATE TABLE session (id TEXT PRIMARY KEY, title TEXT, directory TEXT, time_created INTEGER, time_updated INTEGER)"
+                )
+                conn.execute("CREATE TABLE part (session_id TEXT, id TEXT PRIMARY KEY, data TEXT, time_created INTEGER)")
+                conn.execute(
+                    "INSERT INTO session VALUES (?, ?, ?, ?, ?)",
+                    ("ses_adapter", "Adapter Session", "/tmp/demo", 1700001000000, 1700001005000),
+                )
+                conn.execute(
+                    "INSERT INTO part VALUES (?, ?, ?, ?)",
+                    ("ses_adapter", "prt_adapter", json.dumps({"type": "text", "text": "adapter incremental content updated"}), 1700001001000),
+                )
+                conn.commit()
+                conn.close()
+
+                second = session_index.sync_session_index(force=False)
+                self.assertEqual(second["added"], 1)
 
     # ------------------------------------------------------------------
     # _is_noise_text

@@ -86,6 +86,14 @@ Each monitor controls whether the daemon watches a specific source. Boolean valu
 | `CONTEXTGO_ENABLE_KILO_MONITOR` | `0` | Monitor Kilo prompt history (disabled by default). |
 | `CONTEXTGO_ENABLE_REMOTE_SYNC` | `0` | Push history to the remote sync server. Requires `CONTEXTGO_REMOTE_URL`. |
 
+`contextgo health`, `contextgo sources`, and `contextgo search` also run the
+adapter discovery layer, which can absorb supported local tool stores even when
+their daemon monitor is disabled. Today this includes:
+
+- OpenCode session DBs
+- Kilo local storage
+- OpenClaw session JSONL roots
+
 ---
 
 ## Daemon — timing and resources
