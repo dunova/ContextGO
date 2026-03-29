@@ -90,7 +90,7 @@ class SessionIndexTests(unittest.TestCase):
                                 "type": "event_msg",
                                 "payload": {
                                     "type": "user_message",
-                                    "message": "先做 onecontext 预热，再继续 NotebookLM 方案调研",
+                                    "message": "先做 ContextGO 预热，再继续 NotebookLM 方案调研",
                                 },
                             }
                         ),
