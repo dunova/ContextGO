@@ -464,7 +464,7 @@ class TestIndexStats(unittest.TestCase):
             db_path = Path(tmpdir) / "memory_index.db"
             with mock.patch.dict(os.environ, {"MEMORY_INDEX_DB_PATH": str(db_path)}, clear=False):
                 stats = memory_index.index_stats()
-            self.assertIn("db_path", stats)
+            self.assertIn("db_name", stats)
             self.assertIn("total_observations", stats)
             self.assertIn("latest_epoch", stats)
             self.assertIsInstance(stats["total_observations"], int)

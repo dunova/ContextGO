@@ -1149,7 +1149,7 @@ class MemoryIndexTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             with mock.patch.dict(os.environ, self._make_db_env(tmpdir), clear=False):
                 stats = self.memory_index.index_stats()
-        self.assertIn("db_path", stats)
+        self.assertIn("db_name", stats)
         self.assertIn("total_observations", stats)
         self.assertIn("latest_epoch", stats)
         self.assertEqual(stats["total_observations"], 0)
