@@ -175,14 +175,16 @@ def _setup_logging() -> None:
 
 _httpx: Any = None  # populated by _import_httpx()
 _HTTPX_AVAILABLE: bool = False
+_httpx_import_attempted: bool = False
 
 
 def _import_httpx() -> bool:
     """Lazily import httpx on first use; return True if available."""
-    global _httpx, _HTTPX_AVAILABLE
+    global _httpx, _HTTPX_AVAILABLE, _httpx_import_attempted
     if _HTTPX_AVAILABLE:
         return True
-    if _httpx is None:  # not yet attempted
+    if not _httpx_import_attempted:
+        _httpx_import_attempted = True
         try:
             import httpx as _httpx_mod  # noqa: PLC0415
 

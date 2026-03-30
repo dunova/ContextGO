@@ -111,15 +111,18 @@ class TestHttpxImportFailure(unittest.TestCase):
         # This is already the case in most test environments, but we can verify
         # the module attribute and test the SessionTracker init path.
         original_httpx = context_daemon._HTTPX_AVAILABLE
+        original_attempted = context_daemon._httpx_import_attempted
         try:
             context_daemon._HTTPX_AVAILABLE = False
             context_daemon._httpx = None
+            context_daemon._httpx_import_attempted = True  # prevent re-import
             with patch.object(context_daemon, "ENABLE_REMOTE_SYNC", True):
                 # Should create tracker without HTTP client since httpx unavailable
                 tracker = _make_tracker()
                 self.assertIsNone(tracker._http_client)
         finally:
             context_daemon._HTTPX_AVAILABLE = original_httpx
+            context_daemon._httpx_import_attempted = original_attempted
 
 
 # ---------------------------------------------------------------------------

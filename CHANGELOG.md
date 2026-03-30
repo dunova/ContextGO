@@ -9,6 +9,38 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.11.9] — 2026-03-30
+
+### Security / 安全
+- **Rust mmap TOCTOU safety**: Added post-mmap length verification; fallback to BufReader on mismatch / Rust mmap 映射后验证长度，不匹配时降级为 BufReader
+- **DB file permissions**: New databases created with 0o600 (user-only read/write) / 新建数据库文件权限 0o600
+- **Extended secret redaction**: Added Anthropic (`sk-ant-`), GitLab (`glpat-`), npm (`npm_`) token patterns / 新增 3 种密钥脱敏模式
+- **Error message hardening**: Removed DB file paths from ATTACH DATABASE error messages / 错误消息不再泄露数据库路径
+
+### Performance / 性能
+- **Regex precompilation**: 4 regexes in `build_query_terms` promoted to module-level constants / `build_query_terms` 中 4 个正则提升为模块级常量
+- **N+1 query elimination**: `memory_index` sync now bulk-loads existing records / `memory_index` 同步改为批量加载消除 N+1
+- **`_rank_rows` optimization**: Replaced 24KB string concatenation with independent `in` checks / 排名函数避免大字符串拼接
+- **`_sanitize_text` fast-path**: Skip 26 regex patterns when no marker substrings present / 无标记子串时跳过全部正则
+
+### Reliability / 可靠性
+- **SQLite connection management**: `vector_index` now uses `_open_vdb` context manager with WAL + busy_timeout / 向量索引统一连接管理
+- **OOM protection**: Vector search adds LIMIT to prevent full-table matrix load / 向量搜索加 LIMIT 防 OOM
+- **`.tmp` file cleanup**: `_export()` cleans up temporary files on `os.replace` failure / 导出失败时清理临时文件
+- **Read-path decoupling**: Search and health no longer require writable DB for sync / 搜索和健康检查不再要求可写权限
+
+### Code Quality / 代码质量
+- **`REPO_ROOT` fix**: `context_native.py` now correctly resolves to project root (`parents[2]`) / 修复原生组件根目录解析
+- **`build_parser` refactor**: Split 356-line function into per-command helpers / 拆分 356 行函数
+- **`_scandir_files` simplification**: Reduced nesting from 9 to 3 layers via helper extraction / 嵌套层级从 9 降至 3
+- **Narrower exception handling**: Bare `except Exception` replaced with specific types + logging / 异常处理收窄
+- **Unified logger naming**: All modules now use `_logger = logging.getLogger(__name__)` / 统一日志命名
+- **Magic number extraction**: Time constants (3600s, 86400s, etc.) promoted to named constants / 魔法数字提取
+- **`__all__` completeness**: Added exports to `session_index`, `context_daemon`, `context_core`, `__init__` / 补全模块导出声明
+- **httpx lazy import**: Deferred heavy library load until remote sync actually needed / httpx 延迟导入
+
+---
+
 ## [0.11.8] — 2026-03-30
 
 ### Changed / 变更
