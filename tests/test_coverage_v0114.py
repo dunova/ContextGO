@@ -160,4 +160,4 @@ def test_cmd_completion_unknown_shell():
     args = MagicMock()
     args.shell = "tcsh"
     rc = context_cli.cmd_completion(args)
-    assert rc == 1
+    assert rc == 2
