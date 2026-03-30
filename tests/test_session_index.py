@@ -3050,3 +3050,41 @@ class TestSearchRowsAnchorTermFallback(unittest.TestCase):
         # Verify anchor fallback was triggered (3+ rank calls) and result is a list
         self.assertIsInstance(results, list)
         self.assertGreaterEqual(call_count[0], 2)
+
+
+class TestHighlightQuery(unittest.TestCase):
+    """Tests for _highlight_query search result highlighting."""
+
+    def test_highlight_adds_bold_on_tty(self) -> None:
+        with mock.patch("session_index.sys") as mock_sys:
+            mock_sys.stdout.isatty.return_value = True
+            result = session_index._highlight_query("The quick brown fox", "quick")
+        self.assertIn("\033[1m", result)
+        self.assertIn("quick", result)
+        self.assertIn("\033[0m", result)
+
+    def test_highlight_noop_when_not_tty(self) -> None:
+        with mock.patch("session_index.sys") as mock_sys:
+            mock_sys.stdout.isatty.return_value = False
+            result = session_index._highlight_query("The quick brown fox", "quick")
+        self.assertNotIn("\033[1m", result)
+        self.assertEqual(result, "The quick brown fox")
+
+    def test_highlight_case_insensitive(self) -> None:
+        with mock.patch("session_index.sys") as mock_sys:
+            mock_sys.stdout.isatty.return_value = True
+            result = session_index._highlight_query("Authentication token", "auth")
+        self.assertIn("\033[1m", result)
+        self.assertIn("Auth", result)
+
+    def test_highlight_skips_short_terms(self) -> None:
+        with mock.patch("session_index.sys") as mock_sys:
+            mock_sys.stdout.isatty.return_value = True
+            result = session_index._highlight_query("I am here", "I")
+        self.assertNotIn("\033[1m", result)
+
+    def test_highlight_empty_query(self) -> None:
+        with mock.patch("session_index.sys") as mock_sys:
+            mock_sys.stdout.isatty.return_value = True
+            result = session_index._highlight_query("Some text", "")
+        self.assertEqual(result, "Some text")
