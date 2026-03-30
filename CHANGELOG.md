@@ -15,6 +15,20 @@ _No unreleased changes._
 
 ---
 
+## [0.11.3] — 2026-03-30
+
+### Added / 新增
+- **`__init__.py` exports**: Added `__all__` and `__version__` for proper package API / 添加包导出定义
+- **Module docstrings**: Added to `context_core`, `session_index`, `context_daemon` / 核心模块补充文档字符串
+- **`docs/RELEASE_NOTES_0.11.1.md`**: Added missing release notes / 补充缺失的发布说明
+- **CI wheel validation**: Build and install wheel in verify.yml to catch packaging issues / CI中构建并安装wheel验证
+
+### Fixed / 修复
+- **CI smoke test**: Added `--sandbox` flag to smoke step in verify.yml / CI冒烟测试添加沙箱标志
+- **`.gitignore` completeness**: Added `.mypy_cache/`, `htmlcov/`, `.coverage`, and other cache patterns / 补充缓存忽略规则
+
+---
+
 ## [0.11.2] — 2026-03-30
 
 ### Fixed / 修复
