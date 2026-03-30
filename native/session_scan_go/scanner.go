@@ -18,11 +18,16 @@ import (
 // Files smaller than this are read with a pooled bufio.Scanner instead.
 const mmapThreshold = 1024 * 1024 // 1 MB
 
+// scannerBufSize is the fixed buffer size used for bufio.Scanner.  It must be
+// >= the max token size (32 MiB) so that Scanner never needs to grow the
+// buffer, which would invalidate the pool aliasing assumption.
+const scannerBufSize = 32 * 1024 * 1024
+
 // scannerBufPool pools the large scanner buffers used in ProcessFile to reduce
 // GC pressure when many files are processed in parallel.
 var scannerBufPool = sync.Pool{
 	New: func() any {
-		b := make([]byte, 0, 1024*1024)
+		b := make([]byte, scannerBufSize)
 		return &b
 	},
 }
@@ -256,7 +261,6 @@ func (s *SessionScanner) ProcessFile(item WorkItem, query string) (SessionSummar
 		}
 
 		var payload map[string]any
-		lineStr := string(lineBytes)
 		if err := json.Unmarshal(lineBytes, &payload); err == nil {
 			if shouldSkipRecordType(payload) {
 				return true
@@ -294,7 +298,9 @@ func (s *SessionScanner) ProcessFile(item WorkItem, query string) (SessionSummar
 				}
 			}
 		} else if !matcher.QueryEmpty() && queryMatches {
-			// Raw (non-JSON) line: use the string form for snippet extraction.
+			// Raw (non-JSON) line: convert to string only when needed for
+			// snippet extraction (avoids allocation on every JSON line).
+			lineStr := string(lineBytes)
 			if snippet, ok := matcher.Match(lineStr); ok {
 				score := candidateScore("raw_line", lineStr, queryLower)
 				if score > summary.MatchScore {
@@ -353,14 +359,23 @@ func (s *SessionScanner) ProcessFile(item WorkItem, query string) (SessionSummar
 // be excluded).
 func (s *SessionScanner) processWithScanner(f *os.File, path string, fn func([]byte) bool) (abort bool) {
 	// Borrow a reusable buffer from the pool to avoid the dominant large
-	// allocation (1 MB scan buffer) on every call.
+	// allocation (32 MiB scan buffer) on every call.
+	// The buffer is pre-allocated at scannerBufSize (>= maxTokenSize) so that
+	// bufio.Scanner never needs to grow it; this prevents pool aliasing bugs
+	// where Scanner's internal growth would make our stored slice header stale.
 	bufPtr := scannerBufPool.Get().(*[]byte)
-	scanBuf := (*bufPtr)[:0]
+	buf := *bufPtr
+	if cap(buf) < scannerBufSize {
+		// Should not happen given the New func above, but guard defensively.
+		buf = make([]byte, scannerBufSize)
+	}
 
 	// bufio.Scanner has no Reset method; create a new instance backed by the
 	// pooled buffer so only the small Scanner struct is allocated per call.
+	// Pass buf[:0] (len=0, cap=scannerBufSize) so Scanner uses buf as-is and
+	// never allocates a new backing array.
 	sc := bufio.NewScanner(f)
-	sc.Buffer(scanBuf, 32*1024*1024)
+	sc.Buffer(buf[:0], scannerBufSize)
 
 	for sc.Scan() {
 		raw := sc.Bytes()
@@ -381,8 +396,10 @@ func (s *SessionScanner) processWithScanner(f *os.File, path string, fn func([]b
 		fmt.Fprintf(os.Stderr, "scan %s: %v\n", path, err)
 	}
 
-	// Return the buffer to the pool; sc.Buffer may have grown it.
-	*bufPtr = scanBuf[:0]
+	// Return the original buffer to the pool unchanged.  Because cap(buf) >=
+	// scannerBufSize the Scanner never reallocated, so buf still points to the
+	// same backing array we borrowed.
+	*bufPtr = buf
 	scannerBufPool.Put(bufPtr)
 	return abort
 }
@@ -511,14 +528,23 @@ func (f *NoiseFilter) IsNoiseLower(line string) bool {
 	}
 
 	// Heuristic: many short spaceless tokens suggest a directory listing or
-	// skill manifest.
+	// skill manifest.  Only split on "\n" when the line actually contains one
+	// to avoid allocating a slice for the common single-line case.
 	shortTokens := 0
-	for _, part := range strings.Split(line, "\n") {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
+	if strings.Contains(line, "\n") {
+		for _, part := range strings.Split(line, "\n") {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			if len(part) <= 40 && !strings.Contains(part, " ") &&
+				strings.Count(part, "/") < 2 && strings.Count(part, "-") <= 3 {
+				shortTokens++
+			}
 		}
-		if len(part) <= 40 && !strings.Contains(part, " ") &&
+	} else {
+		part := strings.TrimSpace(line)
+		if part != "" && len(part) <= 40 && !strings.Contains(part, " ") &&
 			strings.Count(part, "/") < 2 && strings.Count(part, "-") <= 3 {
 			shortTokens++
 		}

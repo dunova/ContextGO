@@ -458,13 +458,16 @@ class Handler(BaseHTTPRequestHandler):
                 },
             )
             return
+        safe_stats = {
+            k: v for k, v in stats.items() if k != "db_name"
+        }
         self._send_json(
             200,
             {
                 "ok": True,
                 "checked_at": datetime.now(timezone.utc).isoformat(),
                 "sync": sync,
-                **stats,
+                **safe_stats,
             },
         )
 
@@ -512,10 +515,13 @@ class Handler(BaseHTTPRequestHandler):
             if _SHUTDOWN_EVENT.is_set():
                 break
             try:
+                _sse_stats = {
+                    k: v for k, v in index_stats().items() if k != "db_name"
+                }
                 data: dict[str, Any] = {
                     "at": datetime.now(timezone.utc).isoformat(),
                     "sync": _maybe_sync_index(),
-                    **index_stats(),
+                    **_sse_stats,
                 }
                 self.wfile.write(f"data: {json.dumps(data, ensure_ascii=False)}\n\n".encode())
                 self.wfile.flush()

@@ -345,10 +345,14 @@ impl Scanner {
         work_items: &[WorkItem],
         pattern: &QueryPattern,
     ) -> (Vec<SessionSummary>, Vec<anyhow::Error>) {
+        // Compute the active working directory once here to avoid one
+        // canonicalize() syscall per file inside the Rayon worker threads.
+        let current_workdir = active_workdir();
+
         // Collect in parallel; Rayon handles chunking internally.
         let results: Vec<_> = work_items
             .par_iter()
-            .map(|item| process_file(item, pattern))
+            .map(|item| process_file(item, pattern, &current_workdir))
             .collect();
 
         // Pre-allocate with a conservative estimate: roughly half the files
@@ -561,7 +565,14 @@ fn main() -> Result<()> {
 ///
 /// Files larger than [`MMAP_THRESHOLD_BYTES`] are memory-mapped to reduce
 /// read() syscall overhead on large session archives.
-fn process_file(item: &WorkItem, pattern: &QueryPattern) -> Result<SessionSummary> {
+///
+/// `current_workdir` is pre-computed by the caller (once per scan) to avoid
+/// redundant canonicalize() syscalls across thousands of parallel workers.
+fn process_file(
+    item: &WorkItem,
+    pattern: &QueryPattern,
+    current_workdir: &Option<String>,
+) -> Result<SessionSummary> {
     let file = File::open(&item.path)
         .with_context(|| format!("Cannot open session file {}", item.path.display()))?;
     let metadata = file
@@ -580,7 +591,7 @@ fn process_file(item: &WorkItem, pattern: &QueryPattern) -> Result<SessionSummar
         let mmap = unsafe { memmap2::Mmap::map(&file) };
         match mmap {
             Ok(map) => {
-                return process_file_bytes(item, &map, file_size, pattern);
+                return process_file_bytes(item, &map, file_size, pattern, current_workdir);
             }
             Err(_) => {
                 // mmap failed (e.g. permission denied or special file) — fall
@@ -591,7 +602,7 @@ fn process_file(item: &WorkItem, pattern: &QueryPattern) -> Result<SessionSummar
 
     // Buffered-reader path for small files (< 256 KB).
     let reader = BufReader::with_capacity(256 * 1024, file);
-    process_file_reader(item, reader, file_size, pattern)
+    process_file_reader(item, reader, file_size, pattern, current_workdir)
 }
 
 /// Shared scan logic for the memory-mapped path.
@@ -604,9 +615,9 @@ fn process_file_bytes(
     data: &[u8],
     file_size: u64,
     pattern: &QueryPattern,
+    current_workdir: &Option<String>,
 ) -> Result<SessionSummary> {
-    let current_workdir = active_workdir();
-    let mut ctx = ScanContext::new(item, pattern, &current_workdir);
+    let mut ctx = ScanContext::new(item, pattern, current_workdir);
 
     for raw_line in data.split(|&b| b == b'\n') {
         // Skip empty lines without a UTF-8 decode.
@@ -638,9 +649,9 @@ fn process_file_reader(
     reader: BufReader<File>,
     file_size: u64,
     pattern: &QueryPattern,
+    current_workdir: &Option<String>,
 ) -> Result<SessionSummary> {
-    let current_workdir = active_workdir();
-    let mut ctx = ScanContext::new(item, pattern, &current_workdir);
+    let mut ctx = ScanContext::new(item, pattern, current_workdir);
 
     for raw in reader.lines() {
         let line = match raw {
@@ -842,10 +853,16 @@ fn matched_snippet_with_pattern(
 
     // Fast ASCII path: when both text and query are ASCII, byte offsets equal
     // char offsets, so we avoid the expensive chars().count() scan entirely.
+    // We also avoid a per-call heap allocation by using a case-insensitive
+    // window comparison directly on the raw bytes instead of lowercasing into
+    // a Vec<u8>.
     if pattern.is_ascii && trimmed.is_ascii() {
-        let lower_bytes: Vec<u8> = trimmed.bytes().map(|b| b.to_ascii_lowercase()).collect();
-        let byte_idx = pattern.finder.find(&lower_bytes)?;
-        let query_len = pattern.lower.len(); // == char len for ASCII
+        let needle = pattern.lower.as_bytes();
+        let haystack = trimmed.as_bytes();
+        let byte_idx = haystack
+            .windows(needle.len())
+            .position(|w| w.eq_ignore_ascii_case(needle))?;
+        let query_len = needle.len(); // == char len for ASCII
         return Some(clip_snippet_ascii(trimmed, byte_idx, query_len, limit));
     }
 
@@ -1246,6 +1263,14 @@ fn should_report_error(err: &anyhow::Error) -> bool {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::sync::Mutex;
+
+    /// Global mutex that serialises every test which calls `std::env::set_var`
+    /// or `std::env::remove_var`.  Taking this lock before mutating the process
+    /// environment prevents data races when `cargo test` runs tests in parallel
+    /// (the default).  All guards are held for the duration of the test and
+    /// dropped (released) when the test returns.
+    static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
     #[test]
     fn nested_str_navigates_nested_structures() {
@@ -1382,11 +1407,15 @@ mod tests {
 
     #[test]
     fn active_workdir_prefers_explicit_env() {
-        // Use a serial-safe approach: store, set, test, restore.
-        // This test is intentionally not run in parallel with others that
-        // mutate the same env var.
+        // Hold the global env mutex for the entire duration of this test so
+        // that no other test can race on CONTEXTGO_ACTIVE_WORKDIR.  This
+        // eliminates the undefined behaviour that arises when multiple threads
+        // call set_var / remove_var concurrently (Rust issue #27970).
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+
         let previous = std::env::var("CONTEXTGO_ACTIVE_WORKDIR").ok();
-        // SAFETY: single-threaded test binary; no other thread reads this var.
+        // SAFETY: we hold ENV_MUTEX, so no other thread concurrently reads or
+        // writes this environment variable while we hold the lock.
         unsafe {
             std::env::set_var("CONTEXTGO_ACTIVE_WORKDIR", "/tmp");
         }
@@ -1399,6 +1428,7 @@ mod tests {
                 None => std::env::remove_var("CONTEXTGO_ACTIVE_WORKDIR"),
             }
         }
+        // _guard is dropped here, releasing the mutex.
     }
 
     #[test]

@@ -51,11 +51,11 @@ format: ## Auto-format and auto-fix with ruff
 	$(RUFF) check --fix src/contextgo/ $(SCRIPTS)/ $(TESTS)/ $(BENCHMARKS)/
 
 type-check: ## Run mypy type checking (informational)
-	$(PYTHON) -m mypy $(SCRIPTS)/ --ignore-missing-imports || true
+	$(PYTHON) -m mypy src/contextgo/ --ignore-missing-imports || true
 
 dev-check: lint ## Full pre-commit check: syntax + lint
 	bash -n $(SCRIPTS)/*.sh
-	$(PYTHON) -m py_compile $(SCRIPTS)/*.py
+	$(PYTHON) -m py_compile src/contextgo/*.py $(SCRIPTS)/*.py
 
 # ---------------------------------------------------------------------------
 # Testing

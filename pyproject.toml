@@ -42,7 +42,6 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
-    "Topic :: Software Development :: Libraries",
     "Topic :: Software Development :: Build Tools",
     "Topic :: Utilities",
     "Typing :: Typed",
@@ -62,6 +61,7 @@ dev = [
     "bandit>=1.8",
     "safety>=3.3",
     "mypy>=1.10",
+    "numpy>=1.24",
 ]
 all = ["contextgo[remote,vector]"]
 
@@ -92,7 +92,6 @@ exclude = [
 
 [tool.hatch.build.targets.wheel.force-include]
 "config/noise_markers.json" = "config/noise_markers.json"
-"scripts" = "scripts"
 
 [tool.hatch.build.targets.sdist]
 include = [

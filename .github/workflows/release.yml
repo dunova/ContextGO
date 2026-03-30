@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: "release-${{ github.ref }}"
+  cancel-in-progress: false
+
 # ---------------------------------------------------------------------------
 # Release pipeline
 #

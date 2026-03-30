@@ -61,7 +61,7 @@ bash scripts/context_healthcheck.sh
 
 **Viewer 无法访问**
 
-**Symptom / 症状:** After running `context_cli serve`, `http://127.0.0.1:37677/api/health` returns a connection error.
+**Symptom / 症状:** After running `contextgo serve`, `http://127.0.0.1:37677/api/health` returns a connection error.
 
 **Cause / 原因:** Port conflict, stale process, or server bound to a non-loopback address without a token.
 

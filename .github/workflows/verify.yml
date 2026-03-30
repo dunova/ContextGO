@@ -60,7 +60,7 @@ jobs:
         run: |
           pip install --quiet safety
           if command -v safety >/dev/null 2>&1; then
-            safety check --stdin < requirements.txt
+            pip freeze | safety check --stdin
           else
             echo "ERROR: safety command not found after install" && exit 1
           fi
