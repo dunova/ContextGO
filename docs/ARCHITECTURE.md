@@ -103,9 +103,9 @@ ContextGO/
 
 ### 2. Index layer / 索引层
 
-`session_index.py` and `memory_index.py` maintain two independent SQLite databases under the storage root (`~/.contextgo/index/`). Session entries and memory observations are indexed separately to keep query paths clean. Search uses LIKE-based queries with optional WAL mode for concurrent access resilience.
+`session_index.py` and `memory_index.py` maintain two independent SQLite databases under the storage root (`~/.contextgo/index/`). Session entries and memory observations are indexed separately to keep query paths clean. Search uses FTS5 full-text search (BM25 ranked) as the primary path, with LIKE-based queries as an automatic fallback when the SQLite build does not include FTS5. WAL mode is enabled for concurrent access resilience.
 
-`session_index.py` 与 `memory_index.py` 在存储根目录下分别维护两个独立的 SQLite 数据库。会话条目与记忆观测分库存储，保持查询路径清晰。搜索使用基于 LIKE 的查询，可选 WAL 模式提升并发访问韧性。
+`session_index.py` 与 `memory_index.py` 在存储根目录下分别维护两个独立的 SQLite 数据库。会话条目与记忆观测分库存储，保持查询路径清晰。搜索以 FTS5 全文检索（BM25 排序）为首选路径，当 SQLite 构建不支持 FTS5 时自动降级为基于 LIKE 的查询。启用 WAL 模式提升并发访问韧性。
 
 ### 2a. Vector index layer / 向量索引层
 

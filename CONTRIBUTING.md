@@ -185,9 +185,9 @@ Test dependencies:
 
 - `CONTEXTGO_STORAGE_ROOT` defaults to `~/.contextgo`; confirm
   `src/contextgo/context_config.py` resolves correctly before running.
-- The installed-runtime smoke (`smoke_installed_runtime.py`) expects
-  `context_cli.py` at `~/.local/share/contextgo/src/contextgo` (or
-  `CONTEXTGO_INSTALL_ROOT`).
+- The installed-runtime smoke (`smoke_installed_runtime.py`) expects the
+  `contextgo` entry point to be on `PATH` (installed via `pipx` or `pip`).
+  Set `CONTEXTGO_INSTALL_ROOT` to override the detected install location.
 
 ---
 

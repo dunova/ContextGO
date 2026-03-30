@@ -1008,10 +1008,11 @@ def sync_session_index(force: bool = False) -> dict[str, int]:
             last_sync_epoch = int(last_sync_raw or "0")
         except (ValueError, TypeError):
             last_sync_epoch = 0
-        # External adapters may surface brand-new tools after the previous sync.
-        # Refresh them before enforcing the min-interval guard so newly installed
-        # platforms are searchable immediately instead of waiting for TTL expiry.
-        sync_all_adapters(_home())
+        # Fast-path throttle check: skip the expensive adapter refresh and full
+        # re-scan when the index was synced recently and no adapter has been dirtied.
+        # We intentionally read the *cached* adapter_dirty epoch here (without
+        # calling sync_all_adapters first) so that frequent search calls do not
+        # trigger a full filesystem scan on every invocation.
         adapter_dirty = adapter_dirty_epoch(_home())
         if (
             not force
@@ -1034,6 +1035,11 @@ def sync_session_index(force: bool = False) -> dict[str, int]:
                 "last_sync_epoch": last_sync_epoch,
                 "total_sessions": int(total or 0),
             }
+
+        # Throttle did not fire — we are about to do a full re-scan.  Only now
+        # refresh external adapters so newly installed platforms become searchable
+        # without waiting for the next TTL cycle.
+        sync_all_adapters(_home())
 
         _t_scan_start = time.monotonic()
         upsert_batch: list[tuple[Any, ...]] = []

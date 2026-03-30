@@ -15,6 +15,45 @@ _No unreleased changes._
 
 ---
 
+## [0.11.0] — 2026-03-30
+
+### Overview
+
+Security, performance, reliability, and developer-experience hardening release. API surface tightened to avoid path-disclosure via `db_path`, directory permissions hardened to `0o700`, URI injection guard extended to ATTACH DATABASE. Startup latency reduced with lazy `context_native` import, batch DML in sync paths, N+1 query elimination, and a temp-table stale-deletion strategy. Atomic file writes protect daemon export and all adapter files. Per-source fault isolation prevents one failing adapter from breaking the entire ingest pipeline. Timezone-aware datetimes eliminate ambiguous comparisons. New `--version` flag and friendly no-subcommand help improve first-run experience. pytest gate added to the release workflow; `safety` check added to verify.
+
+安全、性能、可靠性与开发体验全面加固版本。API 重命名 `db_path` → `db_name` 防止路径泄露，目录权限收紧至 `0o700`，ATTACH DATABASE URI 注入防护。懒加载 `context_native`、批量 DML、消除 N+1 查询、临时表加速陈旧数据清理。原子写入保护 daemon 导出和所有 adapter 文件。逐数据源容错隔离防止单源故障影响整体摄取。时区感知日期时间消除歧义比较。新增 `--version` 标志和友好的无子命令帮助文本。发布流程加入 pytest 门控，verify 流程加入 `safety` 安全检查。
+
+### Security
+
+- **API:** Rename `db_path` → `db_name` in public API to prevent internal path disclosure (安全：API 重命名，防止路径泄露)
+- **Hardening:** `0o700` permissions on all created directories in storage root (安全：目录权限收紧至 0o700)
+- **Injection guard:** ATTACH DATABASE URI injection guard using strict allowlist validation (安全：ATTACH DATABASE URI 注入防护)
+
+### Performance
+
+- **Startup:** Lazy `context_native` import — module only loaded when native scan is actually invoked (性能：懒加载 context_native，降低 CLI 冷启动延迟)
+- **Sync:** Batch DML in `sync_session_index()` using `executemany()` for upserts and deletes (性能：sync 批量 DML)
+- **Queries:** N+1 query elimination in session listing and adapter refresh paths (性能：消除 N+1 查询)
+- **Cleanup:** Temp table strategy for stale session deletion — single DELETE instead of per-row round-trips (性能：临时表加速陈旧数据删除)
+
+### Reliability
+
+- **Atomic writes:** Daemon export files and all adapter output files now use `os.open()` + `os.replace()` for atomic writes (可靠性：原子文件写入)
+- **Fault isolation:** Adapter ingest wraps each source in a try/except so a single failing adapter cannot abort the entire pipeline (可靠性：逐数据源容错隔离)
+- **Datetimes:** All `datetime.now()` calls replaced with timezone-aware `datetime.now(timezone.utc)` (可靠性：时区感知日期时间)
+
+### Added
+
+- `contextgo --version` flag for quick version inspection (新增：`--version` 标志)
+- Friendly no-subcommand help message when `contextgo` is invoked without arguments (新增：无子命令友好帮助)
+
+### CI
+
+- pytest gate added to `release.yml` — release cannot proceed if any test fails (CI：发布前 pytest 门控)
+- `safety` dependency audit added to `verify.yml` — known-vulnerable packages block verification (CI：verify 流程加入 safety 安全检查)
+
+---
+
 ## [0.10.1] — 2026-03-30
 
 ### Overview
@@ -534,7 +573,8 @@ Foundational release of the local-first `contextgo` runtime. All context capture
 
 ---
 
-[Unreleased]: https://github.com/dunova/ContextGO/compare/v0.10.1...HEAD
+[Unreleased]: https://github.com/dunova/ContextGO/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/dunova/ContextGO/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/dunova/ContextGO/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/dunova/ContextGO/compare/v0.9.37...v0.10.0
 [0.9.37]: https://github.com/dunova/ContextGO/compare/v0.9.6...v0.9.37

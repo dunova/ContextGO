@@ -342,6 +342,21 @@ def _source_freshness() -> dict[str, dict[str, object]]:
     return source_freshness_snapshot(HOME)
 
 
+def _safe_source_freshness() -> dict[str, object]:
+    """Wrapper around _source_freshness() that never raises.
+
+    Any exception is caught and surfaced as an ``"error"`` key so that
+    ``contextgo health`` continues to run even when an external source
+    (e.g. a corrupt OpenCode SQLite DB) throws.
+    """
+    try:
+        return _source_freshness()
+    except Exception as exc:  # noqa: BLE001
+        import logging  # noqa: PLC0415
+        logging.getLogger(__name__).warning("_source_freshness failed: %s", exc)
+        return {"error": f"source_freshness: error — {exc}"}
+
+
 def _remote_process_count() -> int:
     """Return the number of running contextgo-remote processes, or 0 on error."""
     import subprocess  # deferred: only needed for health command
@@ -592,20 +607,29 @@ def cmd_native_scan(args: object) -> int:
 def cmd_smoke(args: object) -> int:
     """Run the end-to-end smoke gate and print a JSON result summary."""
 
-    scripts_dir = Path(__file__).resolve().parent
-    cli_path = scripts_dir / "context_cli.py"
+    # Resolve the real location of this file (follows symlinks).
+    resolved_dir = Path(__file__).resolve().parent
+    # Also check the symlink's own directory (e.g. scripts/) in case the
+    # companion files have not been copied into the installed package.
+    symlink_dir = Path(__file__).parent
 
-    # e2e_quality_gate.py lives alongside context_cli.py in the scripts/ directory
-    # when running from source.  When installed via pip the wheel bundles the
-    # scripts/ tree at the same level, so the same relative path still works.
-    # If the file is not found (e.g. a minimal installation), skip the e2e gate.
-    e2e_gate_path = scripts_dir / "e2e_quality_gate.py"
+    cli_path = resolved_dir / "context_cli.py"
+    if not cli_path.exists():
+        cli_path = symlink_dir / "context_cli.py"
+
+    # e2e_quality_gate.py lives alongside context_cli.py.  When context_cli.py
+    # is invoked via a symlink from scripts/, __file__.parent points to scripts/
+    # while __file__.resolve().parent points to src/contextgo/.  Try both so
+    # the gate is found regardless of how the CLI is launched.
+    e2e_gate_path = resolved_dir / "e2e_quality_gate.py"
+    if not e2e_gate_path.exists():
+        e2e_gate_path = symlink_dir / "e2e_quality_gate.py"
     if not e2e_gate_path.exists():
         print(
-            '{"ok": true, "note": "e2e_quality_gate.py not found — skipped (installed mode)"}',
+            '{"ok": false, "note": "e2e_quality_gate.py not found — cannot run smoke test"}',
             flush=True,
         )
-        return 0
+        return 1
 
     smoke_args = (
         cli_path,
@@ -685,7 +709,7 @@ def cmd_health(args: object) -> int:
             "indexed_this_run": recall.get("sync"),
             "db": recall.get("session_index_db"),
         },
-        "source_freshness": _source_freshness(),
+        "source_freshness": _safe_source_freshness(),
         "local_memory_root": {
             "exists": memory_root_exists,
             "path": str(LOCAL_SHARED_ROOT),

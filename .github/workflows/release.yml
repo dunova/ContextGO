@@ -91,6 +91,45 @@ jobs:
             --cov-fail-under=97 \
             -v
 
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5  # v5
+        with:
+          go-version: "1.22"
+          cache-dependency-path: native/session_scan_go/go.mod
+
+      - name: Go vet
+        working-directory: native/session_scan_go
+        run: go vet ./...
+
+      - name: Go test
+        working-directory: native/session_scan_go
+        run: go test -race ./...
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
+        with:
+          components: clippy
+
+      - name: Cache Cargo
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            /tmp/contextgo_target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('native/session_scan/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Cargo clippy
+        run: |
+          cd native/session_scan
+          CARGO_TARGET_DIR=/tmp/contextgo_target cargo clippy -- -D warnings
+
+      - name: Cargo test
+        run: |
+          cd native/session_scan
+          CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=/tmp/contextgo_target cargo test
+
   # -------------------------------------------------------------------------
   # 3. Create GitHub Release
   # -------------------------------------------------------------------------

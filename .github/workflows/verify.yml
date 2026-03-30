@@ -59,7 +59,11 @@ jobs:
       - name: Safety dependency check
         run: |
           pip install --quiet safety
-          safety check --stdin < requirements.txt || true
+          if command -v safety >/dev/null 2>&1; then
+            safety check --stdin < requirements.txt
+          else
+            echo "ERROR: safety command not found after install" && exit 1
+          fi
 
       - name: Secret and path scan
         run: |

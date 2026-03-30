@@ -3,7 +3,7 @@
 ## Project / 项目
 
 ContextGO — local-first context and memory runtime for AI coding teams.
-Entry point: `python3 scripts/context_cli.py` (or `contextgo` if pip-installed)
+Entry point: `python3 src/contextgo/context_cli.py` (or `contextgo` if pip-installed)
 
 Auto-behaviors (search on uncertainty, save on milestones) are defined in `AGENTS.md`.
 自动行为（不确定时检索、里程碑时保存）规则见 `AGENTS.md`。
@@ -13,10 +13,10 @@ Auto-behaviors (search on uncertainty, save on milestones) are defined in `AGENT
 ## Architecture / 架构
 
 ```
-scripts/           Python core
+src/contextgo/     Python runtime package
   context_cli.py       CLI entry point (all commands)
   context_config.py    Env var resolution, storage root
-  session_index.py     SQLite session index (LIKE-based search)
+  session_index.py     SQLite session index (FTS5 primary, LIKE fallback)
   memory_index.py      Memory index, export/import
   context_daemon.py    Session capture and sanitization
   context_server.py    Local viewer API
@@ -24,6 +24,10 @@ scripts/           Python core
   context_native.py    Rust/Go backend orchestration
   context_smoke.py     Smoke test suite
   context_maintenance.py  Index cleanup and repair
+  vector_index.py      Optional hybrid vector search (model2vec + BM25 + RRF)
+  source_adapters.py   External tool auto-discovery + normalization
+tests/             Full automated test suite
+scripts/           Operational scripts and compatibility wrappers
 native/session_scan/       Rust hot-path binary
 native/session_scan_go/    Go parallel binary
 docs/              Full documentation suite
@@ -38,18 +42,18 @@ patches/           Compatibility notes (do not edit)
 ## Test Commands / 测试命令
 
 ```bash
-bash -n scripts/*.sh && python3 -m py_compile scripts/*.py
+bash -n scripts/*.sh && python3 -m py_compile src/contextgo/*.py
 
 python3 -m pytest \
-  scripts/test_context_cli.py \
-  scripts/test_context_core.py \
-  scripts/test_session_index.py \
-  scripts/test_context_native.py \
-  scripts/test_context_smoke.py \
-  scripts/test_autoresearch_contextgo.py
+  tests/test_context_cli.py \
+  tests/test_context_core.py \
+  tests/test_session_index.py \
+  tests/test_context_native.py \
+  tests/test_context_smoke.py \
+  tests/test_autoresearch_contextgo.py
 
 python3 scripts/e2e_quality_gate.py
-python3 scripts/context_cli.py smoke --sandbox
+contextgo smoke --sandbox
 python3 scripts/smoke_installed_runtime.py
 bash scripts/context_healthcheck.sh
 ```

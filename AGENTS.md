@@ -138,16 +138,16 @@ All steps must pass. / 所有步骤必须通过。
 ```bash
 # Syntax checks / 语法检查
 bash -n scripts/*.sh
-python3 -m py_compile scripts/*.py
+python3 -m py_compile src/contextgo/*.py
 
 # Targeted unit + integration tests / 单元与集成测试
 python3 -m pytest \
-  scripts/test_context_cli.py \
-  scripts/test_context_core.py \
-  scripts/test_session_index.py \
-  scripts/test_context_native.py \
-  scripts/test_context_smoke.py \
-  scripts/test_autoresearch_contextgo.py
+  tests/test_context_cli.py \
+  tests/test_context_core.py \
+  tests/test_session_index.py \
+  tests/test_context_native.py \
+  tests/test_context_smoke.py \
+  tests/test_autoresearch_contextgo.py
 
 # End-to-end quality gate / 端到端质量门控
 python3 scripts/e2e_quality_gate.py

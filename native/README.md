@@ -23,7 +23,7 @@ throughput-sensitive workloads on systems with a Rust toolchain.
 
 - Source: `session_scan/`
 - Binary output: `session_scan/target/release/session_scan`
-- License: MIT OR Apache-2.0
+- License: AGPL-3.0
 
 ### session_scan_go (Go)
 
@@ -32,7 +32,7 @@ to deploy on systems without a Rust toolchain; the binary is fully self-containe
 
 - Source: `session_scan_go/`
 - Binary output: `session_scan_go/session_scan_go`
-- License: MIT
+- License: AGPL-3.0
 
 ---
 
@@ -272,7 +272,7 @@ install -m 755 native/session_scan_go/session_scan_go \
 
 ### ContextGO Python integration
 
-The Python layer selects the binary automatically via `scripts/context_native.py`.
+The Python layer selects the binary automatically via `src/contextgo/context_native.py`.
 The binary is invoked as a subprocess; its stdout JSON is parsed and merged into
 the session search results.  No additional configuration is required beyond
 placing the binary on `PATH` or in the standard build output location.
@@ -280,8 +280,8 @@ placing the binary on `PATH` or in the standard build output location.
 To force a specific backend:
 
 ```bash
-CONTEXTGO_NATIVE_BACKEND=rust  python3 scripts/context_cli.py native-scan --query "agent"
-CONTEXTGO_NATIVE_BACKEND=go    python3 scripts/context_cli.py native-scan --query "agent"
+CONTEXTGO_NATIVE_BACKEND=rust  contextgo native-scan --query "agent"
+CONTEXTGO_NATIVE_BACKEND=go    contextgo native-scan --query "agent"
 ```
 
 ---

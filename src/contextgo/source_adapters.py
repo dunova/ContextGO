@@ -15,10 +15,13 @@ import os
 import re
 import shutil
 import sqlite3
+import logging
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+_log = logging.getLogger(__name__)
 
 try:
     from context_config import storage_root
@@ -395,11 +398,19 @@ def _sync_openclaw_sessions(home: Path) -> dict[str, object]:
 
 def sync_all_adapters(home: Path | None = None) -> dict[str, dict[str, object]]:
     current_home = home or _home()
-    return {
-        "opencode_session": _sync_opencode_sessions(current_home),
-        "kilo_session": _sync_kilo_sessions(current_home),
-        "openclaw_session": _sync_openclaw_sessions(current_home),
+    _adapters: dict[str, Any] = {
+        "opencode_session": _sync_opencode_sessions,
+        "kilo_session": _sync_kilo_sessions,
+        "openclaw_session": _sync_openclaw_sessions,
     }
+    result: dict[str, dict[str, object]] = {}
+    for name, fn in _adapters.items():
+        try:
+            result[name] = fn(current_home)
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("sync_all_adapters: adapter %r failed: %s", name, exc)
+            result[name] = {"sessions": 0, "error": str(exc)}
+    return result
 
 
 def discover_index_sources(home: Path | None = None) -> list[tuple[str, Path]]:
@@ -488,25 +499,33 @@ def source_freshness_snapshot(home: Path | None = None) -> dict[str, dict[str, o
 
     result: dict[str, dict[str, object]] = {}
     for name, path in sources.items():
-        if path is None:
-            result[name] = {"exists": False}
-            continue
-        p = Path(path)
-        result[name] = {
-            "exists": p.exists(),
-            "path": str(p),
-            "mtime": _iso_or_none(p.stat().st_mtime) if p.exists() else None,
+        try:
+            if path is None:
+                result[name] = {"exists": False}
+                continue
+            p = Path(path)
+            result[name] = {
+                "exists": p.exists(),
+                "path": str(p),
+                "mtime": _iso_or_none(p.stat().st_mtime) if p.exists() else None,
+            }
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("source_freshness_snapshot: source %r failed: %s", name, exc)
+            result[name] = {"exists": False, "error": str(exc)}
+    try:
+        result["adapter_sessions"] = {
+            "exists": any(
+                int(adapter_stats[name]["sessions"]) > 0
+                for name in ("opencode_session", "kilo_session", "openclaw_session")
+            ),
+            "path": str(_adapter_root(current_home)),
+            "opencode_session_count": adapter_stats["opencode_session"]["sessions"],
+            "kilo_session_count": adapter_stats["kilo_session"]["sessions"],
+            "openclaw_session_count": adapter_stats["openclaw_session"]["sessions"],
         }
-    result["adapter_sessions"] = {
-        "exists": any(
-            int(adapter_stats[name]["sessions"]) > 0
-            for name in ("opencode_session", "kilo_session", "openclaw_session")
-        ),
-        "path": str(_adapter_root(current_home)),
-        "opencode_session_count": adapter_stats["opencode_session"]["sessions"],
-        "kilo_session_count": adapter_stats["kilo_session"]["sessions"],
-        "openclaw_session_count": adapter_stats["openclaw_session"]["sessions"],
-    }
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("source_freshness_snapshot: adapter_sessions summary failed: %s", exc)
+        result["adapter_sessions"] = {"exists": False, "error": str(exc)}
     return result
 
 
