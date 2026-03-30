@@ -196,6 +196,7 @@ class TestBuildParser(unittest.TestCase):
             "sources",
             "q",
             "shell-init",
+            "completion",
         }
         p = context_cli.build_parser()
         # subparser actions store choices
