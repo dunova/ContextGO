@@ -53,9 +53,11 @@ except ImportError:
 try:
     from context_config import env_bool, env_float, env_int, env_str, storage_root
     from memory_index import strip_private_blocks, sync_index_from_storage
+    from secret_redaction import _SECRET_REPLACEMENTS, sanitize_text as _sanitize_text_impl
 except ImportError:  # pragma: no cover - alternate import path
     from .context_config import env_bool, env_float, env_int, env_str, storage_root  # type: ignore[import-not-found]
     from .memory_index import strip_private_blocks, sync_index_from_storage  # type: ignore[import-not-found]
+    from .secret_redaction import _SECRET_REPLACEMENTS, sanitize_text as _sanitize_text_impl  # type: ignore[import-not-found]
 
 
 # Env-var helpers — all daemon settings are prefixed CONTEXTGO_
@@ -312,49 +314,7 @@ _SAFE_FILENAME_PART_RE: re.Pattern[str] = re.compile(r"[^A-Za-z0-9._-]+")
 # Commands that are noisy and carry no context value.
 _IGNORE_SHELL_CMD_PREFIXES = ("history", "fc ")
 
-# Ordered list of (pattern, replacement) pairs applied during sanitisation.
-# Compiled once at startup for efficiency.
-_SECRET_REPLACEMENTS: list[tuple[re.Pattern[str], str]] = [
-    (re.compile(r"(api[_-]?key\s*[=:]\s*)([^\s\"']+)", re.IGNORECASE), r"\1***"),
-    (re.compile(r"(token\s*[=:]\s*)([^\s\"']+)", re.IGNORECASE), r"\1***"),
-    (re.compile(r"(password\s*[=:]\s*)([^\s\"']+)", re.IGNORECASE), r"\1***"),
-    (re.compile(r"(secret\s*[=:]\s*)([^\s\"']+)", re.IGNORECASE), r"\1***"),
-    (re.compile(r"(--api-key\s+)([^\s]+)", re.IGNORECASE), r"\1***"),
-    (re.compile(r"(--token\s+)([^\s]+)", re.IGNORECASE), r"\1***"),
-    (re.compile(r"(Authorization\s*:\s*Bearer\s+)([^\s\"']+)", re.IGNORECASE), r"\1***"),
-    (re.compile(r"\bsk-[A-Za-z0-9_-]{16,}\b"), "sk-***"),
-    (re.compile(r"\bsk-proj-[A-Za-z0-9_-]{16,}\b"), "sk-proj-***"),
-    # Anthropic API keys (sk-ant-api03-…)
-    (re.compile(r"\bsk-ant-[A-Za-z0-9_-]{16,}\b"), "sk-ant-***"),
-    # GitHub tokens: Personal (ghp_), OAuth (gho_), Server (ghs_), Actions refresh (ghr_)
-    (re.compile(r"\bghp_[A-Za-z0-9]{20,}\b"), "ghp_***"),
-    (re.compile(r"\bgho_[A-Za-z0-9]{20,}\b"), "gho_***"),
-    (re.compile(r"\bghs_[A-Za-z0-9]{20,}\b"), "ghs_***"),
-    (re.compile(r"\bghr_[A-Za-z0-9]{20,}\b"), "ghr_***"),
-    # GitLab personal/project/group access tokens
-    (re.compile(r"\bglpat-[A-Za-z0-9_-]{16,}\b"), "glpat-***"),
-    (re.compile(r"\bAIza[A-Za-z0-9_-]{20,}\b"), "AIza***"),
-    # npm automation / publish tokens
-    (re.compile(r"\bnpm_[A-Za-z0-9]{20,}\b"), "npm_***"),
-    # Slack tokens: bot (xoxb-), user (xoxp-), workspace (xoxs-), app-level (xoxa-), refresh (xoxr-)
-    (re.compile(r"\bxox[abprs]-[A-Za-z0-9\-]{10,}\b"), "xox?-***"),
-    # AWS access key IDs (real keys are prefix + 16 uppercase alphanums, min 12 to catch test fixtures)
-    (re.compile(r"\b(?:AKIA|ASIA|AROA|AIPA|ANPA|ANVA|APKA)[A-Z0-9]{12,}\b"), "AKIA***"),
-    # Stripe secret/restricted keys
-    (re.compile(r"\bsk_(?:live|test)_[A-Za-z0-9]{24,}\b"), "sk_stripe_***"),
-    (re.compile(r"\brk_(?:live|test)_[A-Za-z0-9]{24,}\b"), "rk_stripe_***"),
-    # HuggingFace API tokens
-    (re.compile(r"\bhf_[A-Za-z0-9]{20,}\b"), "hf_***"),
-    # SendGrid API keys
-    (re.compile(r"\bSG\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\b"), "SG.***"),
-    # Twilio Account SID / Auth Token patterns
-    (re.compile(r"\bAC[a-f0-9]{32}\b"), "AC_twilio_***"),
-    (re.compile(r"\bSK[a-f0-9]{32}\b"), "SK_twilio_***"),
-    (
-        re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----"),
-        "***PEM_KEY_REDACTED***",
-    ),
-]
+# _SECRET_REPLACEMENTS and sanitize_text are imported from secret_redaction above.
 
 # Graceful shutdown — shared flag set by signal handlers
 
@@ -1414,8 +1374,7 @@ class SessionTracker:
         if not text:
             return ""
         out = strip_private_blocks(text).strip()
-        for pattern, repl in _SECRET_REPLACEMENTS:
-            out = pattern.sub(repl, out)
+        out = _sanitize_text_impl(out)
         return out[:4000]
 
     @staticmethod

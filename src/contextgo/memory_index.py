@@ -39,10 +39,12 @@ try:
     from sqlite_retry import retry_commit as _retry_commit
     from sqlite_retry import retry_sqlite as _retry_sqlite
     from sqlite_retry import retry_sqlite_many as _retry_sqlite_many
+    from secret_redaction import _SECRET_REPLACEMENTS as _SECRET_REPLACEMENTS_FULL
 except ImportError:  # pragma: no cover
     from .sqlite_retry import retry_commit as _retry_commit  # type: ignore[import-not-found]
     from .sqlite_retry import retry_sqlite as _retry_sqlite
     from .sqlite_retry import retry_sqlite_many as _retry_sqlite_many
+    from .secret_redaction import _SECRET_REPLACEMENTS as _SECRET_REPLACEMENTS_FULL  # type: ignore[import-not-found]
 
 # ---------------------------------------------------------------------------
 # In-process search result cache (TTL-based)
@@ -160,37 +162,9 @@ _SQL_AFTER = "SELECT * FROM observations WHERE created_at_epoch > ? ORDER BY cre
 _PRIVATE_BLOCK_RE = re.compile(r"<private>[\s\S]*?</private>", re.IGNORECASE)
 _PRIVATE_TAG_RE = re.compile(r"</?private>", re.IGNORECASE)
 
-_SECRET_PATTERNS: list[re.Pattern[str]] = [
-    re.compile(r"\bsk-[A-Za-z0-9_-]{16,}\b"),
-    re.compile(r"\bsk-proj-[A-Za-z0-9_-]{16,}\b"),
-    # Anthropic API keys (sk-ant-api03-…)
-    re.compile(r"\bsk-ant-[A-Za-z0-9_-]{16,}\b"),
-    # GitHub tokens: Personal (ghp_), OAuth (gho_), Server (ghs_), Actions refresh (ghr_)
-    re.compile(r"\bghp_[A-Za-z0-9]{20,}\b"),
-    re.compile(r"\bgho_[A-Za-z0-9]{20,}\b"),
-    re.compile(r"\bghs_[A-Za-z0-9]{20,}\b"),
-    re.compile(r"\bghr_[A-Za-z0-9]{20,}\b"),
-    # GitLab personal/project/group access tokens
-    re.compile(r"\bglpat-[A-Za-z0-9_-]{16,}\b"),
-    re.compile(r"\bAIza[A-Za-z0-9_-]{20,}\b"),
-    # npm automation / publish tokens
-    re.compile(r"\bnpm_[A-Za-z0-9]{20,}\b"),
-    # Slack tokens: bot (xoxb-), user (xoxp-), workspace (xoxs-), app-level (xoxa-), refresh (xoxr-)
-    re.compile(r"\bxox[abprs]-[A-Za-z0-9\-]{10,}\b"),
-    # AWS access key IDs (real keys are prefix + 16 uppercase alphanums, min 12 to catch test fixtures)
-    re.compile(r"\b(?:AKIA|ASIA|AROA|AIPA|ANPA|ANVA|APKA)[A-Z0-9]{12,}\b"),
-    # Stripe secret/restricted keys
-    re.compile(r"\bsk_(?:live|test)_[A-Za-z0-9]{24,}\b"),
-    re.compile(r"\brk_(?:live|test)_[A-Za-z0-9]{24,}\b"),
-    # HuggingFace API tokens
-    re.compile(r"\bhf_[A-Za-z0-9]{20,}\b"),
-    # SendGrid API keys
-    re.compile(r"\bSG\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\b"),
-    # Twilio Account SID / Auth Token patterns
-    re.compile(r"\bAC[a-f0-9]{32}\b"),
-    re.compile(r"\bSK[a-f0-9]{32}\b"),
-    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----"),
-]
+# _SECRET_PATTERNS sourced from secret_redaction to avoid duplication.
+# Extract compiled patterns only (replacement strings are not used here).
+_SECRET_PATTERNS: list[re.Pattern[str]] = [pat for pat, _repl in _SECRET_REPLACEMENTS_FULL]
 
 
 # Text sanitisation
