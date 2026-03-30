@@ -104,6 +104,7 @@ exclude = [
     "coverage.xml",
     "**/__pycache__",
     "**/*.pyc",
+    "src/contextgo/import_memories.py",
 ]
 
 [tool.hatch.build.targets.wheel.force-include]

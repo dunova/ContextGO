@@ -120,6 +120,9 @@ site/
 .pytype/
 .pyre/
 
+# Claude Code / AI agent state
+.claude/
+
 # Packaging scratch
 MANIFEST
 *.manifest

@@ -235,11 +235,10 @@ def _sync_opencode_sessions(home: Path) -> dict[str, object]:
         removed = _prune_stale(adapter_dir, keep)
         return {"detected": False, "sessions": 0, "removed": removed, "path": None}
 
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=10)
-    conn.row_factory = sqlite3.Row
     sessions_written = 0
     changed = False
-    try:
+    with contextlib.closing(sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=10)) as conn:
+        conn.row_factory = sqlite3.Row
         sessions = conn.execute(
             "SELECT id, title, directory, time_created, time_updated FROM session ORDER BY time_updated DESC"
         ).fetchall()
@@ -283,12 +282,10 @@ def _sync_opencode_sessions(home: Path) -> dict[str, object]:
                 sessions_written += 1
             if out_changed:
                 changed = True
-        removed = _prune_stale(adapter_dir, keep)
-        if changed or removed:
-            _mark_dirty(home)
-        return {"detected": True, "sessions": sessions_written, "removed": removed, "path": str(db_path)}
-    finally:
-        conn.close()
+    removed = _prune_stale(adapter_dir, keep)
+    if changed or removed:
+        _mark_dirty(home)
+    return {"detected": True, "sessions": sessions_written, "removed": removed, "path": str(db_path)}
 
 
 def _sync_kilo_sessions(home: Path) -> dict[str, object]:

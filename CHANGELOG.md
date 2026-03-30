@@ -9,6 +9,20 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.11.11] — 2026-03-30
+
+### Packaging / 打包
+- **Wheel devtool exclusion**: `import_memories.py` excluded from wheel via `pyproject.toml` / wheel 排除 devtool 脚本
+- **noise_markers.json dedup**: `config/` copy replaced with symlink to `src/contextgo/data/` single source of truth / 噪声标记文件去重为符号链接
+
+### Reliability / 可靠性
+- **SQLite contextlib.closing**: `source_adapters.py` OpenCode adapter uses `contextlib.closing` context manager / SQLite 连接改用上下文管理器
+
+### Repo Hygiene / 仓库清洁
+- **.gitignore**: Added `.claude/` exclusion rule / 新增 .claude/ 排除规则
+
+---
+
 ## [0.11.10] — 2026-03-30
 
 ### Security / 安全
