@@ -170,6 +170,7 @@ class ContextCliTests(unittest.TestCase):
             "results": [{"name": "health", "ok": True, "rc": 0, "detail": {"x": 1}}],
         }
         with (
+            mock.patch("pathlib.Path.exists", return_value=True),
             mock.patch.object(context_cli.context_smoke, "run_smoke", return_value=payload) as mock_run,
             mock.patch("builtins.print") as mock_print,
         ):
@@ -187,6 +188,7 @@ class ContextCliTests(unittest.TestCase):
             "results": [{"name": "health", "ok": True, "rc": 0, "detail": {"x": 1}}],
         }
         with (
+            mock.patch("pathlib.Path.exists", return_value=True),
             mock.patch.object(context_cli.context_smoke, "run_smoke", return_value=payload),
             mock.patch("builtins.print") as mock_print,
         ):
