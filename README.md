@@ -157,7 +157,7 @@ contextgo smoke --sandbox
 | Built-in delivery validation | **Yes** | No | No | No |
 | CJK / Unicode full support | **Yes** | Partial | No | No |
 
-**Key numbers:** 2,026 tests | 98.9% coverage | Python 3.10+ | Hybrid search < 5ms (warm)
+**Key numbers:** 2,041 tests | 97.1% coverage | Python 3.10+ | Hybrid search < 5ms (warm)
 
 ---
 

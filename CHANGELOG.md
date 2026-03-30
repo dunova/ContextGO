@@ -15,6 +15,44 @@ _No unreleased changes._
 
 ---
 
+## [0.10.1] — 2026-03-30
+
+### Overview
+
+Comprehensive security, performance, and documentation hardening release based on a full zero-knowledge code audit across all dimensions.
+
+基于全维度零知识代码审计的安全、性能与文档加固版本。
+
+### Fixed
+
+- **CRITICAL:** SQL injection in `vector_index.py` ATTACH DATABASE — replaced character filter with strict path whitelist (安全：SQL 注入修复，改用严格路径白名单)
+- **Security:** Remove internal exception details from HTTP 500 responses in memory_viewer (安全：移除 500 响应中的内部异常信息)
+- **Security:** Replace `assert` with explicit `RuntimeError` in sqlite_retry.py for `-O` mode safety (安全：`assert` 改为显式异常)
+- **Security:** Bandit CI scan no longer silenced with `|| true` — findings now fail the build (安全：bandit 扫描不再静默)
+- **Bug:** BM25 cache invalidation now uses `(row_count, max_rowid)` tuple to detect content changes at same count (修复：BM25 缓存失效检测)
+- **Bug:** `cmd_smoke` gracefully handles missing `e2e_quality_gate.py` in pip-installed mode (修复：pip 安装模式下 smoke 命令兼容)
+- **Bug:** `_SHUTDOWN_EVENT.clear()` on memory_viewer restart prevents SSE hang (修复：viewer 重启 SSE 挂起)
+- **Bug:** TOCTOU guard on `source_adapters.py` stat() call (修复：文件竞态条件)
+- **Bug:** Use timezone-aware `datetime.now(timezone.utc)` in context_core (修复：时区感知时间)
+
+### Changed
+
+- Remove private Chinese meta strings from Go/Rust noise markers — now loaded from `config/noise_markers.json` only (清理：移除 Go/Rust 中的私有中文噪声标记)
+- Remove Go coverage.out and tmp/gen_report.py from git tracking (清理：移除构建产物)
+- Add Python 3.13 classifier to pyproject.toml (包装：新增 Python 3.13 分类标签)
+
+### Documentation
+
+- Fix CHANGELOG link table — add v0.10.0, v0.9.37, v0.9.6 comparison links (文档：修复变更日志链接表)
+- Fix README key numbers to match actual: 2,026 tests, 98.9% coverage (文档：修正 README 统计数字)
+- Add OpenCode, Kilo, OpenClaw to README and ARCHITECTURE.md diagrams (文档：架构图补充新数据源)
+- Update ARCHITECTURE.md: 15 subcommands, add vector_index layer (文档：更新子命令数和向量索引层)
+- Fix CONTRIBUTING.md coverage threshold: 50% → 97% (文档：修正覆盖率阈值)
+
+**Key numbers / 关键指标:** 2,041 tests | 97.14% coverage | 0 security findings
+
+---
+
 ## [0.10.0] — 2026-03-29
 
 ### Overview
@@ -496,7 +534,8 @@ Foundational release of the local-first `contextgo` runtime. All context capture
 
 ---
 
-[Unreleased]: https://github.com/dunova/ContextGO/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/dunova/ContextGO/compare/v0.10.1...HEAD
+[0.10.1]: https://github.com/dunova/ContextGO/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/dunova/ContextGO/compare/v0.9.37...v0.10.0
 [0.9.37]: https://github.com/dunova/ContextGO/compare/v0.9.6...v0.9.37
 [0.9.6]: https://github.com/dunova/ContextGO/compare/v0.9.36...v0.9.6
