@@ -834,69 +834,9 @@ class TestSqliteRetryAdditional(unittest.TestCase):
 
 
 # ===========================================================================
-# context_server.py — __main__ block coverage
-# ===========================================================================
-
-
-class TestContextServerMainBlock(unittest.TestCase):
-    """Cover the __main__ block in context_server.py."""
-
-    def _exec_main_block(self, module_obj, stub_name: str, stub_fn):
-        source_path = Path(module_obj.__file__)
-        source = source_path.read_text(encoding="utf-8")
-        lines = source.splitlines()
-        block_start = None
-        for i, line in enumerate(lines):
-            if line.strip().startswith('if __name__ == "__main__":'):
-                block_start = i
-                break
-        if block_start is None:
-            raise RuntimeError(f"No __main__ block found in {source_path}")
-        snippet = "\n" * block_start + "\n".join(lines[block_start:])
-        ns: dict = {}
-        ns.update(module_obj.__dict__)
-        ns["__name__"] = "__main__"
-        ns[stub_name] = stub_fn
-        exec(compile(snippet, str(source_path.resolve()), "exec"), ns)  # noqa: S102
-
-    def _get_context_server_module(self):
-        """Import context_server with a fake memory_viewer."""
-        fake_viewer = MagicMock()
-        fake_viewer.HOST = "127.0.0.1"
-        fake_viewer.PORT = 37242
-        fake_viewer.VIEWER_TOKEN = ""
-        fake_viewer.main = MagicMock()
-
-        for mod in ("context_server", "memory_viewer"):
-            sys.modules.pop(mod, None)
-
-        with mock.patch.dict("sys.modules", {"memory_viewer": fake_viewer}):
-            import context_server as cs
-        return cs, fake_viewer
-
-    def test_main_block_calls_main_and_exits_zero(self) -> None:
-        """__main__ block in context_server calls main() and raises SystemExit(0)."""
-        cs, _ = self._get_context_server_module()
-        called: list[int] = []
-
-        def _stub_main() -> None:
-            called.append(1)
-
-        try:
-            self._exec_main_block(cs, "main", _stub_main)
-        except SystemExit:
-            pass  # Expected — __main__ block calls main() which may not raise
-
-        # If no SystemExit the block executed without issue
-        # Either way, verify the stub was called or the block ran
-        # context_server.__main__ just calls main() with no sys.exit,
-        # so we just verify no unexpected exception occurred.
-        # The module runs: main() -- no explicit SystemExit in the block
-        self.assertTrue(True)  # reached here = no crash
-
-    # test_context_server_main_block_via_runpy removed — __main__ block
-    # is now marked pragma: no cover, and runpy can start a real HTTP
-    # server when module-level mocking is fragile in full test suite.
+# context_server.py — __main__ block is now pragma: no cover.
+# All runpy/exec-based __main__ tests removed to prevent HTTP server
+# hangs during full test suite runs.
 
 
 # ===========================================================================
