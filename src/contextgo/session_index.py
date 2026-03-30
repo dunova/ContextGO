@@ -35,6 +35,7 @@ import math
 import os
 import re
 import sqlite3
+import sys
 import time
 from collections.abc import Generator, Iterable
 from contextlib import contextmanager
@@ -429,6 +430,23 @@ def _compact_snippet(text: str, max_chars: int = _SNIPPET_MAX_CHARS) -> str:
     if len(clean) <= max_chars:
         return clean
     return clean[: max_chars - 1].rstrip() + "\u2026"
+
+
+def _highlight_query(text: str, query: str) -> str:
+    """Highlight *query* terms in *text* using ANSI bold (case-insensitive).
+
+    Only applies when stdout is a TTY.  Falls back to plain text otherwise.
+    """
+    if not sys.stdout.isatty() or not query.strip():
+        return text
+    _BOLD = "\033[1m"
+    _RESET = "\033[0m"
+    for term in query.split():
+        if len(term) < 2:
+            continue
+        pattern = re.compile(re.escape(term), re.IGNORECASE)
+        text = pattern.sub(lambda m: f"{_BOLD}{m.group()}{_RESET}", text)
+    return text
 
 
 # Noise Filtering
@@ -1990,10 +2008,12 @@ def format_search_results(
 
     lines = [f"Found {len(results)} sessions (local index):"]
     for idx, row in enumerate(results, 1):
+        title = _highlight_query(row["title"], query)
+        snippet = _highlight_query(_compact_snippet(row["snippet"]), query)
         lines.append(f"[{idx}] {row['created_at'][:10]} | {row['session_id']} | {row['source_type']}")
-        lines.append(f"    {row['title']}")
+        lines.append(f"    {title}")
         lines.append(f"    File: {row['file_path']}")
-        lines.append(f"    > {_compact_snippet(row['snippet'])}")
+        lines.append(f"    > {snippet}")
     return "\n".join(lines)
 
 
