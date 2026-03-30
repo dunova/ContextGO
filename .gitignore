@@ -25,6 +25,7 @@ share/python-wheels/
 *.log
 logs/
 data/
+!src/contextgo/data/
 .tmp/
 
 # Database files

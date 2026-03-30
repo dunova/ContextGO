@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import atexit
 import logging
 import os
@@ -382,7 +383,7 @@ def _remote_process_count() -> int:
 # ───────────────────────────────────────────────
 
 
-def cmd_search(args: object) -> int:
+def cmd_search(args: argparse.Namespace) -> int:
     """Search session/history context and print results."""
 
     if not args.query or not args.query.strip():
@@ -406,7 +407,7 @@ def cmd_search(args: object) -> int:
     return 0
 
 
-def cmd_semantic(args: object) -> int:
+def cmd_semantic(args: argparse.Namespace) -> int:
     """Search local memories and session index in parallel, merging by relevance.
 
     Both search paths run concurrently via ThreadPoolExecutor with a 5-second
@@ -481,7 +482,7 @@ def cmd_semantic(args: object) -> int:
     return 1  # Both memory and session came back empty
 
 
-def cmd_save(args: object) -> int:
+def cmd_save(args: argparse.Namespace) -> int:
     """Save a key conclusion to local memory storage."""
 
     tags = [t.strip() for t in args.tags.split(",") if t.strip()]
@@ -491,7 +492,7 @@ def cmd_save(args: object) -> int:
     return 1 if failed else 0
 
 
-def cmd_export(args: object) -> int:
+def cmd_export(args: argparse.Namespace) -> int:
     """Export indexed observations to a JSON file."""
 
     if not args.output or not args.output.strip():
@@ -517,7 +518,7 @@ def cmd_export(args: object) -> int:
     return 0
 
 
-def cmd_import(args: object) -> int:
+def cmd_import(args: argparse.Namespace) -> int:
     """Import observations from a previously exported JSON file."""
     import json  # deferred: only needed for import deserialisation
 
@@ -550,7 +551,7 @@ def cmd_import(args: object) -> int:
     return 0
 
 
-def cmd_serve(args: object) -> int:
+def cmd_serve(args: argparse.Namespace) -> int:
     """Start the local memory viewer server (blocks until interrupted)."""
 
     if not (1 <= args.port <= 65535):
@@ -565,7 +566,7 @@ def cmd_serve(args: object) -> int:
     return 0
 
 
-def cmd_maintain(args: object) -> int:
+def cmd_maintain(args: argparse.Namespace) -> int:
     """Run local index maintenance (repair queue, enqueue missing sessions)."""
 
     maintenance_module = _load_module("context_maintenance")
@@ -590,7 +591,7 @@ def cmd_maintain(args: object) -> int:
     return maintenance_module.main(forwarded)
 
 
-def cmd_native_scan(args: object) -> int:
+def cmd_native_scan(args: argparse.Namespace) -> int:
     """Run the native Rust/Go scan backend and print results."""
 
     if args.threads < 1:
@@ -624,7 +625,7 @@ def cmd_native_scan(args: object) -> int:
     return result.returncode
 
 
-def cmd_smoke(args: object) -> int:
+def cmd_smoke(args: argparse.Namespace) -> int:
     """Run the end-to-end smoke gate and print a JSON result summary."""
 
     # Resolve the real location of this file (follows symlinks).
@@ -674,7 +675,7 @@ def cmd_smoke(args: object) -> int:
     return 1 if any(not item.get("ok", False) for item in results if isinstance(item, dict)) else 0
 
 
-def cmd_health(args: object) -> int:
+def cmd_health(args: argparse.Namespace) -> int:
     """Check context system health and print a JSON status payload.
 
     Runs session_index health, memory_index stats, and native backend checks in
@@ -771,7 +772,7 @@ def cmd_health(args: object) -> int:
 # ───────────────────────────────────────────────
 
 
-def cmd_vector_sync(args: object) -> int:
+def cmd_vector_sync(args: argparse.Namespace) -> int:
     """Embed pending session documents into the vector index."""
     import time as _time  # noqa: PLC0415
 
@@ -813,7 +814,7 @@ def cmd_vector_sync(args: object) -> int:
     return 0
 
 
-def cmd_vector_status(args: object) -> int:
+def cmd_vector_status(args: argparse.Namespace) -> int:
     """Show vector index statistics."""
     si = _get_session_index()
     db_path = si.get_session_db_path()
@@ -832,7 +833,7 @@ def cmd_vector_status(args: object) -> int:
     return 0
 
 
-def cmd_sources(args: object) -> int:
+def cmd_sources(args: argparse.Namespace) -> int:
     """Print detected source platforms and adapter status."""
     try:
         from source_adapters import source_inventory  # noqa: PLC0415
@@ -924,7 +925,7 @@ def _q_search(query: str, limit: int, as_json: bool) -> int:
     return 0 if text and not text.startswith("No matches found") else 1
 
 
-def cmd_q(args: object) -> int:
+def cmd_q(args: argparse.Namespace) -> int:
     """Quick recall — auto-routes to session ID lookup or hybrid search.
 
     Accepts natural language queries or session ID prefixes.
@@ -977,7 +978,7 @@ alias cgvs='contextgo vector-sync'
 """
 
 
-def cmd_shell_init(args: object) -> int:
+def cmd_shell_init(args: argparse.Namespace) -> int:
     """Print shell integration script to stdout."""
     print(_SHELL_INTEGRATION)
     return 0
@@ -1111,7 +1112,7 @@ _COMPLETION_SCRIPTS: dict[str, str] = {
 }
 
 
-def cmd_completion(args: object) -> int:
+def cmd_completion(args: argparse.Namespace) -> int:
     """Print a shell completion script for bash, zsh, or fish.
 
     Usage::
@@ -1542,7 +1543,7 @@ def build_parser() -> object:
 # ───────────────────────────────────────────────
 
 
-def run(args: object) -> int:
+def run(args: argparse.Namespace) -> int:
     """Dispatch parsed arguments to the appropriate command handler."""
     command = getattr(args, "command", None)
     if not command:
