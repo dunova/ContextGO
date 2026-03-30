@@ -21,5 +21,5 @@ def main(argv: list[str] | None = None) -> int:
     return context_cli.main(ctx_argv)
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(main())

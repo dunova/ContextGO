@@ -1983,5 +1983,5 @@ def main() -> None:
     logger.info("ContextGO daemon stopped. Total sessions exported: %d.", tracker._export_count)
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     main()

@@ -1373,5 +1373,5 @@ def __getattr__(name: str) -> object:
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(main())

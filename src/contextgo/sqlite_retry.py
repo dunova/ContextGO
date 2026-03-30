@@ -67,7 +67,7 @@ def retry_sqlite(
                         max_retries,
                     )
                 time.sleep(delay)
-    if last_exc is None:
+    if last_exc is None:  # pragma: no cover — defensive unreachable guard
         raise RuntimeError("retry loop exited without exception")
     raise last_exc
 
@@ -119,7 +119,7 @@ def retry_sqlite_many(
                         max_retries,
                     )
                 time.sleep(delay)
-    if last_exc is None:
+    if last_exc is None:  # pragma: no cover — defensive unreachable guard
         raise RuntimeError("retry loop exited without exception")
     raise last_exc
 
@@ -164,6 +164,6 @@ def retry_commit(
                         max_retries,
                     )
                 time.sleep(delay)
-    if last_exc is None:
+    if last_exc is None:  # pragma: no cover — defensive unreachable guard
         raise RuntimeError("retry loop exited without exception")
     raise last_exc
