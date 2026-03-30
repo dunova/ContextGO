@@ -57,7 +57,7 @@ class TestRetrySqlite(unittest.TestCase):
         mock_sleep.assert_not_called()
 
     @patch("sqlite_retry.time.sleep")
-    @patch("sqlite_retry.random.uniform", return_value=0.0)
+    @patch("sqlite_retry.random.random", return_value=0.5)
     def test_retry_sqlite_locked_then_success(self, mock_uniform: MagicMock, mock_sleep: MagicMock) -> None:
         """First call raises 'database is locked', second call succeeds."""
         good_cursor = MagicMock(spec=sqlite3.Cursor)
@@ -125,7 +125,7 @@ class TestRetrySqliteMany(unittest.TestCase):
         mock_sleep.assert_not_called()
 
     @patch("sqlite_retry.time.sleep")
-    @patch("sqlite_retry.random.uniform", return_value=0.0)
+    @patch("sqlite_retry.random.random", return_value=0.5)
     def test_retry_sqlite_many_locked(self, mock_uniform: MagicMock, mock_sleep: MagicMock) -> None:
         """executemany retries on lock and succeeds on second attempt."""
         good_cursor = MagicMock(spec=sqlite3.Cursor)
@@ -165,7 +165,7 @@ class TestRetrySqliteMany(unittest.TestCase):
         self.assertEqual(mock_sleep.call_count, 2)
 
     @patch("sqlite_retry.time.sleep")
-    @patch("sqlite_retry.random.uniform", return_value=0.0)
+    @patch("sqlite_retry.random.random", return_value=0.5)
     def test_retry_sqlite_many_logger_warning(self, mock_uniform: MagicMock, mock_sleep: MagicMock) -> None:
         """_logger.warning is called on each retry for retry_sqlite_many."""
         good_cursor = MagicMock(spec=sqlite3.Cursor)
@@ -223,7 +223,7 @@ class TestRetryCommit(unittest.TestCase):
         mock_sleep.assert_not_called()
 
     @patch("sqlite_retry.time.sleep")
-    @patch("sqlite_retry.random.uniform", return_value=0.0)
+    @patch("sqlite_retry.random.random", return_value=0.5)
     def test_retry_commit_locked(self, mock_uniform: MagicMock, mock_sleep: MagicMock) -> None:
         """commit() retries on lock and succeeds on second attempt."""
         mock_conn = MagicMock(spec=sqlite3.Connection)
@@ -248,7 +248,7 @@ class TestRetryCommit(unittest.TestCase):
         mock_sleep.assert_not_called()
 
     @patch("sqlite_retry.time.sleep")
-    @patch("sqlite_retry.random.uniform", return_value=0.0)
+    @patch("sqlite_retry.random.random", return_value=0.5)
     def test_retry_commit_logger_warning(self, mock_uniform: MagicMock, mock_sleep: MagicMock) -> None:
         """_logger.warning is called on each retry for retry_commit."""
         mock_conn = MagicMock(spec=sqlite3.Connection)
@@ -286,7 +286,7 @@ class TestRetryCommit(unittest.TestCase):
 
 class TestRetryLoggerWarning(unittest.TestCase):
     @patch("sqlite_retry.time.sleep")
-    @patch("sqlite_retry.random.uniform", return_value=0.0)
+    @patch("sqlite_retry.random.random", return_value=0.5)
     def test_retry_logger_warning(self, mock_uniform: MagicMock, mock_sleep: MagicMock) -> None:
         """_logger.warning is called once per retry for retry_sqlite."""
         mock_conn = MagicMock(spec=sqlite3.Connection)

@@ -749,7 +749,7 @@ class TestSqliteRetryAdditional(unittest.TestCase):
     """Cover missed branches in sqlite_retry.py."""
 
     @patch("sqlite_retry.time.sleep")
-    @patch("sqlite_retry.random.uniform", return_value=0.0)
+    @patch("sqlite_retry.random.random", return_value=0.5)
     def test_retry_sqlite_third_delay_index(self, mock_uniform, mock_sleep) -> None:
         """On attempt 2 (index 2) the delay index clamps to len-1 = 2."""
         good_cursor = MagicMock(spec=sqlite3.Cursor)
@@ -771,7 +771,7 @@ class TestSqliteRetryAdditional(unittest.TestCase):
         self.assertAlmostEqual(calls[2], SQLITE_RETRY_DELAYS[2], places=5)
 
     @patch("sqlite_retry.time.sleep")
-    @patch("sqlite_retry.random.uniform", return_value=0.0)
+    @patch("sqlite_retry.random.random", return_value=0.5)
     def test_retry_commit_third_delay_index(self, mock_uniform, mock_sleep) -> None:
         """retry_commit third retry uses last SQLITE_RETRY_DELAYS index."""
         mock_conn = MagicMock(spec=sqlite3.Connection)
@@ -789,7 +789,7 @@ class TestSqliteRetryAdditional(unittest.TestCase):
         self.assertAlmostEqual(calls[2], SQLITE_RETRY_DELAYS[2], places=5)
 
     @patch("sqlite_retry.time.sleep")
-    @patch("sqlite_retry.random.uniform", return_value=0.0)
+    @patch("sqlite_retry.random.random", return_value=0.5)
     def test_retry_sqlite_many_third_delay(self, mock_uniform, mock_sleep) -> None:
         """retry_sqlite_many third retry uses last SQLITE_RETRY_DELAYS index."""
         good_cursor = MagicMock(spec=sqlite3.Cursor)
