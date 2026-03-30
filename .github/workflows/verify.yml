@@ -232,4 +232,12 @@ jobs:
         run: python scripts/e2e_quality_gate.py
 
       - name: Smoke gate (sandboxed)
-        run: python scripts/context_cli.py smoke
+        run: python scripts/context_cli.py smoke --sandbox
+
+      - name: Build wheel
+        run: pip install --quiet build && python -m build --wheel --outdir dist/
+
+      - name: Validate wheel install
+        run: |
+          pip install --quiet dist/*.whl
+          contextgo --version

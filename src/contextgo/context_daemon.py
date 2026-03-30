@@ -16,6 +16,8 @@ Responsibilities
 
 from __future__ import annotations
 
+__all__ = ["SessionTracker", "main"]
+
 import atexit
 import contextlib
 import ctypes

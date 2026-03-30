@@ -13,6 +13,17 @@ write_memory_markdown   -- write a memory entry as a Markdown file
 
 from __future__ import annotations
 
+__all__ = [
+    "TEXT_FILE_SUFFIXES",
+    "compact_text",
+    "iter_shared_files",
+    "local_memory_matches",
+    "normalize_tags",
+    "safe_filename",
+    "safe_mtime",
+    "write_memory_markdown",
+]
+
 import contextlib
 import heapq
 import json

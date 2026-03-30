@@ -17,6 +17,17 @@ Public API (stable):
 
 from __future__ import annotations
 
+__all__ = [
+    "SessionDocument",
+    "build_query_terms",
+    "ensure_session_db",
+    "format_search_results",
+    "get_session_db_path",
+    "health_payload",
+    "lookup_session_by_id",
+    "sync_session_index",
+]
+
 import json
 import logging
 import math
