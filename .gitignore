@@ -80,6 +80,8 @@ Desktop.ini
 
 # Autoresearch artifacts (committed intentionally for metric tracking)
 # artifacts/autoresearch/
+# src/artifacts/ is generated output — never commit
+src/artifacts/
 .coverage
 coverage.xml
 

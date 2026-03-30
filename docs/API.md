@@ -51,9 +51,9 @@ When `CONTEXTGO_VIEWER_TOKEN` is set, all `/api/*` requests must include the tok
 X-Context-Token: <token>
 ```
 
-The root HTML page (`/`) is always served without authentication. If the server is bound to a non-loopback address and the token is not set, `main()` raises `SystemExit` at startup.
+The root HTML page (`/`) is subject to the same token check as all other endpoints. If `CONTEXTGO_VIEWER_TOKEN` is set, the browser must supply `X-Context-Token` to load the viewer UI. If the server is bound to a non-loopback address and the token is not set, `main()` raises `SystemExit` at startup.
 
-根页面 (`/`) 始终无需鉴权。若绑定非回环地址且未设置 token，`main()` 在启动时抛出 `SystemExit`。
+根页面 (`/`) 与其他端点执行相同的 token 校验。设置 `CONTEXTGO_VIEWER_TOKEN` 后，浏览器加载 viewer UI 也需提供 `X-Context-Token`。若绑定非回环地址且未设置 token，`main()` 在启动时抛出 `SystemExit`。
 
 ---
 
@@ -70,8 +70,8 @@ CORS 响应头仅对回环源（`127.0.0.1`、`localhost`、`::1`）生效。允
 | Method | Path | Auth | Description / 说明 |
 |---|---|---|---|
 | `OPTIONS` | `*` | No | CORS pre-flight / CORS 预检 |
-| `GET` | `/` | No | Viewer web UI / Viewer 页面 |
-| `GET` | `/index.html` | No | Alias for `/` |
+| `GET` | `/` | Yes* | Viewer web UI / Viewer 页面 |
+| `GET` | `/index.html` | Yes* | Alias for `/` |
 | `GET` | `/api/health` | Yes* | Index health and sync status / 索引健康与同步状态 |
 | `GET` | `/api/search` | Yes* | Full-text search over observations / 全文搜索观测记录 |
 | `GET` | `/api/timeline` | Yes* | Observations surrounding an anchor ID / 锚点观测的时间线上下文 |
@@ -99,7 +99,6 @@ Returns the current health status of the memory index.
   "ok": true,
   "checked_at": "2026-03-26T12:00:00.000000",
   "sync": { "scanned": 42, "added": 1, "updated": 0, "removed": 0 },
-  "db_path": "/home/user/.contextgo/index/memory_index.db",
   "total_observations": 187,
   "latest_epoch": 1742990400
 }
@@ -234,7 +233,7 @@ X-Accel-Buffering: no
 Each event is a `data:` line containing a JSON object:
 
 ```
-data: {"at":"2026-03-26T12:00:01.000000","sync":{...},"db_path":"...","total_observations":187,"latest_epoch":1742990400}
+data: {"at":"2026-03-26T12:00:01.000000","sync":{...},"total_observations":187,"latest_epoch":1742990400}
 ```
 
 ---

@@ -4,11 +4,14 @@
 from __future__ import annotations
 
 import atexit
+import logging
 import os
 import sys
 import threading
 from pathlib import Path
 from types import ModuleType
+
+_logger = logging.getLogger(__name__)
 
 __all__ = [
     "build_parser",
@@ -96,7 +99,7 @@ def _read_version() -> str:
         import importlib.metadata as _meta  # noqa: PLC0415
 
         return _meta.version("contextgo")
-    except Exception:  # noqa: BLE001
+    except ImportError:
         pass
     # Fallback: walk up from this file to find VERSION
     _candidate = Path(__file__).resolve()
@@ -353,8 +356,7 @@ def _safe_source_freshness() -> dict[str, object]:
     try:
         return _source_freshness()
     except Exception as exc:  # noqa: BLE001
-        import logging  # noqa: PLC0415
-        logging.getLogger(__name__).warning("_source_freshness failed: %s", exc)
+        _logger.warning("_source_freshness failed: %s", exc)
         return {"error": f"source_freshness: error — {exc}"}
 
 
@@ -435,7 +437,8 @@ def cmd_semantic(args: object) -> int:
         matches = future_memory.result(timeout=_SEARCH_TIMEOUT)
     except FuturesTimeoutError:
         matches = []
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        _logger.debug("Memory search future failed: %s", exc)
         matches = []
 
     # If memory returned enough results, cancel the session future (best-effort).
@@ -453,7 +456,8 @@ def cmd_semantic(args: object) -> int:
         session_text = future_session.result(timeout=_SEARCH_TIMEOUT)
     except FuturesTimeoutError:
         session_text = ""
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        _logger.debug("Session search future failed: %s", exc)
         session_text = ""
 
     if session_text:
@@ -680,7 +684,8 @@ def cmd_health(args: object) -> int:
         recall: dict = future_session.result(timeout=_HEALTH_TIMEOUT)
     except FuturesTimeoutError:
         recall = {}
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        _logger.warning("Session index health check failed: %s", exc)
         recall = {}
 
     db_ok = bool(recall.get("session_index_db_exists"))
@@ -691,7 +696,8 @@ def cmd_health(args: object) -> int:
     except FuturesTimeoutError:
         print("Warning: memory root check timed out, falling back to direct stat. / 警告：内存根目录检查超时，回退到直接检测。", file=sys.stderr)
         memory_root_exists = LOCAL_SHARED_ROOT.exists()
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        _logger.warning("Memory root check future failed: %s", exc)
         memory_root_exists = LOCAL_SHARED_ROOT.exists()
 
     # Collect native backends health.
@@ -699,7 +705,8 @@ def cmd_health(args: object) -> int:
         native_health: object = future_native.result(timeout=_HEALTH_TIMEOUT)
     except FuturesTimeoutError:
         native_health = {}
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        _logger.warning("Native backends health check failed: %s", exc)
         native_health = {}
 
     payload: dict[str, object] = {
@@ -887,8 +894,8 @@ def _q_search(query: str, limit: int, as_json: bool) -> int:
                 if results:
                     _print_q_results(results, as_json=as_json)
                     return 0
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as exc:  # noqa: BLE001
+        _logger.debug("Vector search unavailable, falling back to FTS5: %s", exc)
 
     # Fallback to FTS5/LIKE
     text = si.format_search_results(query, limit=limit)

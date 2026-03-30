@@ -165,9 +165,15 @@ _PRIVATE_TAG_RE = re.compile(r"</?private>", re.IGNORECASE)
 _SECRET_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"\bsk-[A-Za-z0-9_-]{16,}\b"),
     re.compile(r"\bsk-proj-[A-Za-z0-9_-]{16,}\b"),
+    # Anthropic API keys (sk-ant-api03-…)
+    re.compile(r"\bsk-ant-[A-Za-z0-9_-]{16,}\b"),
     re.compile(r"\bghp_[A-Za-z0-9]{20,}\b"),
     re.compile(r"\bgho_[A-Za-z0-9]{20,}\b"),
+    # GitLab personal/project/group access tokens
+    re.compile(r"\bglpat-[A-Za-z0-9_-]{16,}\b"),
     re.compile(r"\bAIza[A-Za-z0-9_-]{20,}\b"),
+    # npm automation / publish tokens
+    re.compile(r"\bnpm_[A-Za-z0-9]{20,}\b"),
     re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----"),
 ]
 
@@ -413,10 +419,18 @@ def ensure_index_db() -> Path:
     """
     db_path = get_index_db_path()
     db_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    _db_is_new = not db_path.exists()
     _db_key = str(db_path)
     if _db_key in _SCHEMA_INITIALIZED:
         return db_path
     with _open_db(db_path) as conn:
+        if _db_is_new:
+            # Restrict the newly created SQLite file to owner-only access so
+            # that memory observations are not world-readable on shared machines.
+            try:
+                os.chmod(db_path, 0o600)
+            except OSError:
+                pass
         _retry_sqlite(conn, _DDL_OBSERVATIONS)
         for idx_sql in _DDL_INDEXES:
             _retry_sqlite(conn, idx_sql)

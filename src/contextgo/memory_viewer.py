@@ -21,12 +21,15 @@ __all__ = ["main"]
 
 import hmac
 import json
+import logging
 import threading
 import time
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import parse_qs, urlparse
+
+_logger = logging.getLogger(__name__)
 
 try:
     from context_config import env_float, env_int, env_str
@@ -347,7 +350,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             parsed_origin = urlparse(origin)
             origin_host = parsed_origin.hostname or ""
-        except Exception:  # noqa: BLE001
+        except ValueError:
             origin_host = ""
         if origin_host in _LOOPBACK_HOSTS:
             self.send_header("Access-Control-Allow-Origin", origin)
@@ -448,7 +451,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             sync = _maybe_sync_index()
             stats = index_stats()
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            _logger.exception("Health check failed: %s", exc)
             self._send_json(
                 500,
                 {
@@ -480,7 +484,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             sync = _maybe_sync_index()
             rows = search_index(query=query, limit=limit, offset=offset, source_type=source_type)
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            _logger.exception("Search failed for query %r: %s", query, exc)
             self._send_json(500, {"ok": False, "error": "search failed"})
             return
         self._send_json(200, {"ok": True, "sync": sync, "count": len(rows), "results": rows})
@@ -493,7 +498,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             sync = _maybe_sync_index()
             rows = timeline_index(anchor_id=anchor, depth_before=before, depth_after=after) if anchor > 0 else []
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            _logger.exception("Timeline failed for anchor %d: %s", anchor, exc)
             self._send_json(500, {"ok": False, "error": "timeline failed"})
             return
         self._send_json(200, {"ok": True, "sync": sync, "count": len(rows), "timeline": rows})
@@ -587,7 +593,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             sync = _maybe_sync_index()
             rows = get_observations_by_ids(parsed_ids[:_MAX_BATCH_IDS], limit=limit)
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            _logger.exception("Batch observations fetch failed: %s", exc)
             self._send_json(500, {"ok": False, "error": "internal error"})
             return
 

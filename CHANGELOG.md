@@ -15,6 +15,21 @@ _No unreleased changes._
 
 ---
 
+## [0.11.4] — 2026-03-30
+
+### Added / 新增
+- **Read-only environment support / 只读环境支持**: Read operations (`search`, `health`) now gracefully degrade when the database is read-only, skipping sync instead of failing / 读操作在只读环境中优雅降级
+- **Security hardening / 安全加固**: Added path traversal guards, Content-Security-Policy headers, and tighter file permissions on new database files / 路径遍历防护、CSP安全头、数据库文件权限收紧
+- **`make clean-native` target**: New Makefile target to clean Rust/Go build artifacts / 新增native构建产物清理
+- **Narrowed exception handling / 收窄异常处理**: Replaced broad `except Exception` with specific exception types across CLI, viewer, and daemon for improved observability / 用具体异常类型替代宽泛捕获
+
+### Fixed / 修复
+- **API.md stale content / 文档过时内容**: Fixed incorrect auth description and removed references to filtered `db_path` field / 修复认证描述和已过滤字段引用
+- **Makefile `test` scope / 测试范围**: `make test` now runs the full `tests/` directory instead of a hardcoded file list / 测试覆盖完整目录
+- **`.gitignore` coverage**: Added `src/artifacts/` to prevent generated output from being committed / 防止生成产物被提交
+
+---
+
 ## [0.11.3] — 2026-03-30
 
 ### Added / 新增

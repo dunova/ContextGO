@@ -904,8 +904,17 @@ def get_session_db_path() -> Path:
 def ensure_session_db() -> Path:
     """Create the session index database and schema if absent; return the path."""
     db_path = get_session_db_path()
-    db_path.parent.mkdir(parents=True, exist_ok=True)
+    db_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    _db_is_new = not db_path.exists()
     with _open_db(db_path) as conn:
+        if _db_is_new:
+            # Restrict the newly created SQLite file to owner-only access so
+            # that session data (which may contain code and commands) is not
+            # world-readable on shared machines.
+            try:
+                os.chmod(db_path, 0o600)
+            except OSError:
+                pass
         _retry_sqlite(conn, _DDL_SESSION_DOCUMENTS)
         for ddl in _DDL_INDEXES:
             _retry_sqlite(conn, ddl)
@@ -988,6 +997,36 @@ def _meta_set(conn: sqlite3.Connection, key: str, value: str) -> None:
 
 
 # Index Synchronisation
+
+
+def _try_sync(force: bool = False) -> dict[str, int]:
+    """Best-effort sync that degrades gracefully in read-only environments.
+
+    Checks whether the database file (or its parent directory, when the file
+    does not yet exist) is writable before attempting a sync.  If the
+    filesystem is read-only the sync is skipped and a warning is logged so
+    that callers (search, health) continue with whatever index already exists.
+
+    Returns the sync result dict, or an empty dict when the sync was skipped.
+    """
+    db_path = get_session_db_path()
+    # Determine the path to check: existing file beats parent directory.
+    check_path = db_path if db_path.exists() else db_path.parent
+    if not os.access(check_path, os.W_OK):
+        _logger.warning(
+            "_try_sync: database path %s is not writable — skipping sync "
+            "(read-only environment); search/health will use existing index",
+            check_path,
+        )
+        return {}
+    try:
+        return sync_session_index(force=force)
+    except Exception as exc:  # noqa: BLE001
+        _logger.warning(
+            "_try_sync: sync failed (%s) — continuing with existing index",
+            exc,
+        )
+        return {}
 
 
 def sync_session_index(force: bool = False) -> dict[str, int]:
@@ -1767,7 +1806,7 @@ def _search_rows(query: str, limit: int = 10, literal: bool = False) -> list[dic
         if cached is not None and cached[0] > now_mono:
             return list(cached[1])
 
-    sync_session_index()
+    _try_sync()
 
     with _open_db(db_path) as conn:
         terms = [query.strip()] if literal else build_query_terms(query)
@@ -1958,9 +1997,11 @@ def format_search_results(
 def health_payload() -> dict[str, Any]:
     """Return a health-check dict for the session index subsystem.
 
-    Triggers a sync and queries the database for aggregate statistics.
+    Attempts a best-effort sync before querying statistics.  In read-only
+    environments the sync is skipped gracefully and health data is still
+    returned from the existing index.
     """
-    sync_info = sync_session_index()
+    sync_info = _try_sync()
     db_path = ensure_session_db()
     with _open_db(db_path) as conn:
         total = _retry_sqlite(conn, _SQL_COUNT_DOCS).fetchone()[0]

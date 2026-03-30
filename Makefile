@@ -13,10 +13,10 @@ BENCHMARKS := benchmarks
 .PHONY: help install install-remote dev-check \
         lint format type-check \
         test test-fast test-cov \
-        smoke smoke-installed health bench \
+        smoke smoke-installed health bench e2e \
         build dist check-dist \
         release-dry-run \
-        clean clean-dist clean-all
+        clean clean-dist clean-native clean-all
 
 # ---------------------------------------------------------------------------
 # Default target
@@ -61,22 +61,12 @@ dev-check: lint ## Full pre-commit check: syntax + lint
 # Testing
 # ---------------------------------------------------------------------------
 
-TEST_FILES := \
-	$(TESTS)/test_context_cli.py \
-	$(TESTS)/test_context_core.py \
-	$(TESTS)/test_context_native.py \
-	$(TESTS)/test_context_smoke.py \
-	$(TESTS)/test_source_adapters.py \
-	$(TESTS)/test_session_index.py \
-	$(TESTS)/test_autoresearch_contextgo.py \
-	$(TESTS)/test_utility_scripts.py
-
 test: ## Run full pytest suite with coverage
-	$(PYTEST) $(TEST_FILES) \
+	$(PYTEST) $(TESTS) \
 		--cov=src/contextgo --cov-report=term-missing --cov-report=xml -v
 
 test-fast: ## Run tests without coverage (faster iteration)
-	$(PYTEST) $(TEST_FILES) -v --no-cov
+	$(PYTEST) $(TESTS) -v --no-cov
 
 test-cov: test ## Run tests and open HTML coverage report
 	$(PYTHON) -m coverage html
@@ -133,8 +123,13 @@ clean: ## Remove Python bytecode and cache directories
 	find . -type d -name ".mypy_cache" -exec rm -rf {} + 2>/dev/null || true
 	find . -type d -name ".ruff_cache" -exec rm -rf {} + 2>/dev/null || true
 	find . -type d -name ".pytest_cache" -exec rm -rf {} + 2>/dev/null || true
+	rm -rf src/artifacts/ 2>/dev/null || true
 
 clean-dist: ## Remove build artifacts
-	rm -rf dist/ build/ *.egg-info
+	rm -rf dist/ build/ *.egg-info src/*.egg-info
 
-clean-all: clean clean-dist ## Full clean (bytecode + build artifacts)
+clean-native: ## Remove Rust/Go build artifacts
+	rm -rf native/session_scan/target/ 2>/dev/null || true
+	rm -f native/session_scan_go/session_scan_go native/session_scan_go/coverage.out 2>/dev/null || true
+
+clean-all: clean clean-dist clean-native ## Full clean (bytecode + build + native)

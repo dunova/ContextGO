@@ -321,9 +321,15 @@ _SECRET_REPLACEMENTS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"(Authorization\s*:\s*Bearer\s+)([^\s\"']+)", re.IGNORECASE), r"\1***"),
     (re.compile(r"\bsk-[A-Za-z0-9_-]{16,}\b"), "sk-***"),
     (re.compile(r"\bsk-proj-[A-Za-z0-9_-]{16,}\b"), "sk-proj-***"),
+    # Anthropic API keys (sk-ant-api03-…)
+    (re.compile(r"\bsk-ant-[A-Za-z0-9_-]{16,}\b"), "sk-ant-***"),
     (re.compile(r"\bghp_[A-Za-z0-9]{20,}\b"), "ghp_***"),
     (re.compile(r"\bgho_[A-Za-z0-9]{20,}\b"), "gho_***"),
+    # GitLab personal/project/group access tokens
+    (re.compile(r"\bglpat-[A-Za-z0-9_-]{16,}\b"), "glpat-***"),
     (re.compile(r"\bAIza[A-Za-z0-9_-]{20,}\b"), "AIza***"),
+    # npm automation / publish tokens
+    (re.compile(r"\bnpm_[A-Za-z0-9]{20,}\b"), "npm_***"),
     (re.compile(r"\bxox[bprs]-[A-Za-z0-9\-]{10,}\b"), "xox?-***"),
     (re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{12,}\b"), "AKIA***"),
     (
