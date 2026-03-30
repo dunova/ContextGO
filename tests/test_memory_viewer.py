@@ -590,7 +590,7 @@ class TestHandlerCorsException(unittest.TestCase):
         sent: list[tuple[str, str]] = []
         h.send_header = lambda k, v: sent.append((k, v))  # type: ignore[method-assign]
 
-        with patch("memory_viewer.urlparse", side_effect=Exception("parse error")):
+        with patch("memory_viewer.urlparse", side_effect=ValueError("parse error")):
             h._add_cors_headers()
 
         header_names = [k for k, _ in sent]
