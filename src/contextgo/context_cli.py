@@ -1097,7 +1097,7 @@ def cmd_completion(args: object) -> int:
         # fish
         contextgo completion fish | source
     """
-    shell = getattr(args, "shell", "").strip().lower()
+    shell = (getattr(args, "shell", "") or "").strip().lower()
     if not shell:
         print(
             "Error: shell argument required. Choose: bash, zsh, fish.\n"

@@ -146,11 +146,11 @@ def test_cmd_completion_no_shell():
     args = MagicMock()
     args.shell = None
     rc = context_cli.cmd_completion(args)
-    assert rc == 1
+    assert rc == 2
 
 
 def test_cmd_completion_unknown_shell():
-    """cmd_completion returns 1 for unsupported shell."""
+    """cmd_completion returns 2 for unsupported shell."""
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src" / "contextgo"))
     try:
         import context_cli
