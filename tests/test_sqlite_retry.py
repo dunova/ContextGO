@@ -176,7 +176,7 @@ class TestRetrySqliteMany(unittest.TestCase):
         retry_sqlite_many(mock_conn, "INSERT INTO t VALUES (?)", [(1,)], _logger=mock_logger)
 
         mock_logger.warning.assert_called_once_with(
-            "retry_sqlite_many: database locked, retrying in %.1fs (attempt %d/%d)",
+            "retry_sqlite_many: database locked, retrying in %.2fs (attempt %d/%d)",
             SQLITE_RETRY_DELAYS[0],
             1,
             3,
@@ -258,7 +258,7 @@ class TestRetryCommit(unittest.TestCase):
         retry_commit(mock_conn, _logger=mock_logger)
 
         mock_logger.warning.assert_called_once_with(
-            "retry_commit: database locked, retrying in %.1fs (attempt %d/%d)",
+            "retry_commit: database locked, retrying in %.2fs (attempt %d/%d)",
             SQLITE_RETRY_DELAYS[0],
             1,
             3,
@@ -303,7 +303,7 @@ class TestRetryLoggerWarning(unittest.TestCase):
         self.assertEqual(
             first_call,
             call(
-                "retry_sqlite: database locked, retrying in %.1fs (attempt %d/%d)",
+                "retry_sqlite: database locked, retrying in %.2fs (attempt %d/%d)",
                 SQLITE_RETRY_DELAYS[0],
                 1,
                 3,
@@ -314,7 +314,7 @@ class TestRetryLoggerWarning(unittest.TestCase):
         self.assertEqual(
             second_call,
             call(
-                "retry_sqlite: database locked, retrying in %.1fs (attempt %d/%d)",
+                "retry_sqlite: database locked, retrying in %.2fs (attempt %d/%d)",
                 SQLITE_RETRY_DELAYS[1],
                 2,
                 3,
