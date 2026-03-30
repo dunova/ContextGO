@@ -28,6 +28,7 @@ __all__ = [
     "sync_session_index",
 ]
 
+import contextlib
 import json
 import logging
 import math
@@ -925,10 +926,8 @@ def ensure_session_db() -> Path:
             # Restrict the newly created SQLite file to owner-only access so
             # that session data (which may contain code and commands) is not
             # world-readable on shared machines.
-            try:
+            with contextlib.suppress(OSError):
                 os.chmod(db_path, 0o600)
-            except OSError:
-                pass
         _retry_sqlite(conn, _DDL_SESSION_DOCUMENTS)
         for ddl in _DDL_INDEXES:
             _retry_sqlite(conn, ddl)
@@ -951,21 +950,27 @@ def ensure_session_db() -> Path:
 
 @contextmanager
 def _open_db(db_path: Path) -> Generator[sqlite3.Connection, None, None]:
-    """Open a SQLite connection with WAL mode and ensure it is closed on exit."""
-    conn = sqlite3.connect(db_path, timeout=30)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA busy_timeout=5000")
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA synchronous=NORMAL")
-    conn.execute("PRAGMA cache_size=-32000")
-    conn.execute("PRAGMA mmap_size=536870912")
-    conn.execute("PRAGMA temp_store=MEMORY")
-    conn.execute("PRAGMA page_size=4096")
-    conn.execute("PRAGMA wal_autocheckpoint=1000")
+    """Open a SQLite connection with WAL mode and ensure it is closed on exit.
+
+    The connection is always closed in the ``finally`` block, even when a
+    PRAGMA statement raises before ``yield`` is reached.
+    """
+    conn: sqlite3.Connection | None = None
     try:
+        conn = sqlite3.connect(db_path, timeout=30)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout=5000")
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA cache_size=-32000")
+        conn.execute("PRAGMA mmap_size=536870912")
+        conn.execute("PRAGMA temp_store=MEMORY")
+        conn.execute("PRAGMA page_size=4096")
+        conn.execute("PRAGMA wal_autocheckpoint=1000")
         yield conn
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
 
 
 # ---------------------------------------------------------------------------

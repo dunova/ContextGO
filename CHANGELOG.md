@@ -15,6 +15,28 @@ _No unreleased changes._
 
 ---
 
+## [0.11.5] — 2026-03-30
+
+### Added / 新增
+- **Expanded secret redaction / 密钥清洗扩展**: 12 new token patterns — Stripe, HuggingFace, SendGrid, Twilio, AWS (AROA/AIPA/ANPA/ANVA/APKA), GitHub ghs_/ghr_ / 新增12种密钥模式
+- **CLI help text overhaul / CLI帮助文本全面重写**: Rich descriptions with usage examples and exit codes for search, semantic, save, export commands / 搜索/语义/保存/导出命令完整帮助文本
+- **CodeQL security analysis / CodeQL安全分析**: New GitHub Actions workflow for automated vulnerability scanning / 新增代码安全扫描工作流
+- **Go/Rust CI gate in release pipeline / 发布流水线Go/Rust门禁**: release.yml now validates native code before publishing / 发布前验证原生代码
+
+### Changed / 变更
+- **SQLite PRAGMA optimization / SQLite性能优化**: cache_size 32MB, mmap 512MB, wal_autocheckpoint=1000, page_size=4096 / 数据库参数大幅优化
+- **Exception narrowing / 异常窄化**: source_adapters.py replaces broad `except Exception` with `OSError`/`KeyError`/`TypeError`/`ValueError` / 精确异常捕获
+- **Safety check enforcement**: verify.yml no longer swallows safety scan failures with `|| true` / 安全扫描失败不再被忽略
+
+### Removed / 移除
+- **scripts/ symlinks / 脚本符号链接**: Removed 21 symlinks from scripts/ to src/contextgo/ — eliminates "dual source" confusion / 消除双份源码问题
+
+### Fixed / 修复
+- **Friendly no-results messages / 友好的无结果提示**: `contextgo search` and `contextgo semantic` now show actionable bilingual tips when no matches found / 搜索无结果时双语友好提示
+- **conftest.py path update**: Test path resolution updated for symlink removal / 测试路径适配符号链接删除
+
+---
+
 ## [0.11.4] — 2026-03-30
 
 ### Added / 新增

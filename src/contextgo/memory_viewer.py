@@ -19,11 +19,11 @@ from __future__ import annotations
 
 __all__ = ["main"]
 
+import contextlib
 import hmac
 import json
 import logging
 import signal
-import socket
 import threading
 import time
 from datetime import datetime, timezone
@@ -318,10 +318,8 @@ class Handler(BaseHTTPRequestHandler):
         """Apply per-connection socket timeout before the request is read."""
         super().setup()
         if _REQUEST_TIMEOUT_SEC > 0:
-            try:
+            with contextlib.suppress(OSError):
                 self.connection.settimeout(_REQUEST_TIMEOUT_SEC)
-            except OSError:
-                pass
 
     # ------------------------------------------------------------------
     # Security helpers
@@ -642,11 +640,9 @@ def main() -> None:
         # server.shutdown() is thread-safe and signals serve_forever() to stop.
         threading.Thread(target=server.shutdown, daemon=True).start()
 
-    try:
-        signal.signal(signal.SIGTERM, _sigterm_handler)
-    except (OSError, ValueError):
+    with contextlib.suppress(OSError, ValueError):
         # SIGTERM handling is best-effort (e.g. not available on Windows).
-        pass
+        signal.signal(signal.SIGTERM, _sigterm_handler)
 
     print(f"ContextGO Viewer listening on http://{HOST}:{PORT}")
     try:

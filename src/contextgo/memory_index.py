@@ -19,11 +19,9 @@ __all__ = [
     "strip_private_blocks",
     "sync_index_from_storage",
     "timeline_index",
-    "_retry_sqlite",
-    "_retry_sqlite_many",
-    "_retry_commit",
 ]
 
+import contextlib
 import hashlib
 import json
 import os
@@ -444,10 +442,8 @@ def ensure_index_db() -> Path:
         if _db_is_new:
             # Restrict the newly created SQLite file to owner-only access so
             # that memory observations are not world-readable on shared machines.
-            try:
+            with contextlib.suppress(OSError):
                 os.chmod(db_path, 0o600)
-            except OSError:
-                pass
         _retry_sqlite(conn, _DDL_OBSERVATIONS)
         for idx_sql in _DDL_INDEXES:
             _retry_sqlite(conn, idx_sql)

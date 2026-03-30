@@ -11,11 +11,11 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import logging
 import os
 import re
 import shutil
 import sqlite3
-import logging
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -235,7 +235,7 @@ def _sync_opencode_sessions(home: Path) -> dict[str, object]:
         removed = _prune_stale(adapter_dir, keep)
         return {"detected": False, "sessions": 0, "removed": removed, "path": None}
 
-    conn = sqlite3.connect(str(db_path), timeout=10)
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=10)
     conn.row_factory = sqlite3.Row
     sessions_written = 0
     changed = False

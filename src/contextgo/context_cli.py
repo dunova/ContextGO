@@ -487,7 +487,8 @@ def cmd_save(args: object) -> int:
     tags = [t.strip() for t in args.tags.split(",") if t.strip()]
     message = _save_local_memory(args.title, args.content, tags)
     print(message)
-    return 0 if not message.startswith("Failed to save memory:") else 1
+    failed = "Failed" in message[:20] or "Error" in message[:20]
+    return 1 if failed else 0
 
 
 def cmd_export(args: object) -> int:
