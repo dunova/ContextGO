@@ -170,16 +170,29 @@ def _setup_logging() -> None:
     logger.addHandler(rfh)
 
 
-# Optional httpx (remote-sync transport)
+# Optional httpx (remote-sync transport) — lazily imported to avoid
+# loading this heavy library when remote sync is disabled (the default).
 
-try:
-    import httpx as _httpx
+_httpx: Any = None  # populated by _import_httpx()
+_HTTPX_AVAILABLE: bool = False
 
-    _HTTPX_AVAILABLE = True
-except ImportError:
-    _httpx = None  # type: ignore[assignment]
-    _HTTPX_AVAILABLE = False
-    logger.info("httpx not installed; remote sync disabled.")
+
+def _import_httpx() -> bool:
+    """Lazily import httpx on first use; return True if available."""
+    global _httpx, _HTTPX_AVAILABLE
+    if _HTTPX_AVAILABLE:
+        return True
+    if _httpx is None:  # not yet attempted
+        try:
+            import httpx as _httpx_mod  # noqa: PLC0415
+
+            _httpx = _httpx_mod
+            _HTTPX_AVAILABLE = True
+        except ImportError:
+            _httpx = None
+            _HTTPX_AVAILABLE = False
+            logger.info("httpx not installed; remote sync disabled.")
+    return _HTTPX_AVAILABLE
 
 # Poll / timing configuration
 # Night-mode: off-hours (23:00-07:00) sleep is expanded to NIGHT_POLL_INTERVAL_SEC.
@@ -316,15 +329,17 @@ _IGNORE_SHELL_CMD_PREFIXES = ("history", "fc ")
 
 # _SECRET_REPLACEMENTS and sanitize_text are imported from secret_redaction above.
 
-# Graceful shutdown — shared flag set by signal handlers
+# Graceful shutdown — shared flag and event set by signal handlers
 
 _shutdown: bool = False
+_stop_event: threading.Event = threading.Event()
 
 
 def _handle_signal(signum: int, _frame: object) -> None:
     global _shutdown
     logger.info("Received signal %s — initiating graceful shutdown.", signum)
     _shutdown = True
+    _stop_event.set()
 
 
 # Single-instance lock
@@ -1527,7 +1542,12 @@ class SessionTracker:
                 os.write(fd, formatted.encode("utf-8"))
             finally:
                 os.close(fd)
-            os.replace(str(tmp_path), str(file_path))
+            try:
+                os.replace(str(tmp_path), str(file_path))
+            except OSError:
+                with contextlib.suppress(OSError):
+                    tmp_path.unlink(missing_ok=True)
+                raise
             self._index_dirty = True
             self.maybe_sync_index()
         except OSError as exc:
@@ -1956,7 +1976,7 @@ def main() -> None:
         if LOOP_JITTER_SEC > 0:
             sleep_s += random.uniform(0.0, LOOP_JITTER_SEC)
 
-        time.sleep(max(1.0, sleep_s))
+        _stop_event.wait(timeout=max(1.0, sleep_s))
 
     # Graceful shutdown
     tracker.maybe_sync_index(force=True)

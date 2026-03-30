@@ -25,8 +25,9 @@ import sqlite3
 import sys
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Generator
 
 try:
     from context_config import env_int, env_str
@@ -88,6 +89,16 @@ _MODEL_LOCK = threading.Lock()
 
 _BM25_CACHE: dict[str, tuple[int, Any]] = {}  # sdb_path -> (row_count, retriever)
 _BM25_CACHE_LOCK = threading.Lock()
+
+# ---------------------------------------------------------------------------
+# Vector matrix cache (module-level, keyed by vdb path)
+# Cache key: (row_count, max_rowid) to detect both additions and
+# delete-then-insert cycles that leave the count unchanged.
+# ---------------------------------------------------------------------------
+
+_VECTOR_MATRIX_CACHE: dict[str, tuple[tuple[int, int], list[str], Any]] = {}
+# vdb_path -> ((row_count, max_rowid), paths, matrix)
+_VECTOR_MATRIX_CACHE_LOCK = threading.Lock()
 
 # Whitelist of safe path characters for ATTACH DATABASE path validation.
 # Colon (':') is intentionally excluded to block SQLite URI schemes such as
@@ -206,6 +217,29 @@ _SQL_CREATE_VECTOR_INDEXES = [
 ]
 
 
+@contextmanager
+def _open_vdb(
+    db_path: Path | str,
+    *,
+    timeout: float = 30,
+    row_factory: bool = False,
+) -> Generator[sqlite3.Connection, None, None]:
+    """Context manager that opens a SQLite connection with WAL mode and busy_timeout.
+
+    Ensures the connection is always closed on exit, even if an exception occurs.
+    WAL mode is set on every open so that read-only paths do not block writers.
+    """
+    conn = sqlite3.connect(str(db_path), timeout=timeout)
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=5000")
+        if row_factory:
+            conn.row_factory = sqlite3.Row
+        yield conn
+    finally:
+        conn.close()
+
+
 def get_vector_db_path(session_db_path: Path | str) -> Path:
     """Return the vector DB path alongside the session DB."""
     custom = env_str("CONTEXTGO_VECTOR_DB_PATH", default="").strip()
@@ -218,9 +252,7 @@ def ensure_vector_db(vector_db_path: Path | str) -> Path:
     """Create the vector database with required tables and indexes."""
     vdb = Path(vector_db_path)
     vdb.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    conn = sqlite3.connect(str(vdb), timeout=30)
-    try:
-        conn.execute("PRAGMA journal_mode=WAL")
+    with _open_vdb(vdb, timeout=30) as conn:
         conn.execute("PRAGMA synchronous=NORMAL")
         conn.execute("PRAGMA cache_size=-16000")
         conn.execute("PRAGMA mmap_size=268435456")
@@ -230,8 +262,6 @@ def ensure_vector_db(vector_db_path: Path | str) -> Path:
         for idx_sql in _SQL_CREATE_VECTOR_INDEXES:
             conn.execute(idx_sql)
         conn.commit()
-    finally:
-        conn.close()
     return vdb
 
 
@@ -256,32 +286,29 @@ def embed_pending_session_docs(
     skipped = 0
     deleted = 0
 
-    conn = sqlite3.connect(str(vdb), timeout=30)
-    conn.row_factory = sqlite3.Row
-    try:
-        conn.execute("PRAGMA journal_mode=WAL")
+    with _open_vdb(vdb, timeout=30, row_factory=True) as conn:
         conn.execute("PRAGMA synchronous=NORMAL")
         conn.execute("PRAGMA cache_size=-16000")
         conn.execute("PRAGMA mmap_size=268435456")
         conn.execute("PRAGMA temp_store=MEMORY")
         sdb_path = Path(session_db_path).resolve()
         if sdb_path.suffix != ".db" or not sdb_path.exists():
-            raise ValueError(f"Invalid session database path: {sdb_path}")
+            raise ValueError("Invalid session database path")
         sdb_str = str(sdb_path)
         # Strict whitelist: resolve the path and verify it only contains safe
         # characters (alphanumeric, '/', '.', '-', '_').  This guards against
         # SQL-injection payloads even though ATTACH DATABASE does not support
         # parameter binding in SQLite.
         if not all(c in _SAFE_PATH_CHARS for c in sdb_str):
-            raise ValueError(f"Unsafe characters in database path: {sdb_str}")
+            raise ValueError("Unsafe characters in database path")
         # Explicit colon guard: blocks SQLite URI schemes (e.g. file:///etc/passwd?mode=ro)
         # that could be injected via CONTEXTGO_VECTOR_DB_PATH or session_db_path.
         if ":" in sdb_str:
-            raise ValueError(f"Colon not allowed in database path: {sdb_str}")
+            raise ValueError("Colon not allowed in database path")
         # Path traversal guard: the resolved path must share the same parent directory.
         resolved = Path(sdb_str).resolve()
         if not str(resolved).startswith(str(Path(sdb_str).parent.resolve())):
-            raise ValueError(f"Path traversal detected: {sdb_str}")
+            raise ValueError("Path traversal detected in database path")
         conn.execute(f"ATTACH DATABASE '{sdb_str}' AS sessions")
 
         # Find pending documents
@@ -333,8 +360,6 @@ def embed_pending_session_docs(
 
         conn.commit()
         conn.execute("DETACH DATABASE sessions")
-    finally:
-        conn.close()
 
     return {"embedded": embedded, "skipped": skipped, "deleted": deleted}
 
@@ -383,19 +408,38 @@ def vector_search_session(
 
     query_vec = embed_single(query)
 
-    conn = sqlite3.connect(vdb, timeout=30)
-    try:
+    # Determine candidate pool size with a hard upper bound to prevent OOM.
+    candidate_limit = limit * VECTOR_SEARCH_MULT
+
+    # Check cache validity then load only if stale.
+    with _open_vdb(vdb, timeout=30) as conn:
         conn.execute("PRAGMA cache_size=-16000")
         conn.execute("PRAGMA mmap_size=268435456")
-        rows = conn.execute("SELECT file_path, embedding FROM session_vectors").fetchall()
-    finally:
-        conn.close()
+        row_count: int = conn.execute("SELECT COUNT(*) FROM session_vectors").fetchone()[0]
+        max_rowid: int = conn.execute("SELECT MAX(rowid) FROM session_vectors").fetchone()[0] or 0
+        cache_key = (row_count, max_rowid)
 
-    if not rows:
+        with _VECTOR_MATRIX_CACHE_LOCK:
+            cached_entry = _VECTOR_MATRIX_CACHE.get(vdb)
+            if cached_entry is not None and cached_entry[0] == cache_key:
+                paths, matrix = cached_entry[1], cached_entry[2]
+                rows = None
+            else:
+                rows = conn.execute(
+                    "SELECT file_path, embedding FROM session_vectors LIMIT ?",
+                    (candidate_limit,),
+                ).fetchall()
+
+    if rows is not None:
+        if not rows:
+            return []
+        paths = [r[0] for r in rows]
+        matrix = np.array([_unpack_vector(r[1]) for r in rows], dtype=np.float32)
+        with _VECTOR_MATRIX_CACHE_LOCK:
+            _VECTOR_MATRIX_CACHE[vdb] = (cache_key, paths, matrix)
+
+    if not paths:
         return []
-
-    paths = [r[0] for r in rows]
-    matrix = np.array([_unpack_vector(r[1]) for r in rows], dtype=np.float32)
 
     # Batch cosine similarity
     norms = np.linalg.norm(matrix, axis=1)
@@ -434,14 +478,11 @@ def bm25s_search_session(
     if not Path(sdb).exists():
         return []
 
-    conn = sqlite3.connect(sdb, timeout=30)
-    try:
+    with _open_vdb(sdb, timeout=30) as conn:
         rows = conn.execute("SELECT file_path, title, content FROM session_documents").fetchall()
         # Fetch MAX(rowid) alongside COUNT(*) so that delete-then-insert
         # sequences (same count, different rows) properly invalidate the cache.
         max_rowid: int = conn.execute("SELECT MAX(rowid) FROM session_documents").fetchone()[0] or 0
-    finally:
-        conn.close()
 
     if not rows:
         return []
@@ -561,17 +602,13 @@ def fetch_enriched_results(
     file_paths = [r["file_path"] for r in ranked_paths]
     placeholders = ",".join("?" for _ in file_paths)
 
-    conn = sqlite3.connect(sdb, timeout=30)
-    conn.row_factory = sqlite3.Row
-    try:
+    with _open_vdb(sdb, timeout=30, row_factory=True) as conn:
         rows = conn.execute(
             f"SELECT source_type, session_id, title, file_path, created_at, "  # noqa: S608
             f"created_at_epoch, content FROM session_documents "
             f"WHERE file_path IN ({placeholders})",
             file_paths,
         ).fetchall()
-    finally:
-        conn.close()
 
     # Build lookup by file_path
     row_map = {r["file_path"]: r for r in rows}
@@ -637,13 +674,10 @@ def vector_status(
     if not vdb.exists():
         return result
 
-    conn = sqlite3.connect(str(vdb), timeout=10)
-    try:
+    with _open_vdb(str(vdb), timeout=10) as conn:
         with contextlib.suppress(sqlite3.OperationalError):
             result["indexed_sessions"] = conn.execute("SELECT COUNT(*) FROM session_vectors").fetchone()[0]
         with contextlib.suppress(sqlite3.OperationalError):
             result["indexed_observations"] = conn.execute("SELECT COUNT(*) FROM observation_vectors").fetchone()[0]
-    finally:
-        conn.close()
 
     return result

@@ -316,6 +316,19 @@ SOURCE_WEIGHT: dict[str, int] = {
 _SOURCE_CACHE: dict[str, Any] = {"expires_at": 0.0, "items": [], "home": None}
 
 
+# ---------------------------------------------------------------------------
+# In-process search result cache (TTL-based)
+# ---------------------------------------------------------------------------
+# Cache TTL in seconds.  Set CONTEXTGO_SESSION_SEARCH_CACHE_TTL=0 to disable.
+try:
+    _SEARCH_RESULT_CACHE_TTL: int = int(os.environ.get("CONTEXTGO_SESSION_SEARCH_CACHE_TTL", "5") or "5")
+except (ValueError, TypeError):
+    _SEARCH_RESULT_CACHE_TTL: int = 5
+# Mapping of cache_key -> (expiry_monotonic_float, results_list)
+_SEARCH_RESULT_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+_SEARCH_CACHE_MAX_ENTRIES: int = 64
+
+
 def _cache_put_results(cache_key: str, results: list[dict[str, Any]]) -> None:
     """Insert *results* into the search result cache, evicting stale/excess entries."""
     if _SEARCH_RESULT_CACHE_TTL <= 0:
@@ -329,23 +342,17 @@ def _cache_put_results(cache_key: str, results: list[dict[str, Any]]) -> None:
             _SEARCH_RESULT_CACHE.pop(next(iter(_SEARCH_RESULT_CACHE)))
     _SEARCH_RESULT_CACHE[cache_key] = (time.monotonic() + _SEARCH_RESULT_CACHE_TTL, results)
 
-# ---------------------------------------------------------------------------
-# In-process search result cache (TTL-based)
-# ---------------------------------------------------------------------------
-# Cache TTL in seconds.  Set CONTEXTGO_SESSION_SEARCH_CACHE_TTL=0 to disable.
-try:
-    _SEARCH_RESULT_CACHE_TTL: int = int(os.environ.get("CONTEXTGO_SESSION_SEARCH_CACHE_TTL", "5") or "5")
-except (ValueError, TypeError):
-    _SEARCH_RESULT_CACHE_TTL: int = 5
-# Mapping of cache_key -> (expiry_monotonic_float, results_list)
-_SEARCH_RESULT_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
-_SEARCH_CACHE_MAX_ENTRIES: int = 64
-
 # Pre-compiled whitespace normalizer used throughout this module.
 _WHITESPACE_RE = re.compile(r"\s+")
 
 # Pre-compiled CJK character matcher used in snippet and scoring helpers.
 _CJK_CHAR_RE: re.Pattern[str] = re.compile(r"[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]")
+
+# Pre-compiled regexes used in build_query_terms (avoids per-call compilation).
+_DATE_RE: re.Pattern[str] = re.compile(r"\s*(\d{4})[-/](\d{1,2})[-/](\d{1,2})\s*")
+_PATH_TOKEN_RE: re.Pattern[str] = re.compile(r"(?:~?/[A-Za-z0-9._/-]+)")
+_ASCII_TOKEN_RE: re.Pattern[str] = re.compile(r"[A-Za-z][A-Za-z0-9._-]{2,40}")
+_CJK_TOKEN_RE: re.Pattern[str] = re.compile(r"[\u4e00-\u9fff]{2,12}")
 
 _SNIPPET_MAX_CHARS = 120
 
@@ -1346,18 +1353,18 @@ def build_query_terms(query: str) -> list[str]:
         seen.add(lower)
         terms.append(clean)
 
-    date_match = re.fullmatch(r"\s*(\d{4})[-/](\d{1,2})[-/](\d{1,2})\s*", raw)
+    date_match = _DATE_RE.fullmatch(raw)
     if date_match:
         y, m, d = date_match.groups()
         _add(f"{y}-{int(m):02d}-{int(d):02d}")
         _add(f"{y}{int(m):02d}{int(d):02d}")
 
-    for token in re.findall(r"(?:~?/[A-Za-z0-9._/-]+)", raw):
+    for token in _PATH_TOKEN_RE.findall(raw):
         _add(Path(token).name or token)
-    for token in re.findall(r"[A-Za-z][A-Za-z0-9._-]{2,40}", raw):
+    for token in _ASCII_TOKEN_RE.findall(raw):
         if token.lower() not in STOPWORDS and token.lower() not in CJK_STOPWORDS:
             _add(token)
-    for token in re.findall(r"[\u4e00-\u9fff]{2,12}", raw):
+    for token in _CJK_TOKEN_RE.findall(raw):
         _add(token)
         normalized = token.lstrip("的了将把从向在对与和及并或再先后")
         if normalized != token or len(normalized) >= 6:
@@ -1788,14 +1795,13 @@ def _rank_rows(
         title_lower = str(row["title"] or "").lower()
         content_lower = str(row["content"] or "").lower()
         fp_lower = str(row["file_path"] or "").lower()
-        haystack = f"{title_lower}\n{content_lower}\n{fp_lower}"
 
         # 1. SOURCE_WEIGHT — primary factor.
         score: float = SOURCE_WEIGHT.get(str(row["source_type"]), 1)
 
         # 2. Baseline term-length-squared bonus + 3. TF + 4. Title bonus.
         for term_lower in lower_terms:
-            if term_lower in haystack:
+            if term_lower in title_lower or term_lower in content_lower or term_lower in fp_lower:
                 # Baseline squared-length bonus.
                 score += max(4, len(term_lower) * len(term_lower))
 
@@ -1807,12 +1813,17 @@ def _rank_rows(
                     score += max(4, len(term_lower) * len(term_lower)) * 2  # 3× total
 
         # 5. Exact-phrase bonus.
-        if exact_phrase and len(exact_phrase) >= 2 and exact_phrase in haystack:
+        if exact_phrase and len(exact_phrase) >= 2 and (
+            exact_phrase in title_lower or exact_phrase in content_lower or exact_phrase in fp_lower
+        ):
             score += 50
 
         # 6. CJK bigram bonus.
         if cjk_bigrams:
-            bigram_hits = sum(1 for bg in cjk_bigrams if bg in haystack)
+            bigram_hits = sum(
+                1 for bg in cjk_bigrams
+                if bg in title_lower or bg in content_lower or bg in fp_lower
+            )
             score += bigram_hits * 8
 
         # 7. Recency bonus.

@@ -24,8 +24,30 @@ except ImportError:  # pragma: no cover
 # Repository layout
 # ---------------------------------------------------------------------------
 
-REPO_ROOT: Path = Path(__file__).resolve().parents[1]
-NATIVE_ROOT: Path = REPO_ROOT / "native"
+
+def _resolve_native_root() -> Path:
+    """Return the ``native/`` directory for the ContextGO project.
+
+    Resolution order:
+    1. ``CONTEXTGO_NATIVE_ROOT`` environment variable (absolute override).
+    2. Two levels above this file: ``__file__`` is
+       ``src/contextgo/context_native.py``, so ``parents[2]`` is the
+       project root, and ``native/`` lives directly beneath it.
+
+    Returns:
+        Path to the ``native/`` directory (may not exist in installed envs).
+    """
+    env_override = os.environ.get("CONTEXTGO_NATIVE_ROOT", "").strip()
+    if env_override:
+        return Path(env_override)
+    # parents[0] = src/contextgo/
+    # parents[1] = src/
+    # parents[2] = <project-root>/
+    return Path(__file__).resolve().parents[2] / "native"
+
+
+REPO_ROOT: Path = Path(__file__).resolve().parents[2]
+NATIVE_ROOT: Path = _resolve_native_root()
 RUST_PROJECT: Path = NATIVE_ROOT / "session_scan"
 GO_PROJECT: Path = NATIVE_ROOT / "session_scan_go"
 

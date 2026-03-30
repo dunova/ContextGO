@@ -585,13 +585,26 @@ fn process_file(
     // page cache, eliminating an extra copy into user space.
     if file_size >= MMAP_THRESHOLD_BYTES {
         // SAFETY: The file is opened read-only and we never write through the
-        // mapping.  There is an inherent TOCTOU risk if the file is truncated
-        // by another process while we hold the mmap — this is acceptable for a
-        // scanning tool running in a development environment.
+        // mapping.
+        //
+        // TOCTOU / SIGBUS mitigation: between stat(2) and mmap(2) another
+        // process could truncate the file.  If the kernel later accesses a
+        // page that no longer exists it delivers SIGBUS (Linux) or SIGSEGV
+        // (macOS).  We guard against this by comparing map.len() to the
+        // file_size obtained from metadata immediately *after* mapping: if
+        // they differ the file was modified under us and we fall back to the
+        // safe buffered-reader path instead of risking a bus error.
         let mmap = unsafe { memmap2::Mmap::map(&file) };
         match mmap {
             Ok(map) => {
-                return process_file_bytes(item, &map, file_size, pattern, current_workdir);
+                // Post-map size check: if the mapping length no longer matches
+                // the file size we recorded before mapping, the file was
+                // truncated (or grown) between stat and mmap.  Fall through to
+                // the buffered-reader path which is immune to this race.
+                if map.len() as u64 == file_size {
+                    return process_file_bytes(item, &map, file_size, pattern, current_workdir);
+                }
+                // Size mismatch — fall through to safe buffered-reader path.
             }
             Err(_) => {
                 // mmap failed (e.g. permission denied or special file) — fall

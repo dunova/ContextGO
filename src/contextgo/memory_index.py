@@ -166,6 +166,42 @@ _PRIVATE_TAG_RE = re.compile(r"</?private>", re.IGNORECASE)
 # Extract compiled patterns only (replacement strings are not used here).
 _SECRET_PATTERNS: list[re.Pattern[str]] = [pat for pat, _repl in _SECRET_REPLACEMENTS_FULL]
 
+# P1: Fast-path markers for secret detection.
+# If none of these literal substrings appear in the text, all 26 regexes are
+# skipped entirely.  The list covers the most common secret prefixes; add new
+# entries here whenever a new pattern is added to secret_redaction.
+_REDACT_FAST_MARKERS: tuple[str, ...] = (
+    "sk-",           # OpenAI / Anthropic API keys
+    "ghp_",          # GitHub personal access tokens
+    "ghu_",          # GitHub user-to-server tokens
+    "ghs_",          # GitHub server-to-server tokens
+    "ghr_",          # GitHub refresh tokens
+    "AKIA",          # AWS access key IDs
+    "ASIA",          # AWS temporary access key IDs
+    "xoxb-",         # Slack bot tokens
+    "xoxp-",         # Slack user tokens
+    "xapp-",         # Slack app tokens
+    "xoxa-",         # Slack workspace access tokens
+    "xoxr-",         # Slack workspace refresh tokens
+    "EAA",           # Facebook/Meta access tokens
+    "ya29.",         # Google OAuth2 access tokens
+    "AIza",          # Google API keys
+    "-----BEGIN",    # PEM-encoded private keys / certificates
+    "token",         # Generic "token" keyword (case-insensitive check done below)
+    "secret",        # Generic "secret" keyword
+    "password",      # Generic "password" keyword
+    "passwd",        # Generic "passwd" keyword
+    "api_key",       # Generic api_key patterns
+    "apikey",        # Alternative spelling
+    "private_key",   # Generic private key field names
+    "access_key",    # Generic access key field names
+    "Authorization", # HTTP Authorization header value
+    "Bearer ",       # Bearer token in auth headers
+)
+
+# Lower-cased version for case-insensitive fast check on the generic markers.
+_REDACT_FAST_MARKERS_LOWER: tuple[str, ...] = tuple(m.lower() for m in _REDACT_FAST_MARKERS)
+
 
 # Text sanitisation
 
@@ -178,8 +214,21 @@ def strip_private_blocks(text: str) -> str:
 
 
 def _sanitize_text(text: str) -> str:
-    """Strip private blocks and redact known secret patterns."""
+    """Strip private blocks and redact known secret patterns.
+
+    A fast pre-filter checks for known secret marker substrings before
+    applying any of the 26+ compiled regexes.  Text that contains no
+    recognised marker is returned immediately after private-block stripping,
+    avoiding the full regex scan.
+    """
     out = strip_private_blocks(text or "")
+    if not out:
+        return out
+    # P1 fast-check: scan for any known marker (case-insensitive).
+    out_lower = out.lower()
+    if not any(m in out_lower for m in _REDACT_FAST_MARKERS_LOWER):
+        return out.strip()
+    # At least one marker found — apply full regex redaction.
     for pat in _SECRET_PATTERNS:
         out = pat.sub("***REDACTED***", out)
     return out.strip()
@@ -502,6 +551,31 @@ def sync_index_from_storage() -> dict[str, int]:
             _flush(conn)
 
     with _open_db(db_path) as conn:
+        # P0 bulk-load: fetch ALL existing local-source rows once before the
+        # per-file loop to eliminate N+1 query patterns (was: up to 2 SQL
+        # round-trips per file).
+        #
+        # rows_by_path: file_path -> list of (id, fingerprint) rows,
+        #               ordered by (updated_at_epoch DESC, id DESC) as in
+        #               _SQL_FIND_BY_PATH.
+        # rows_by_fp:   fingerprint -> (id, file_path) — first match only,
+        #               mirroring _SQL_FIND_BY_FP behaviour.
+        rows_by_path: dict[str, list[tuple[int, str]]] = {}
+        rows_by_fp: dict[str, tuple[int, str]] = {}
+        _bulk_sql = (
+            "SELECT id, fingerprint, file_path, updated_at_epoch "
+            "FROM observations "
+            "WHERE source_type IN ('history', 'conversation') "
+            "ORDER BY updated_at_epoch DESC, id DESC"
+        )
+        for _r in conn.execute(_bulk_sql).fetchall():
+            _fp = str(_r["fingerprint"])
+            _fp_id = int(_r["id"])
+            _fp_path = str(_r["file_path"])
+            rows_by_path.setdefault(_fp_path, []).append((_fp_id, _fp))
+            # Keep only the first (most-recent) match per fingerprint.
+            rows_by_fp.setdefault(_fp, (_fp_id, _fp_path))
+
         for base in _history_dirs():
             if not base.exists():
                 continue
@@ -512,14 +586,15 @@ def sync_index_from_storage() -> dict[str, int]:
                 if obs is None:
                     continue
 
-                same_path_rows = _retry_sqlite(conn, _SQL_FIND_BY_PATH, (obs.file_path,)).fetchall()
+                # P0: dict lookup replaces _SQL_FIND_BY_PATH round-trip.
+                same_path_rows = rows_by_path.get(obs.file_path, [])
 
                 if same_path_rows:
-                    keep_id = int(same_path_rows[0]["id"])
-                    for dup in same_path_rows[1:]:
-                        _delete_batch.append((int(dup["id"]),))
+                    keep_id, keep_fp = same_path_rows[0]
+                    for dup_id, _dup_fp in same_path_rows[1:]:
+                        _delete_batch.append((dup_id,))
                         removed += 1
-                    if str(same_path_rows[0]["fingerprint"]) != obs.fingerprint:
+                    if keep_fp != obs.fingerprint:
                         _update_full_batch.append(
                             (
                                 obs.fingerprint,
@@ -541,10 +616,12 @@ def sync_index_from_storage() -> dict[str, int]:
                     continue
 
                 # Reconcile by fingerprint to handle renames.
-                row = _retry_sqlite(conn, _SQL_FIND_BY_FP, (obs.fingerprint,)).fetchone()
-                if row:
-                    if row["file_path"] != obs.file_path:
-                        _update_path_batch.append((obs.file_path, now_epoch, row["id"]))
+                # P0: dict lookup replaces _SQL_FIND_BY_FP round-trip.
+                fp_row = rows_by_fp.get(obs.fingerprint)
+                if fp_row:
+                    fp_id, fp_path = fp_row
+                    if fp_path != obs.file_path:
+                        _update_path_batch.append((obs.file_path, now_epoch, fp_id))
                         updated += 1
                 else:
                     _insert_batch.append(
