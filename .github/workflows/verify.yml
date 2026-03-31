@@ -45,13 +45,13 @@ jobs:
         run: bash -n scripts/*.sh
 
       - name: Check Python syntax
-        run: python -m py_compile src/contextgo/*.py tests/*.py scripts/*.py benchmarks/*.py
+        run: python -m py_compile src/contextgo/*.py tests/*.py scripts/*.py docs/benchmarks/*.py
 
       - name: Ruff lint
-        run: ruff check src/contextgo/ tests/ scripts/ benchmarks/
+        run: ruff check src/contextgo/ tests/ scripts/ docs/benchmarks/
 
       - name: Ruff format check
-        run: ruff format --check src/contextgo/ tests/ scripts/ benchmarks/
+        run: ruff format --check src/contextgo/ tests/ scripts/ docs/benchmarks/
 
       - name: Mypy static type check
         run: |
@@ -110,7 +110,7 @@ jobs:
         uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v4
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-test-${{ matrix.python-version }}-${{ hashFiles('pyproject.toml', 'requirements-dev.txt') }}
+          key: ${{ runner.os }}-pip-test-${{ matrix.python-version }}-${{ hashFiles('pyproject.toml') }}
           restore-keys: |
             ${{ runner.os }}-pip-test-${{ matrix.python-version }}-
             ${{ runner.os }}-pip-test-
@@ -118,7 +118,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements-dev.txt
+          pip install -e ".[dev]"
 
       - name: Run tests with coverage
         run: |
@@ -223,13 +223,13 @@ jobs:
         uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v4
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-quality-3.11-${{ hashFiles('pyproject.toml', 'requirements-dev.txt') }}
+          key: ${{ runner.os }}-pip-quality-3.11-${{ hashFiles('pyproject.toml') }}
           restore-keys: ${{ runner.os }}-pip-quality-
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements-dev.txt
+          pip install -e ".[dev]"
           pip install -e .
 
       - name: End-to-end quality gate

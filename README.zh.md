@@ -305,15 +305,15 @@ ContextGO/
 │   ├── session_scan/          # Rust 热路径二进制
 │   └── session_scan_go/       # Go 并行扫描二进制
 ├── docs/                      # 架构、配置、发布说明
-├── benchmarks/                # Python 与原生性能对比测试
-└── templates/                 # launchd / systemd-user 服务模板
+├── docs/benchmarks/           # Python 与原生性能对比测试
+└── docs/templates/            # launchd / systemd-user 服务模板
 ```
 
 ---
 
 ## 参与贡献
 
-见 [CONTRIBUTING.md](CONTRIBUTING.md) 了解本地开发环境、测试命令和 PR 质量门。
+见 [CONTRIBUTING.md](.github/CONTRIBUTING.md) 了解本地开发环境、测试命令和 PR 质量门。
 
 ```bash
 git clone https://github.com/dunova/ContextGO.git
@@ -325,8 +325,8 @@ contextgo health
 
 | 资源 | |
 |---|---|
-| 安全 | [SECURITY.md](SECURITY.md) — 威胁模型与负责任披露 |
-| 变更日志 | [CHANGELOG.md](CHANGELOG.md) — 完整版本变更记录 |
+| 安全 | [SECURITY.md](.github/SECURITY.md) — 威胁模型与负责任披露 |
+| 变更日志 | [CHANGELOG.md](.github/CHANGELOG.md) — 完整版本变更记录 |
 | 架构 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — 设计原则 |
 | 故障排查 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) — 常见故障与排查步骤 |
 

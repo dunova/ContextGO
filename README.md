@@ -305,16 +305,14 @@ ContextGO/
 ├── native/
 │   ├── session_scan/          # Rust hot-path binary
 │   └── session_scan_go/       # Go parallel-scan binary
-├── docs/                      # Architecture, config, release notes
-├── benchmarks/                # Python vs. native performance harness
-└── templates/                 # launchd / systemd-user service templates
+└── docs/                      # Architecture, config, benchmarks, templates
 ```
 
 ---
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for local dev setup, test commands, and PR quality gates.
+See [CONTRIBUTING.md](.github/CONTRIBUTING.md) for local dev setup, test commands, and PR quality gates.
 
 ```bash
 git clone https://github.com/dunova/ContextGO.git
@@ -326,8 +324,8 @@ contextgo health
 
 | Resource | |
 |---|---|
-| Security | [SECURITY.md](SECURITY.md) — threat model and responsible disclosure |
-| Changelog | [CHANGELOG.md](CHANGELOG.md) — full version history |
+| Security | [SECURITY.md](.github/SECURITY.md) — threat model and responsible disclosure |
+| Changelog | [CHANGELOG.md](.github/CHANGELOG.md) — full version history |
 | Architecture | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — design principles |
 | Troubleshooting | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) — common failure modes |
 

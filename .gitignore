@@ -126,3 +126,5 @@ site/
 # Packaging scratch
 MANIFEST
 *.manifest
+# Project AI config (local only)
+.claude/
