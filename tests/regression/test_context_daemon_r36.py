@@ -229,9 +229,8 @@ class TestFileWatcherInotifyInitFailures(unittest.TestCase):
         """When inotify_init1 returns -1 the watcher must fall back to polling."""
         mock_libc = MagicMock()
         mock_libc.inotify_init1.return_value = -1
-        with patch.object(context_daemon, "_LIBC", mock_libc):
-            with patch("ctypes.get_errno", return_value=22):
-                watcher = _FileWatcher([self.tmpdir])
+        with patch.object(context_daemon, "_LIBC", mock_libc), patch("ctypes.get_errno", return_value=22):
+            watcher = _FileWatcher([self.tmpdir])
         self.assertFalse(watcher._available)
         self.assertEqual(watcher._inotify_fd, -1)
 
@@ -241,10 +240,12 @@ class TestFileWatcherInotifyInitFailures(unittest.TestCase):
         mock_libc.inotify_init1.return_value = 5  # fake fd
         mock_libc.inotify_add_watch.return_value = -1
         mock_libc.inotify_rm_watch.return_value = 0
-        with patch.object(context_daemon, "_LIBC", mock_libc):
-            with patch("ctypes.get_errno", return_value=13):
-                with patch("os.close"):
-                    watcher = _FileWatcher([self.tmpdir])
+        with (
+            patch.object(context_daemon, "_LIBC", mock_libc),
+            patch("ctypes.get_errno", return_value=13),
+            patch("os.close"),
+        ):
+            watcher = _FileWatcher([self.tmpdir])
         self.assertFalse(watcher._available)
 
     def test_inotify_add_watch_partial_success_still_active(self) -> None:
@@ -256,9 +257,8 @@ class TestFileWatcherInotifyInitFailures(unittest.TestCase):
             # First call succeeds (wd=1), second call fails (wd=-1)
             mock_libc.inotify_add_watch.side_effect = [1, -1]
             mock_libc.inotify_rm_watch.return_value = 0
-            with patch.object(context_daemon, "_LIBC", mock_libc):
-                with patch("ctypes.get_errno", return_value=13):
-                    watcher = _FileWatcher([self.tmpdir, dir2])
+            with patch.object(context_daemon, "_LIBC", mock_libc), patch("ctypes.get_errno", return_value=13):
+                watcher = _FileWatcher([self.tmpdir, dir2])
             self.assertTrue(watcher._available)
             self.assertIn(1, watcher._wd_to_dir)
         finally:
@@ -272,10 +272,12 @@ class TestFileWatcherInotifyInitFailures(unittest.TestCase):
         mock_libc.inotify_init1.return_value = 9
         mock_libc.inotify_add_watch.return_value = -1
         closed_fds = []
-        with patch.object(context_daemon, "_LIBC", mock_libc):
-            with patch("ctypes.get_errno", return_value=13):
-                with patch("os.close", side_effect=lambda fd: closed_fds.append(fd)):
-                    _FileWatcher([self.tmpdir])
+        with (
+            patch.object(context_daemon, "_LIBC", mock_libc),
+            patch("ctypes.get_errno", return_value=13),
+            patch("os.close", side_effect=lambda fd: closed_fds.append(fd)),
+        ):
+            _FileWatcher([self.tmpdir])
         self.assertIn(9, closed_fds)
 
 
@@ -357,9 +359,8 @@ class TestFileWatcherDrainInotify(unittest.TestCase):
     def test_drain_handles_blocking_io_error(self) -> None:
         """_drain_inotify returns gracefully on BlockingIOError."""
         watcher = self._make_inotify_watcher(fd=7)
-        with patch("select.select", return_value=([7], [], [])):
-            with patch("os.read", side_effect=BlockingIOError()):
-                watcher._drain_inotify()
+        with patch("select.select", return_value=([7], [], [])), patch("os.read", side_effect=BlockingIOError()):
+            watcher._drain_inotify()
         self.assertFalse(watcher._changed_paths)
 
     # ------------------------------------------------------------------
@@ -369,9 +370,8 @@ class TestFileWatcherDrainInotify(unittest.TestCase):
     def test_drain_handles_oserror_on_read(self) -> None:
         """_drain_inotify logs and returns on OS-level read error."""
         watcher = self._make_inotify_watcher(fd=8)
-        with patch("select.select", return_value=([8], [], [])):
-            with patch("os.read", side_effect=OSError("I/O error")):
-                watcher._drain_inotify()
+        with patch("select.select", return_value=([8], [], [])), patch("os.read", side_effect=OSError("I/O error")):
+            watcher._drain_inotify()
         self.assertFalse(watcher._changed_paths)
 
     # ------------------------------------------------------------------
@@ -381,9 +381,8 @@ class TestFileWatcherDrainInotify(unittest.TestCase):
     def test_drain_handles_empty_read(self) -> None:
         """_drain_inotify returns when os.read gives zero bytes."""
         watcher = self._make_inotify_watcher(fd=9)
-        with patch("select.select", return_value=([9], [], [])):
-            with patch("os.read", return_value=b""):
-                watcher._drain_inotify()
+        with patch("select.select", return_value=([9], [], [])), patch("os.read", return_value=b""):
+            watcher._drain_inotify()
         self.assertFalse(watcher._changed_paths)
 
     # ------------------------------------------------------------------
@@ -394,18 +393,16 @@ class TestFileWatcherDrainInotify(unittest.TestCase):
         """_drain_inotify correctly maps wd=1 to the watched directory."""
         watcher = self._make_inotify_watcher(fd=10)
         event = _make_inotify_event(wd=1, mask=0x00000002, cookie=0)
-        with patch("select.select", return_value=([10], [], [])):
-            with patch("os.read", return_value=event):
-                watcher._drain_inotify()
+        with patch("select.select", return_value=([10], [], [])), patch("os.read", return_value=event):
+            watcher._drain_inotify()
         self.assertIn(self.tmpdir, watcher._changed_paths)
 
     def test_drain_parses_event_with_filename(self) -> None:
         """_drain_inotify handles events that include a filename in the name field."""
         watcher = self._make_inotify_watcher(fd=11)
         event = _make_inotify_event(wd=1, mask=0x00000100, cookie=0, name=b"test.py")
-        with patch("select.select", return_value=([11], [], [])):
-            with patch("os.read", return_value=event):
-                watcher._drain_inotify()
+        with patch("select.select", return_value=([11], [], [])), patch("os.read", return_value=event):
+            watcher._drain_inotify()
         self.assertIn(self.tmpdir, watcher._changed_paths)
 
     def test_drain_parses_multiple_events_in_buffer(self) -> None:
@@ -414,9 +411,8 @@ class TestFileWatcherDrainInotify(unittest.TestCase):
         event1 = _make_inotify_event(wd=1, mask=0x00000002, cookie=0)
         event2 = _make_inotify_event(wd=1, mask=0x00000008, cookie=0, name=b"file.txt")
         combined = event1 + event2
-        with patch("select.select", return_value=([12], [], [])):
-            with patch("os.read", return_value=combined):
-                watcher._drain_inotify()
+        with patch("select.select", return_value=([12], [], [])), patch("os.read", return_value=combined):
+            watcher._drain_inotify()
         self.assertIn(self.tmpdir, watcher._changed_paths)
 
     def test_drain_ignores_unknown_wd(self) -> None:
@@ -424,9 +420,8 @@ class TestFileWatcherDrainInotify(unittest.TestCase):
         watcher = self._make_inotify_watcher(fd=13)
         # wd=99 is not in _wd_to_dir
         event = _make_inotify_event(wd=99, mask=0x00000002, cookie=0)
-        with patch("select.select", return_value=([13], [], [])):
-            with patch("os.read", return_value=event):
-                watcher._drain_inotify()
+        with patch("select.select", return_value=([13], [], [])), patch("os.read", return_value=event):
+            watcher._drain_inotify()
         self.assertFalse(watcher._changed_paths)
 
     def test_drain_stops_on_truncated_event(self) -> None:
@@ -434,9 +429,8 @@ class TestFileWatcherDrainInotify(unittest.TestCase):
         watcher = self._make_inotify_watcher(fd=14)
         # Craft an event header whose name_len claims 1024 bytes but buffer ends
         header = struct.pack("<iIII", 1, 0x00000002, 0, 1024)
-        with patch("select.select", return_value=([14], [], [])):
-            with patch("os.read", return_value=header):
-                watcher._drain_inotify()  # must not raise
+        with patch("select.select", return_value=([14], [], [])), patch("os.read", return_value=header):
+            watcher._drain_inotify()  # must not raise
 
     # ------------------------------------------------------------------
     # has_changes / get_changed_paths in inotify mode
@@ -451,9 +445,8 @@ class TestFileWatcherDrainInotify(unittest.TestCase):
         """has_changes() returns True after _drain_inotify records a change."""
         watcher = self._make_inotify_watcher(fd=16)
         event = _make_inotify_event(wd=1, mask=0x00000002, cookie=0)
-        with patch("select.select", return_value=([16], [], [])):
-            with patch("os.read", return_value=event):
-                watcher._drain_inotify()
+        with patch("select.select", return_value=([16], [], [])), patch("os.read", return_value=event):
+            watcher._drain_inotify()
         self.assertTrue(watcher.has_changes())
 
     def test_get_changed_paths_clears_set(self) -> None:

@@ -293,9 +293,11 @@ class TestEmbedPendingInvalidPath:
             def __str__(self):
                 return "/tmp/sess;ion.db"
 
-        with mock.patch.object(Path, "resolve", return_value=_BadPath()):
-            with pytest.raises(ValueError, match="Unsafe characters"):
-                vector_index.embed_pending_session_docs(sdb, vdb)
+        with (
+            mock.patch.object(Path, "resolve", return_value=_BadPath()),
+            pytest.raises(ValueError, match="Unsafe characters"),
+        ):
+            vector_index.embed_pending_session_docs(sdb, vdb)
 
 
 class TestStaleDeletionBatchFlushPath:
@@ -468,9 +470,11 @@ class TestHybridSearchOneSidedResults:
         )
         # Provide empty vector results, non-empty bm25 results
         bm25_result = [{"file_path": "/a.md", "score": 5.0, "rank": 1}]
-        with mock.patch.object(vector_index, "vector_search_session", return_value=[]):
-            with mock.patch.object(vector_index, "bm25s_search_session", return_value=bm25_result):
-                results = vector_index.hybrid_search_session("alpha", sdb, vdb, limit=5)
+        with (
+            mock.patch.object(vector_index, "vector_search_session", return_value=[]),
+            mock.patch.object(vector_index, "bm25s_search_session", return_value=bm25_result),
+        ):
+            results = vector_index.hybrid_search_session("alpha", sdb, vdb, limit=5)
         assert len(results) == 1
         assert results[0]["file_path"] == "/a.md"
         assert "rrf_score" in results[0]
@@ -484,9 +488,11 @@ class TestHybridSearchOneSidedResults:
             [{"file_path": "/b.md", "title": "Beta", "content": "beta content doc"}],
         )
         vec_result = [{"file_path": "/b.md", "score": 0.9, "rank": 1}]
-        with mock.patch.object(vector_index, "vector_search_session", return_value=vec_result):
-            with mock.patch.object(vector_index, "bm25s_search_session", return_value=[]):
-                results = vector_index.hybrid_search_session("beta", sdb, vdb, limit=5)
+        with (
+            mock.patch.object(vector_index, "vector_search_session", return_value=vec_result),
+            mock.patch.object(vector_index, "bm25s_search_session", return_value=[]),
+        ):
+            results = vector_index.hybrid_search_session("beta", sdb, vdb, limit=5)
         assert len(results) == 1
         assert results[0]["file_path"] == "/b.md"
         assert "rrf_score" in results[0]
@@ -581,36 +587,36 @@ class TestCmdVectorStatusPackageImport:
         fake_si.get_session_db_path.return_value = str(tmp_path / "session.db")
 
         # Simulate: top-level 'vector_index' import fails, .vector_index succeeds
-        with mock.patch.object(context_cli, "_get_session_index", return_value=fake_si):
-            with mock.patch.dict(sys.modules, {"vector_index": None}):
-                # Patch the package-relative import by injecting into context_cli's namespace
-                with mock.patch.object(
-                    context_cli,
-                    "cmd_vector_status",
-                    wraps=context_cli.cmd_vector_status,
-                ):
-                    # Direct injection: patch builtins import inside cmd_vector_status
-                    import builtins
+        with (
+            mock.patch.object(context_cli, "_get_session_index", return_value=fake_si),
+            mock.patch.dict(sys.modules, {"vector_index": None}),
+            # Patch the package-relative import by injecting into context_cli's namespace
+            mock.patch.object(
+                context_cli,
+                "cmd_vector_status",
+                wraps=context_cli.cmd_vector_status,
+            ),
+        ):
+            # Direct injection: patch builtins import inside cmd_vector_status
+            import builtins
 
-                    original_import = builtins.__import__
+            original_import = builtins.__import__
 
-                    def fake_import(name, *args, **kwargs):
-                        if name == "vector_index":
-                            raise ImportError("not found")
-                        if name == ".vector_index" or (
-                            isinstance(args, tuple) and args and "vector_index" in str(args)
-                        ):
-                            raise ImportError("not found")
-                        return original_import(name, *args, **kwargs)
+            def fake_import(name, *args, **kwargs):
+                if name == "vector_index":
+                    raise ImportError("not found")
+                if name == ".vector_index" or (isinstance(args, tuple) and args and "vector_index" in str(args)):
+                    raise ImportError("not found")
+                return original_import(name, *args, **kwargs)
 
-                    # The fallback path in cmd_vector_status uses
-                    # `from .vector_index import ...` which in a flat scripts/
-                    # directory raises ImportError → returns 1.
-                    # We verify here that the function returns 1 gracefully.
-                    args = types.SimpleNamespace()
-                    with mock.patch("builtins.__import__", side_effect=fake_import):
-                        rc = context_cli.cmd_vector_status(args)
-                    assert rc == 1
+            # The fallback path in cmd_vector_status uses
+            # `from .vector_index import ...` which in a flat scripts/
+            # directory raises ImportError → returns 1.
+            # We verify here that the function returns 1 gracefully.
+            args = types.SimpleNamespace()
+            with mock.patch("builtins.__import__", side_effect=fake_import):
+                rc = context_cli.cmd_vector_status(args)
+            assert rc == 1
 
     def test_status_success_path(self, tmp_path):
         """cmd_vector_status returns 0 when vector_index is importable."""
@@ -627,19 +633,21 @@ class TestCmdVectorStatusPackageImport:
         fake_si = mock.MagicMock()
         fake_si.get_session_db_path.return_value = str(tmp_path / "session.db")
 
-        with mock.patch.object(context_cli, "_get_session_index", return_value=fake_si):
-            with mock.patch.object(vector_index, "get_vector_db_path", return_value=tmp_path / "vector_index.db"):
-                with mock.patch.object(vector_index, "vector_status", return_value=status_data):
-                    # Ensure vector_index is importable
-                    sys.modules.setdefault("vector_index", vector_index)
-                    import contextlib as _cl
-                    import io as _io
+        with (
+            mock.patch.object(context_cli, "_get_session_index", return_value=fake_si),
+            mock.patch.object(vector_index, "get_vector_db_path", return_value=tmp_path / "vector_index.db"),
+            mock.patch.object(vector_index, "vector_status", return_value=status_data),
+        ):
+            # Ensure vector_index is importable
+            sys.modules.setdefault("vector_index", vector_index)
+            import contextlib as _cl
+            import io as _io
 
-                    args = types.SimpleNamespace()
-                    buf = _io.StringIO()
-                    with _cl.redirect_stdout(buf):
-                        rc = context_cli.cmd_vector_status(args)
-                    assert rc == 0
+            args = types.SimpleNamespace()
+            buf = _io.StringIO()
+            with _cl.redirect_stdout(buf):
+                rc = context_cli.cmd_vector_status(args)
+            assert rc == 0
 
 
 class TestQSearchPackageImportFallback:
@@ -663,14 +671,16 @@ class TestQSearchPackageImportFallback:
                 raise ImportError("blocked for test")
             return original_import(name, *args2, **kwargs)
 
-        with mock.patch.object(context_cli, "_get_session_index", return_value=fake_si):
-            with mock.patch("builtins.__import__", side_effect=import_blocker):
-                import contextlib as _cl
-                import io as _io
+        with (
+            mock.patch.object(context_cli, "_get_session_index", return_value=fake_si),
+            mock.patch("builtins.__import__", side_effect=import_blocker),
+        ):
+            import contextlib as _cl
+            import io as _io
 
-                buf = _io.StringIO()
-                with _cl.redirect_stdout(buf):
-                    rc = context_cli._q_search("test query", limit=5, as_json=False)
+            buf = _io.StringIO()
+            with _cl.redirect_stdout(buf):
+                rc = context_cli._q_search("test query", limit=5, as_json=False)
         # FTS fallback ran — returns 0 since format_search_results returned text
         assert rc == 0
 
@@ -681,15 +691,17 @@ class TestQSearchPackageImportFallback:
         fake_si.format_search_results.return_value = "Found 1 sessions\nResult"
         fake_si.search_sessions.return_value = []
 
-        with mock.patch.object(context_cli, "_get_session_index", return_value=fake_si):
-            with mock.patch.object(vector_index, "vector_available", return_value=False):
-                sys.modules.setdefault("vector_index", vector_index)
-                import contextlib as _cl
-                import io as _io
+        with (
+            mock.patch.object(context_cli, "_get_session_index", return_value=fake_si),
+            mock.patch.object(vector_index, "vector_available", return_value=False),
+        ):
+            sys.modules.setdefault("vector_index", vector_index)
+            import contextlib as _cl
+            import io as _io
 
-                buf = _io.StringIO()
-                with _cl.redirect_stdout(buf):
-                    rc = context_cli._q_search("some query", limit=5, as_json=False)
+            buf = _io.StringIO()
+            with _cl.redirect_stdout(buf):
+                rc = context_cli._q_search("some query", limit=5, as_json=False)
         assert rc == 0
 
     def test_q_search_hybrid_returns_empty_falls_through(self, tmp_path):
@@ -699,14 +711,16 @@ class TestQSearchPackageImportFallback:
         fake_si.format_search_results.return_value = "Found 1 sessions\nFTS Result"
         fake_si.search_sessions.return_value = []
 
-        with mock.patch.object(context_cli, "_get_session_index", return_value=fake_si):
-            with mock.patch.object(vector_index, "vector_available", return_value=True):
-                with mock.patch.object(vector_index, "hybrid_search_session", return_value=[]):
-                    sys.modules.setdefault("vector_index", vector_index)
-                    import contextlib as _cl
-                    import io as _io
+        with (
+            mock.patch.object(context_cli, "_get_session_index", return_value=fake_si),
+            mock.patch.object(vector_index, "vector_available", return_value=True),
+            mock.patch.object(vector_index, "hybrid_search_session", return_value=[]),
+        ):
+            sys.modules.setdefault("vector_index", vector_index)
+            import contextlib as _cl
+            import io as _io
 
-                    buf = _io.StringIO()
-                    with _cl.redirect_stdout(buf):
-                        rc = context_cli._q_search("empty hybrid query", limit=5, as_json=False)
+            buf = _io.StringIO()
+            with _cl.redirect_stdout(buf):
+                rc = context_cli._q_search("empty hybrid query", limit=5, as_json=False)
         assert rc == 0

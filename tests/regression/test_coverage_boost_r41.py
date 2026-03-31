@@ -26,7 +26,6 @@ from __future__ import annotations
 import io
 import json
 import os
-import runpy
 import sqlite3
 import sys
 import tempfile
@@ -43,11 +42,9 @@ for _p in (str(REPO_ROOT / "src"), str(SCRIPTS_DIR)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-import context_config  # noqa: E402
 import context_maintenance  # noqa: E402
 import source_adapters  # noqa: E402
-import sqlite_retry  # noqa: E402
-from context_config import env_bool, env_float, env_int, env_str, storage_root  # noqa: E402
+from context_config import env_bool, env_float, env_int, storage_root  # noqa: E402
 from sqlite_retry import SQLITE_RETRY_DELAYS, retry_commit, retry_sqlite, retry_sqlite_many  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -128,17 +125,21 @@ class TestParseNumericWarning(unittest.TestCase):
 
     def test_env_int_invalid_logs_warning(self) -> None:
         """Parsing a bad int logs a warning and falls back to default."""
-        with patch.dict(os.environ, {"_CCTG_INTBAD2_": "NOT_INT"}):
-            with self.assertLogs("context_config", level="WARNING") as cm:
-                result = env_int("_CCTG_INTBAD2_", default=42)
+        with (
+            patch.dict(os.environ, {"_CCTG_INTBAD2_": "NOT_INT"}),
+            self.assertLogs("context_config", level="WARNING") as cm,
+        ):
+            result = env_int("_CCTG_INTBAD2_", default=42)
         self.assertEqual(result, 42)
         self.assertTrue(any("cannot parse" in msg for msg in cm.output))
 
     def test_env_float_invalid_logs_warning(self) -> None:
         """Parsing a bad float logs a warning and falls back to default."""
-        with patch.dict(os.environ, {"_CCTG_FBAD2_": "NOT_FLOAT"}):
-            with self.assertLogs("context_config", level="WARNING") as cm:
-                result = env_float("_CCTG_FBAD2_", default=3.14)
+        with (
+            patch.dict(os.environ, {"_CCTG_FBAD2_": "NOT_FLOAT"}),
+            self.assertLogs("context_config", level="WARNING") as cm,
+        ):
+            result = env_float("_CCTG_FBAD2_", default=3.14)
         self.assertAlmostEqual(result, 3.14)
         self.assertTrue(any("cannot parse" in msg for msg in cm.output))
 
@@ -164,10 +165,12 @@ class TestStorageRootAdditional(unittest.TestCase):
         # Force a path that resolves to exactly 2 parts after resolution.
         # We mock resolve() to avoid symlink surprises on macOS.
         two_part = Path("/ab")
-        with patch.dict(os.environ, {"CONTEXTGO_STORAGE_ROOT": "/ab"}):
-            with mock.patch.object(Path, "resolve", return_value=two_part):
-                with self.assertRaises(ValueError):
-                    storage_root()
+        with (
+            patch.dict(os.environ, {"CONTEXTGO_STORAGE_ROOT": "/ab"}),
+            mock.patch.object(Path, "resolve", return_value=two_part),
+            self.assertRaises(ValueError),
+        ):
+            storage_root()
 
 
 # ===========================================================================
@@ -237,9 +240,7 @@ class TestMainCombinedRepairAndEnqueue(unittest.TestCase):
     def test_repair_and_enqueue_returns_0(self) -> None:
         db_path = self._create_temp_db()
         try:
-            result = context_maintenance.main(
-                ["--db", str(db_path), "--repair-queue", "--enqueue-missing"]
-            )
+            result = context_maintenance.main(["--db", str(db_path), "--repair-queue", "--enqueue-missing"])
         finally:
             db_path.unlink(missing_ok=True)
         self.assertEqual(result, 0)
@@ -256,11 +257,14 @@ class TestMainCombinedRepairAndEnqueue(unittest.TestCase):
                 with mock.patch("sys.stdout", new_callable=io.StringIO) as mock_out:
                     result = context_maintenance.main(
                         [
-                            "--db", str(db_path),
+                            "--db",
+                            str(db_path),
                             "--repair-queue",
                             "--enqueue-missing",
-                            "--codex-root", str(codex_root),
-                            "--claude-root", str(claude_root),
+                            "--codex-root",
+                            str(codex_root),
+                            "--claude-root",
+                            str(claude_root),
                         ]
                     )
                 output = mock_out.getvalue()
@@ -294,11 +298,15 @@ class TestMainCombinedRepairAndEnqueue(unittest.TestCase):
                 with mock.patch("sys.stdout", new_callable=io.StringIO) as mock_out:
                     result = context_maintenance.main(
                         [
-                            "--db", str(db_path),
+                            "--db",
+                            str(db_path),
                             "--enqueue-missing",
-                            "--max-enqueue", "0",
-                            "--codex-root", str(codex_root),
-                            "--claude-root", str(claude_root),
+                            "--max-enqueue",
+                            "0",
+                            "--codex-root",
+                            str(codex_root),
+                            "--claude-root",
+                            str(claude_root),
                         ]
                     )
                 output = mock_out.getvalue()
@@ -380,7 +388,7 @@ class TestSourceAdaptersAdditional(unittest.TestCase):
         stale_file.write_text('{"text":"old"}', encoding="utf-8")
         stale_dir = root / "old_subdir"
         stale_dir.mkdir()
-        (stale_dir / "nested.jsonl").write_text('{}', encoding="utf-8")
+        (stale_dir / "nested.jsonl").write_text("{}", encoding="utf-8")
 
         # Write an old schema version
         (root / ".schema_version").write_text("old-version", encoding="utf-8")
@@ -442,22 +450,19 @@ class TestSourceAdaptersAdditional(unittest.TestCase):
 
     def test_resolve_existing_returns_none_when_all_missing(self) -> None:
         """_resolve_existing returns None when no candidate exists."""
-        result = source_adapters._resolve_existing(
-            [Path("/nonexistent/a"), Path("/nonexistent/b")]
-        )
+        result = source_adapters._resolve_existing([Path("/nonexistent/a"), Path("/nonexistent/b")])
         self.assertIsNone(result)
 
     def test_resolve_existing_returns_first_found(self) -> None:
         """_resolve_existing returns the first existing candidate."""
         existing = self.storage / "found.txt"
         existing.write_text("x", encoding="utf-8")
-        result = source_adapters._resolve_existing(
-            [Path("/nonexistent/first"), existing]
-        )
+        result = source_adapters._resolve_existing([Path("/nonexistent/first"), existing])
         self.assertEqual(result, existing)
 
     def test_sync_all_adapters_catches_adapter_exception(self) -> None:
         """sync_all_adapters logs warning and records error when adapter raises."""
+
         def _boom(home: Path):
             raise RuntimeError("adapter blew up")
 
@@ -487,9 +492,8 @@ class TestSourceAdaptersAdditional(unittest.TestCase):
         out_path = self.storage / "error_test.jsonl"
         tmp_path = out_path.with_suffix(".jsonl.tmp")
 
-        with mock.patch("os.replace", side_effect=OSError("disk full")):
-            with self.assertRaises(OSError):
-                source_adapters._write_adapter_file(out_path, ["content"], 1700000000)
+        with mock.patch("os.replace", side_effect=OSError("disk full")), self.assertRaises(OSError):
+            source_adapters._write_adapter_file(out_path, ["content"], 1700000000)
 
         # tmp file should be cleaned up
         self.assertFalse(tmp_path.exists())
@@ -502,6 +506,7 @@ class TestSourceAdaptersAdditional(unittest.TestCase):
 # Only run vector tests if numpy is available.
 try:
     import numpy as _np_check  # noqa: F401
+
     _NUMPY_AVAILABLE = True
 except ImportError:
     _NUMPY_AVAILABLE = False
@@ -541,6 +546,7 @@ class TestVectorIndexAdditional(unittest.TestCase):
     def test_unpack_vector_dim_mismatch_raises(self) -> None:
         """_unpack_vector raises ValueError when dim doesn't match blob size."""
         import numpy as np
+
         vec = np.zeros(64, dtype=np.float32)
         blob = vec.tobytes()
         with self.assertRaises(ValueError):
@@ -549,6 +555,7 @@ class TestVectorIndexAdditional(unittest.TestCase):
     def test_unpack_vector_no_dim_check_succeeds(self) -> None:
         """_unpack_vector without dim check succeeds for any blob."""
         import numpy as np
+
         vec = np.ones(32, dtype=np.float32)
         blob = vec.tobytes()
         result = vector_index._unpack_vector(blob)
@@ -589,9 +596,8 @@ class TestVectorIndexAdditional(unittest.TestCase):
             conn = sqlite3.connect(str(sdb))
             conn.close()
             vdb = Path(tmp) / "vector_index.db"
-            with mock.patch.object(vector_index, "_SAFE_PATH_CHARS", frozenset()):
-                with self.assertRaises(ValueError) as ctx:
-                    vector_index.embed_pending_session_docs(str(sdb), vdb)
+            with mock.patch.object(vector_index, "_SAFE_PATH_CHARS", frozenset()), self.assertRaises(ValueError) as ctx:
+                vector_index.embed_pending_session_docs(str(sdb), vdb)
             self.assertIn("Unsafe characters", str(ctx.exception))
 
     def test_embed_pending_colon_guard_raises(self) -> None:
@@ -620,15 +626,20 @@ class TestVectorIndexAdditional(unittest.TestCase):
 
             class _FakePath:
                 """Stand-in for the resolved sdb path that contains ':'."""
+
                 @property
                 def suffix(self):
                     return ".db"
+
                 def exists(self):
                     return True
+
                 def __str__(self):
                     return sdb_real + ":injected"
+
                 def resolve(self):
                     return self
+
                 @property
                 def parent(self):
                     return sdb.parent
@@ -645,15 +656,16 @@ class TestVectorIndexAdditional(unittest.TestCase):
             with (
                 mock.patch.object(vector_index, "_SAFE_PATH_CHARS", safe_with_colon),
                 mock.patch.object(vector_index, "Path", side_effect=_fake_path_factory),
+                self.assertRaises(ValueError) as ctx,
             ):
-                with self.assertRaises(ValueError) as ctx:
-                    vector_index.embed_pending_session_docs(str(sdb), vdb)
+                vector_index.embed_pending_session_docs(str(sdb), vdb)
             self.assertIsInstance(ctx.exception, ValueError)
 
     def test_embed_pending_batch_flush_for_large_input(self) -> None:
         """embed_pending_session_docs flushes intermediate batches."""
-        import numpy as np
         import types
+
+        import numpy as np
 
         # Install fake model2vec if not already present
         if "model2vec" not in sys.modules or sys.modules["model2vec"] is None:
@@ -693,8 +705,16 @@ class TestVectorIndexAdditional(unittest.TestCase):
                 conn.execute(
                     "INSERT INTO session_documents (file_path, source_type, session_id, title, "
                     "content, created_at, created_at_epoch, updated_at_epoch) VALUES (?,?,?,?,?,?,?,?)",
-                    (f"/doc{i}.md", "session", f"s{i}", f"Doc {i}", f"Content {i}",
-                     "2026-01-01", 1767225600, 1767225600),
+                    (
+                        f"/doc{i}.md",
+                        "session",
+                        f"s{i}",
+                        f"Doc {i}",
+                        f"Content {i}",
+                        "2026-01-01",
+                        1767225600,
+                        1767225600,
+                    ),
                 )
             conn.commit()
             conn.close()
@@ -893,9 +913,7 @@ class TestSmokeInstalledCli(unittest.TestCase):
     def test_main_no_executable_returns_1(self) -> None:
         """main() returns 1 and prints JSON error when executable not found."""
         with (
-            mock.patch.object(
-                smoke_installed_cli, "resolve_contextgo_executable", return_value=None
-            ),
+            mock.patch.object(smoke_installed_cli, "resolve_contextgo_executable", return_value=None),
             mock.patch("sys.stdout", new_callable=io.StringIO) as mock_out,
         ):
             result = smoke_installed_cli.main()
@@ -911,9 +929,7 @@ class TestSmokeInstalledCli(unittest.TestCase):
         failing_case = {"args": [], "rc": 1, "stdout": "", "stderr": "error"}
 
         with (
-            mock.patch.object(
-                smoke_installed_cli, "resolve_contextgo_executable", return_value=fake_exe
-            ),
+            mock.patch.object(smoke_installed_cli, "resolve_contextgo_executable", return_value=fake_exe),
             mock.patch.object(smoke_installed_cli, "_run_case", return_value=failing_case),
             mock.patch("sys.stdout", new_callable=io.StringIO) as mock_out,
         ):
@@ -943,9 +959,7 @@ class TestSmokeInstalledCli(unittest.TestCase):
             return {"args": args, "rc": 0, "stdout": "", "stderr": ""}
 
         with (
-            mock.patch.object(
-                smoke_installed_cli, "resolve_contextgo_executable", return_value=fake_exe
-            ),
+            mock.patch.object(smoke_installed_cli, "resolve_contextgo_executable", return_value=fake_exe),
             mock.patch.object(smoke_installed_cli, "_run_case", side_effect=_fake_run_case),
             mock.patch("sys.stdout", new_callable=io.StringIO) as mock_out,
         ):

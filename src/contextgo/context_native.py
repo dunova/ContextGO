@@ -606,7 +606,7 @@ def _store_health_cache(payload: dict[str, Any]) -> None:
     cache_dir = NATIVE_HEALTH_CACHE_PATH.parent
 
     try:
-        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     except OSError:
         return
 

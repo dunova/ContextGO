@@ -141,10 +141,9 @@ class TestTryLoadInotify(unittest.TestCase):
 
     def test_returns_none_on_oserror(self) -> None:
         """_try_load_inotify returns None on OSError from CDLL."""
-        with patch.object(sys, "platform", "linux"):
-            with patch("ctypes.CDLL", side_effect=OSError("no libc")):
-                result = _try_load_inotify()
-                self.assertIsNone(result)
+        with patch.object(sys, "platform", "linux"), patch("ctypes.CDLL", side_effect=OSError("no libc")):
+            result = _try_load_inotify()
+            self.assertIsNone(result)
 
     def test_returns_none_on_attribute_error(self) -> None:
         """_try_load_inotify returns None on AttributeError from CDLL setup."""
@@ -194,13 +193,15 @@ class TestFileWatcherNOLibc(unittest.TestCase):
         tmp = tempfile.mkdtemp(prefix="cg_fw_nolibc2_")
         try:
             d = Path(tmp)
-            with patch.object(context_daemon, "_LIBC", None):
-                with patch.object(context_daemon.logger, "debug") as mock_debug:
-                    watcher = _FileWatcher([d])
-                    watcher.close()
-                    # At least one debug call mentioning mtime or fallback
-                    calls = [str(c) for c in mock_debug.call_args_list]
-                    self.assertTrue(any("mtime" in c or "fallback" in c or "inotify" in c for c in calls))
+            with (
+                patch.object(context_daemon, "_LIBC", None),
+                patch.object(context_daemon.logger, "debug") as mock_debug,
+            ):
+                watcher = _FileWatcher([d])
+                watcher.close()
+                # At least one debug call mentioning mtime or fallback
+                calls = [str(c) for c in mock_debug.call_args_list]
+                self.assertTrue(any("mtime" in c or "fallback" in c or "inotify" in c for c in calls))
         finally:
             import shutil
 
@@ -257,13 +258,12 @@ class TestFileWatcherAddWatchFailure(unittest.TestCase):
             # add_watch: first call succeeds, second fails
             mock_libc.inotify_add_watch.side_effect = [5, -1]
 
-            with patch.object(context_daemon, "_LIBC", mock_libc):
-                with patch("os.close"):  # prevent closing fake fd
-                    watcher = _FileWatcher([d1, d2])
-                    # Only one watch was added
-                    self.assertEqual(len(watcher._wd_to_dir), 1)
-                    self.assertTrue(watcher._available)
-                    watcher._inotify_fd = -1  # prevent actual close
+            with patch.object(context_daemon, "_LIBC", mock_libc), patch("os.close"):  # prevent closing fake fd
+                watcher = _FileWatcher([d1, d2])
+                # Only one watch was added
+                self.assertEqual(len(watcher._wd_to_dir), 1)
+                self.assertTrue(watcher._available)
+                watcher._inotify_fd = -1  # prevent actual close
         finally:
             import shutil
 
@@ -288,11 +288,10 @@ class TestFileWatcherNoWatches(unittest.TestCase):
             mock_libc.inotify_add_watch.return_value = -1
             mock_libc.inotify_rm_watch.return_value = 0
 
-            with patch.object(context_daemon, "_LIBC", mock_libc):
-                with patch("os.close"):
-                    watcher = _FileWatcher([d])
-                    self.assertFalse(watcher._available)
-                    self.assertEqual(watcher._inotify_fd, -1)
+            with patch.object(context_daemon, "_LIBC", mock_libc), patch("os.close"):
+                watcher = _FileWatcher([d])
+                self.assertFalse(watcher._available)
+                self.assertEqual(watcher._inotify_fd, -1)
         finally:
             import shutil
 
@@ -386,13 +385,12 @@ class TestFileWatcherAddDirectory(unittest.TestCase):
         mock_libc.inotify_init1.return_value = 99
         mock_libc.inotify_add_watch.side_effect = [10, 11]
 
-        with patch.object(context_daemon, "_LIBC", mock_libc):
-            with patch("os.close"):
-                watcher = _FileWatcher([d1])
-                watcher.add_directory(d2)
-                # Second inotify_add_watch call should have happened
-                self.assertEqual(mock_libc.inotify_add_watch.call_count, 2)
-                watcher._inotify_fd = -1
+        with patch.object(context_daemon, "_LIBC", mock_libc), patch("os.close"):
+            watcher = _FileWatcher([d1])
+            watcher.add_directory(d2)
+            # Second inotify_add_watch call should have happened
+            self.assertEqual(mock_libc.inotify_add_watch.call_count, 2)
+            watcher._inotify_fd = -1
 
 
 # ---------------------------------------------------------------------------
@@ -482,16 +480,15 @@ class TestFileWatcherGetChangedPaths(unittest.TestCase):
             mock_libc.inotify_init1.return_value = 99
             mock_libc.inotify_add_watch.return_value = 5
 
-            with patch.object(context_daemon, "_LIBC", mock_libc):
-                with patch("os.close"):
-                    watcher = _FileWatcher([d])
-                    # Manually add a changed path
-                    watcher._changed_paths.add(d)
-                    first = watcher.get_changed_paths()
-                    self.assertIn(d, first)
-                    second = watcher.get_changed_paths()
-                    self.assertEqual(len(second), 0)
-                    watcher._inotify_fd = -1
+            with patch.object(context_daemon, "_LIBC", mock_libc), patch("os.close"):
+                watcher = _FileWatcher([d])
+                # Manually add a changed path
+                watcher._changed_paths.add(d)
+                first = watcher.get_changed_paths()
+                self.assertIn(d, first)
+                second = watcher.get_changed_paths()
+                self.assertEqual(len(second), 0)
+                watcher._inotify_fd = -1
         finally:
             import shutil
 
@@ -541,14 +538,13 @@ class TestDrainInotifySelectError(unittest.TestCase):
             mock_libc.inotify_init1.return_value = 99
             mock_libc.inotify_add_watch.return_value = 5
 
-            with patch.object(context_daemon, "_LIBC", mock_libc):
-                with patch("os.close"):
-                    watcher = _FileWatcher([d])
-                    import select as _select
+            with patch.object(context_daemon, "_LIBC", mock_libc), patch("os.close"):
+                watcher = _FileWatcher([d])
+                import select as _select
 
-                    with patch.object(_select, "select", side_effect=OSError("bad fd")):
-                        watcher._drain_inotify()  # should not raise
-                    watcher._inotify_fd = -1
+                with patch.object(_select, "select", side_effect=OSError("bad fd")):
+                    watcher._drain_inotify()  # should not raise
+                watcher._inotify_fd = -1
         finally:
             import shutil
 
@@ -568,9 +564,8 @@ class TestDrainInotifyRead(unittest.TestCase):
         mock_libc = MagicMock()
         mock_libc.inotify_init1.return_value = 99
         mock_libc.inotify_add_watch.return_value = 5
-        with patch.object(context_daemon, "_LIBC", mock_libc):
-            with patch("os.close"):
-                watcher = _FileWatcher([tmp])
+        with patch.object(context_daemon, "_LIBC", mock_libc), patch("os.close"):
+            watcher = _FileWatcher([tmp])
         watcher._inotify_fd = 99
         watcher._wd_to_dir[5] = tmp
         return watcher
@@ -582,9 +577,11 @@ class TestDrainInotifyRead(unittest.TestCase):
             watcher = self._make_inotify_watcher(Path(tmp))
             import select as _select
 
-            with patch.object(_select, "select", return_value=([99], [], [])):
-                with patch("os.read", side_effect=BlockingIOError("would block")):
-                    watcher._drain_inotify()  # should not raise
+            with (
+                patch.object(_select, "select", return_value=([99], [], [])),
+                patch("os.read", side_effect=BlockingIOError("would block")),
+            ):
+                watcher._drain_inotify()  # should not raise
             watcher._inotify_fd = -1
         finally:
             import shutil
@@ -598,9 +595,11 @@ class TestDrainInotifyRead(unittest.TestCase):
             watcher = self._make_inotify_watcher(Path(tmp))
             import select as _select
 
-            with patch.object(_select, "select", return_value=([99], [], [])):
-                with patch("os.read", side_effect=OSError("io error")):
-                    watcher._drain_inotify()  # should not raise
+            with (
+                patch.object(_select, "select", return_value=([99], [], [])),
+                patch("os.read", side_effect=OSError("io error")),
+            ):
+                watcher._drain_inotify()  # should not raise
             watcher._inotify_fd = -1
         finally:
             import shutil
@@ -614,9 +613,8 @@ class TestDrainInotifyRead(unittest.TestCase):
             watcher = self._make_inotify_watcher(Path(tmp))
             import select as _select
 
-            with patch.object(_select, "select", return_value=([99], [], [])):
-                with patch("os.read", return_value=b""):
-                    watcher._drain_inotify()
+            with patch.object(_select, "select", return_value=([99], [], [])), patch("os.read", return_value=b""):
+                watcher._drain_inotify()
             watcher._inotify_fd = -1
         finally:
             import shutil
@@ -634,9 +632,8 @@ class TestDrainInotifyRead(unittest.TestCase):
             event = struct.pack("<iIII", 5, 0x00000002, 0, 0)
             import select as _select
 
-            with patch.object(_select, "select", return_value=([99], [], [])):
-                with patch("os.read", return_value=event):
-                    watcher._drain_inotify()
+            with patch.object(_select, "select", return_value=([99], [], [])), patch("os.read", return_value=event):
+                watcher._drain_inotify()
             self.assertIn(Path(tmp), watcher._changed_paths)
             watcher._inotify_fd = -1
         finally:
@@ -724,13 +721,12 @@ class TestCloseInotify(unittest.TestCase):
             mock_libc = MagicMock()
             mock_libc.inotify_init1.return_value = 99
             mock_libc.inotify_add_watch.return_value = 5
-            with patch.object(context_daemon, "_LIBC", mock_libc):
-                with patch("os.close") as mock_close:
-                    watcher = _FileWatcher([d])
-                    watcher._close_inotify()
-                    mock_close.assert_called_once_with(99)
-                    self.assertEqual(watcher._inotify_fd, -1)
-                    self.assertEqual(len(watcher._wd_to_dir), 0)
+            with patch.object(context_daemon, "_LIBC", mock_libc), patch("os.close") as mock_close:
+                watcher = _FileWatcher([d])
+                watcher._close_inotify()
+                mock_close.assert_called_once_with(99)
+                self.assertEqual(watcher._inotify_fd, -1)
+                self.assertEqual(len(watcher._wd_to_dir), 0)
         finally:
             import shutil
 
@@ -780,34 +776,40 @@ class TestBuildFileWatcherSpecialDirs(unittest.TestCase):
         """CODEX_SESSIONS is added to watcher dirs when it exists."""
         codex_dir = Path(self.tmp) / "codex_sessions"
         codex_dir.mkdir()
-        with patch.object(context_daemon, "ENABLE_FILE_WATCHER", True):
-            with patch.object(context_daemon, "CODEX_SESSIONS", codex_dir):
-                result = context_daemon._build_file_watcher()
-                if result is not None:
-                    self.assertIn(codex_dir, result._directories)
-                    result.close()
+        with (
+            patch.object(context_daemon, "ENABLE_FILE_WATCHER", True),
+            patch.object(context_daemon, "CODEX_SESSIONS", codex_dir),
+        ):
+            result = context_daemon._build_file_watcher()
+            if result is not None:
+                self.assertIn(codex_dir, result._directories)
+                result.close()
 
     def test_claude_transcripts_dir_added(self) -> None:
         """CLAUDE_TRANSCRIPTS_DIR is added to watcher dirs when it exists."""
         transcripts_dir = Path(self.tmp) / "transcripts"
         transcripts_dir.mkdir()
-        with patch.object(context_daemon, "ENABLE_FILE_WATCHER", True):
-            with patch.object(context_daemon, "CLAUDE_TRANSCRIPTS_DIR", transcripts_dir):
-                result = context_daemon._build_file_watcher()
-                if result is not None:
-                    self.assertIn(transcripts_dir, result._directories)
-                    result.close()
+        with (
+            patch.object(context_daemon, "ENABLE_FILE_WATCHER", True),
+            patch.object(context_daemon, "CLAUDE_TRANSCRIPTS_DIR", transcripts_dir),
+        ):
+            result = context_daemon._build_file_watcher()
+            if result is not None:
+                self.assertIn(transcripts_dir, result._directories)
+                result.close()
 
     def test_antigravity_brain_dir_added(self) -> None:
         """ANTIGRAVITY_BRAIN is added to watcher dirs when it exists."""
         brain_dir = Path(self.tmp) / "brain"
         brain_dir.mkdir()
-        with patch.object(context_daemon, "ENABLE_FILE_WATCHER", True):
-            with patch.object(context_daemon, "ANTIGRAVITY_BRAIN", brain_dir):
-                result = context_daemon._build_file_watcher()
-                if result is not None:
-                    self.assertIn(brain_dir, result._directories)
-                    result.close()
+        with (
+            patch.object(context_daemon, "ENABLE_FILE_WATCHER", True),
+            patch.object(context_daemon, "ANTIGRAVITY_BRAIN", brain_dir),
+        ):
+            result = context_daemon._build_file_watcher()
+            if result is not None:
+                self.assertIn(brain_dir, result._directories)
+                result.close()
 
 
 # ---------------------------------------------------------------------------
@@ -881,10 +883,12 @@ class TestNextSleepIntervalActiveSources(unittest.TestCase):
         self.tracker._active_sources["source1"] = time.time()
         self.tracker.sessions = {}
         # Force daytime to avoid night-mode early return.
-        with patch.object(context_daemon, "NIGHT_POLL_START_HOUR", 0):
-            with patch.object(context_daemon, "NIGHT_POLL_END_HOUR", 0):
-                with patch("pathlib.Path.exists", return_value=False):
-                    result = self.tracker.next_sleep_interval()
+        with (
+            patch.object(context_daemon, "NIGHT_POLL_START_HOUR", 0),
+            patch.object(context_daemon, "NIGHT_POLL_END_HOUR", 0),
+            patch("pathlib.Path.exists", return_value=False),
+        ):
+            result = self.tracker.next_sleep_interval()
         self.assertEqual(result, max(1, context_daemon.FAST_POLL_INTERVAL_SEC))
 
 
@@ -939,27 +943,31 @@ class TestMainFunction(unittest.TestCase):
         if extra_patches:
             patches.update(extra_patches)
 
-        with patch.object(context_daemon, "_validate_startup"):
-            with patch.object(context_daemon, "_setup_logging"):
-                with patch.object(context_daemon, "_acquire_single_instance_lock", return_value=True):
-                    with patch.object(context_daemon, "_shutdown", False):
-                        with patch("time.sleep", side_effect=set_shutdown):
-                            try:
-                                context_daemon.main()
-                            except SystemExit:
-                                pass
-                            finally:
-                                context_daemon._shutdown = False
+        with (
+            patch.object(context_daemon, "_validate_startup"),
+            patch.object(context_daemon, "_setup_logging"),
+            patch.object(context_daemon, "_acquire_single_instance_lock", return_value=True),
+            patch.object(context_daemon, "_shutdown", False),
+            patch("time.sleep", side_effect=set_shutdown),
+        ):
+            try:
+                context_daemon.main()
+            except SystemExit:
+                pass
+            finally:
+                context_daemon._shutdown = False
 
     def test_main_with_file_watcher_disabled(self) -> None:
         """main() logs debug when file watcher is disabled."""
-        with patch.object(context_daemon, "ENABLE_FILE_WATCHER", False):
-            with patch.object(context_daemon.logger, "debug") as mock_debug:
-                self._run_main_one_cycle()
-                calls_str = str(mock_debug.call_args_list)
-                self.assertTrue(
-                    "FileWatcher disabled" in calls_str or True  # log call may be present
-                )
+        with (
+            patch.object(context_daemon, "ENABLE_FILE_WATCHER", False),
+            patch.object(context_daemon.logger, "debug") as mock_debug,
+        ):
+            self._run_main_one_cycle()
+            calls_str = str(mock_debug.call_args_list)
+            self.assertTrue(
+                "FileWatcher disabled" in calls_str or True  # log call may be present
+            )
 
     def test_main_with_file_watcher_none(self) -> None:
         """main() works when _build_file_watcher returns None."""
@@ -993,17 +1001,19 @@ class TestMainFunction(unittest.TestCase):
             sleep_vals.append(secs)
             context_daemon._shutdown = True
 
-        with patch.object(context_daemon, "_build_file_watcher", return_value=mock_watcher):
-            with patch.object(context_daemon, "_validate_startup"):
-                with patch.object(context_daemon, "_setup_logging"):
-                    with patch.object(context_daemon, "_acquire_single_instance_lock", return_value=True):
-                        with patch("time.sleep", side_effect=capture_sleep):
-                            try:
-                                context_daemon.main()
-                            except SystemExit:
-                                pass
-                            finally:
-                                context_daemon._shutdown = False
+        with (
+            patch.object(context_daemon, "_build_file_watcher", return_value=mock_watcher),
+            patch.object(context_daemon, "_validate_startup"),
+            patch.object(context_daemon, "_setup_logging"),
+            patch.object(context_daemon, "_acquire_single_instance_lock", return_value=True),
+            patch("time.sleep", side_effect=capture_sleep),
+        ):
+            try:
+                context_daemon.main()
+            except SystemExit:
+                pass
+            finally:
+                context_daemon._shutdown = False
 
         # Sleep should have been called at least once
         self.assertGreater(len(sleep_vals), 0)
@@ -1017,28 +1027,32 @@ class TestMainFunction(unittest.TestCase):
             sleep_vals.append(secs)
             context_daemon._shutdown = True
 
-        with patch.object(context_daemon, "LOOP_JITTER_SEC", 0.5):
-            with patch.object(context_daemon, "_build_file_watcher", return_value=None):
-                with patch.object(context_daemon, "_validate_startup"):
-                    with patch.object(context_daemon, "_setup_logging"):
-                        with patch.object(context_daemon, "_acquire_single_instance_lock", return_value=True):
-                            with patch("time.sleep", side_effect=capture_sleep):
-                                try:
-                                    context_daemon.main()
-                                except SystemExit:
-                                    pass
-                                finally:
-                                    context_daemon._shutdown = False
+        with (
+            patch.object(context_daemon, "LOOP_JITTER_SEC", 0.5),
+            patch.object(context_daemon, "_build_file_watcher", return_value=None),
+            patch.object(context_daemon, "_validate_startup"),
+            patch.object(context_daemon, "_setup_logging"),
+            patch.object(context_daemon, "_acquire_single_instance_lock", return_value=True),
+            patch("time.sleep", side_effect=capture_sleep),
+        ):
+            try:
+                context_daemon.main()
+            except SystemExit:
+                pass
+            finally:
+                context_daemon._shutdown = False
 
         self.assertGreater(len(sleep_vals), 0)
 
     def test_main_acquire_lock_failure_exits(self) -> None:
         """main() raises SystemExit when lock acquisition fails."""
-        with patch.object(context_daemon, "_validate_startup"):
-            with patch.object(context_daemon, "_setup_logging"):
-                with patch.object(context_daemon, "_acquire_single_instance_lock", return_value=False):
-                    with self.assertRaises(SystemExit):
-                        context_daemon.main()
+        with (
+            patch.object(context_daemon, "_validate_startup"),
+            patch.object(context_daemon, "_setup_logging"),
+            patch.object(context_daemon, "_acquire_single_instance_lock", return_value=False),
+            self.assertRaises(SystemExit),
+        ):
+            context_daemon.main()
 
     def test_main_budget_exceeded_skips_low_priority(self) -> None:
         """When cycle budget is exceeded, low-priority monitors are skipped."""
@@ -1100,19 +1114,21 @@ class TestMainFunction(unittest.TestCase):
         # Patch time.monotonic to simulate budget exceeded immediately
         mono_vals = iter([0.0, 1000.0, 1000.0, 1000.0, 1000.0, 1000.0])
 
-        with patch.object(context_daemon, "_build_file_watcher", return_value=None):
-            with patch.object(context_daemon, "SessionTracker", return_value=fake_tracker):
-                with patch.object(context_daemon, "_validate_startup"):
-                    with patch.object(context_daemon, "_setup_logging"):
-                        with patch.object(context_daemon, "_acquire_single_instance_lock", return_value=True):
-                            with patch("time.sleep", side_effect=stop_after_one):
-                                with patch("time.monotonic", side_effect=mono_vals):
-                                    try:
-                                        context_daemon.main()
-                                    except (SystemExit, StopIteration):
-                                        pass
-                                    finally:
-                                        context_daemon._shutdown = False
+        with (
+            patch.object(context_daemon, "_build_file_watcher", return_value=None),
+            patch.object(context_daemon, "SessionTracker", return_value=fake_tracker),
+            patch.object(context_daemon, "_validate_startup"),
+            patch.object(context_daemon, "_setup_logging"),
+            patch.object(context_daemon, "_acquire_single_instance_lock", return_value=True),
+            patch("time.sleep", side_effect=stop_after_one),
+            patch("time.monotonic", side_effect=mono_vals),
+        ):
+            try:
+                context_daemon.main()
+            except (SystemExit, StopIteration):
+                pass
+            finally:
+                context_daemon._shutdown = False
 
         # Codex/transcripts/antigravity should have been skipped
         self.assertNotIn("codex", call_log)
@@ -1145,13 +1161,12 @@ class TestFileWatcherInotifyFallbackEdges(unittest.TestCase):
             mock_libc = MagicMock()
             mock_libc.inotify_init1.return_value = 99
             mock_libc.inotify_add_watch.return_value = 5
-            with patch.object(context_daemon, "_LIBC", mock_libc):
-                with patch("os.close"):
-                    watcher = _FileWatcher([d])
-                    with patch.object(watcher, "_drain_inotify") as mock_drain:
-                        watcher.update()
-                        mock_drain.assert_called_once()
-                    watcher._inotify_fd = -1
+            with patch.object(context_daemon, "_LIBC", mock_libc), patch("os.close"):
+                watcher = _FileWatcher([d])
+                with patch.object(watcher, "_drain_inotify") as mock_drain:
+                    watcher.update()
+                    mock_drain.assert_called_once()
+                watcher._inotify_fd = -1
         finally:
             import shutil
 
@@ -1165,14 +1180,13 @@ class TestFileWatcherInotifyFallbackEdges(unittest.TestCase):
             mock_libc = MagicMock()
             mock_libc.inotify_init1.return_value = 99
             mock_libc.inotify_add_watch.return_value = 5
-            with patch.object(context_daemon, "_LIBC", mock_libc):
-                with patch("os.close"):
-                    watcher = _FileWatcher([d])
-                    self.assertTrue(watcher._available)
-                    self.assertFalse(watcher.has_changes())
-                    watcher._changed_paths.add(d)
-                    self.assertTrue(watcher.has_changes())
-                    watcher._inotify_fd = -1
+            with patch.object(context_daemon, "_LIBC", mock_libc), patch("os.close"):
+                watcher = _FileWatcher([d])
+                self.assertTrue(watcher._available)
+                self.assertFalse(watcher.has_changes())
+                watcher._changed_paths.add(d)
+                self.assertTrue(watcher.has_changes())
+                watcher._inotify_fd = -1
         finally:
             import shutil
 

@@ -376,6 +376,15 @@ def main(argv: list[str] | None = None) -> int:
         cur.execute("PRAGMA journal_mode=WAL")
         cur.execute("PRAGMA synchronous=NORMAL")
 
+        # Integrity check before any write operations.
+        integrity_result = conn.execute("PRAGMA integrity_check(1)").fetchone()
+        if integrity_result is None or integrity_result[0] != "ok":
+            _logger.warning(
+                "Database integrity check failed: %s",
+                integrity_result[0] if integrity_result else "no result",
+            )
+            return 1
+
         local_items = collect_local_session_files(codex_root, claude_root, args.include_subagents)
         existing_paths = fetch_existing_session_paths(cur)
 

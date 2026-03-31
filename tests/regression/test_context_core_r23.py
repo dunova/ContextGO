@@ -493,47 +493,43 @@ class WriteMemoryMarkdownTests(unittest.TestCase):
 
     def test_write_memory_markdown_empty_title_raises(self) -> None:
         """write_memory_markdown raises ValueError for empty title (line 275)."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with self.assertRaises(ValueError, msg="title cannot be empty"):
-                context_core.write_memory_markdown(
-                    "",
-                    "some content",
-                    None,
-                    conversations_root=tmpdir,
-                )
+        with tempfile.TemporaryDirectory() as tmpdir, self.assertRaises(ValueError, msg="title cannot be empty"):
+            context_core.write_memory_markdown(
+                "",
+                "some content",
+                None,
+                conversations_root=tmpdir,
+            )
 
     def test_write_memory_markdown_whitespace_title_raises(self) -> None:
         """write_memory_markdown raises ValueError for whitespace-only title."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with self.assertRaises(ValueError):
-                context_core.write_memory_markdown(
-                    "   ",
-                    "some content",
-                    None,
-                    conversations_root=tmpdir,
-                )
+        with tempfile.TemporaryDirectory() as tmpdir, self.assertRaises(ValueError):
+            context_core.write_memory_markdown(
+                "   ",
+                "some content",
+                None,
+                conversations_root=tmpdir,
+            )
 
     def test_write_memory_markdown_empty_content_raises(self) -> None:
         """write_memory_markdown raises ValueError for empty content (line 277)."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with self.assertRaises(ValueError, msg="content cannot be empty"):
-                context_core.write_memory_markdown(
-                    "valid title",
-                    "",
-                    None,
-                    conversations_root=tmpdir,
-                )
+        with tempfile.TemporaryDirectory() as tmpdir, self.assertRaises(ValueError, msg="content cannot be empty"):
+            context_core.write_memory_markdown(
+                "valid title",
+                "",
+                None,
+                conversations_root=tmpdir,
+            )
 
     def test_write_memory_markdown_whitespace_content_raises(self) -> None:
         """write_memory_markdown raises ValueError for whitespace-only content."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with self.assertRaises(ValueError):
-                context_core.write_memory_markdown(
-                    "valid title",
-                    "   \n\t   ",
-                    None,
-                    conversations_root=tmpdir,
-                )
+        with tempfile.TemporaryDirectory() as tmpdir, self.assertRaises(ValueError):
+            context_core.write_memory_markdown(
+                "valid title",
+                "   \n\t   ",
+                None,
+                conversations_root=tmpdir,
+            )
 
     def test_write_memory_markdown_creates_parent_dirs(self) -> None:
         """write_memory_markdown creates nested parent directories automatically."""

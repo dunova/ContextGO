@@ -104,11 +104,14 @@ exclude = [
     "coverage.xml",
     "**/__pycache__",
     "**/*.pyc",
-    "src/contextgo/import_memories.py",
+    "**/import_memories.py",
+    "**/context_smoke.py",
+    "**/memory_viewer.py",
 ]
 
 [tool.hatch.build.targets.wheel.force-include]
 "src/contextgo/py.typed" = "contextgo/py.typed"
+"src/contextgo/data/noise_markers.json" = "contextgo/data/noise_markers.json"
 
 [tool.hatch.build.targets.sdist]
 include = [

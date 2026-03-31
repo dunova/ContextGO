@@ -36,6 +36,7 @@ import os
 import re
 import sqlite3
 import sys
+import threading
 import time
 from collections.abc import Generator, Iterable
 from contextlib import contextmanager
@@ -228,7 +229,7 @@ def _load_noise_config() -> dict[str, list[str]]:
     # 2. Repository root: config/ (works during development)
     _here = Path(__file__).resolve().parent
     candidates = [
-        _here / "data" / "noise_markers.json",                  # pip-installed (package data)
+        _here / "data" / "noise_markers.json",  # pip-installed (package data)
         _here.parent.parent / "config" / "noise_markers.json",  # in-repo: config/ at project root
     ]
     for config_path in candidates:
@@ -271,6 +272,7 @@ def _ensure_noise_markers() -> None:
     _NOISE_TEXT_MARKERS = tuple(cfg["text_noise_markers"])
     _NOISE_TEXT_LOWER_MARKERS = tuple(cfg["text_noise_lower_markers"])
     _noise_markers_initialized = True
+
 
 STOPWORDS: frozenset[str] = frozenset(
     {
@@ -346,6 +348,10 @@ except (ValueError, TypeError):
 _SEARCH_RESULT_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 _SEARCH_CACHE_MAX_ENTRIES: int = 64
 
+# Thread lock to prevent concurrent calls to sync_session_index from
+# corrupting the index via interleaved writes.
+_SYNC_LOCK = threading.Lock()
+
 
 def _cache_put_results(cache_key: str, results: list[dict[str, Any]]) -> None:
     """Insert *results* into the search result cache, evicting stale/excess entries."""
@@ -359,6 +365,7 @@ def _cache_put_results(cache_key: str, results: list[dict[str, Any]]) -> None:
         while len(_SEARCH_RESULT_CACHE) >= _SEARCH_CACHE_MAX_ENTRIES:
             _SEARCH_RESULT_CACHE.pop(next(iter(_SEARCH_RESULT_CACHE)))
     _SEARCH_RESULT_CACHE[cache_key] = (time.monotonic() + _SEARCH_RESULT_CACHE_TTL, results)
+
 
 # Pre-compiled whitespace normalizer used throughout this module.
 _WHITESPACE_RE = re.compile(r"\s+")
@@ -1111,6 +1118,12 @@ def sync_session_index(force: bool = False) -> dict[str, int]:
     SQLite in chunks of that size rather than accumulated indefinitely, which
     bounds memory usage when indexing large collections.
     """
+    with _SYNC_LOCK:
+        return _sync_session_index_locked(force=force)
+
+
+def _sync_session_index_locked(force: bool = False) -> dict[str, int]:
+    """Internal implementation of sync_session_index; must be called under _SYNC_LOCK."""
     _t_start = time.monotonic()
     db_path = ensure_session_db()
     added = updated = removed = scanned = 0
@@ -1170,9 +1183,7 @@ def sync_session_index(force: bool = False) -> dict[str, int]:
         # --- P0 Fix 1: bulk-load all existing mtime/size into memory to avoid N+1 SELECTs ---
         existing_meta: dict[str, tuple[int, int]] = {
             row[0]: (int(row[1]), int(row[2]))
-            for row in _retry_sqlite(
-                conn, "SELECT file_path, file_mtime, file_size FROM session_documents"
-            ).fetchall()
+            for row in _retry_sqlite(conn, "SELECT file_path, file_mtime, file_size FROM session_documents").fetchall()
         }
 
         def _flush_upsert_batch() -> None:
@@ -1246,9 +1257,7 @@ def sync_session_index(force: bool = False) -> dict[str, int]:
         # Remove index entries whose source files no longer exist.
         # --- P0 Fix 2: use a temporary table + single DELETE to avoid full-scan + Python set-diff ---
         _t_remove_start = time.monotonic()
-        conn.execute(
-            "CREATE TEMP TABLE IF NOT EXISTS _temp_seen_paths (path TEXT PRIMARY KEY)"
-        )
+        conn.execute("CREATE TEMP TABLE IF NOT EXISTS _temp_seen_paths (path TEXT PRIMARY KEY)")
         conn.execute("DELETE FROM _temp_seen_paths")
         # Insert seen paths in batches to avoid SQLite variable limit.
         seen_list = list(seen_paths)
@@ -1260,15 +1269,11 @@ def sync_session_index(force: bool = False) -> dict[str, int]:
             )
         # Count stale rows before deletion for the return value.
         stale_count_row = conn.execute(
-            "SELECT COUNT(*) FROM session_documents"
-            " WHERE file_path NOT IN (SELECT path FROM _temp_seen_paths)"
+            "SELECT COUNT(*) FROM session_documents WHERE file_path NOT IN (SELECT path FROM _temp_seen_paths)"
         ).fetchone()
         removed = int(stale_count_row[0]) if stale_count_row else 0
         if removed:
-            conn.execute(
-                "DELETE FROM session_documents"
-                " WHERE file_path NOT IN (SELECT path FROM _temp_seen_paths)"
-            )
+            conn.execute("DELETE FROM session_documents WHERE file_path NOT IN (SELECT path FROM _temp_seen_paths)")
             _logger.debug("sync_session_index: deleted %d stale rows via temp table", removed)
         conn.execute("DROP TABLE IF EXISTS _temp_seen_paths")
         _retry_commit(conn)
@@ -1831,17 +1836,16 @@ def _rank_rows(
                     score += max(4, len(term_lower) * len(term_lower)) * 2  # 3× total
 
         # 5. Exact-phrase bonus.
-        if exact_phrase and len(exact_phrase) >= 2 and (
-            exact_phrase in title_lower or exact_phrase in content_lower or exact_phrase in fp_lower
+        if (
+            exact_phrase
+            and len(exact_phrase) >= 2
+            and (exact_phrase in title_lower or exact_phrase in content_lower or exact_phrase in fp_lower)
         ):
             score += 50
 
         # 6. CJK bigram bonus.
         if cjk_bigrams:
-            bigram_hits = sum(
-                1 for bg in cjk_bigrams
-                if bg in title_lower or bg in content_lower or bg in fp_lower
-            )
+            bigram_hits = sum(1 for bg in cjk_bigrams if bg in title_lower or bg in content_lower or bg in fp_lower)
             score += bigram_hits * 8
 
         # 7. Recency bonus.

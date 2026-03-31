@@ -68,22 +68,25 @@ class TestValidateStartup(unittest.TestCase):
 
     def test_non_localhost_http_raises(self) -> None:
         """Non-localhost URL with http:// must trigger SystemExit."""
-        with patch.object(context_daemon, "REMOTE_SYNC_URL", "http://example.com/api"):
-            with self.assertRaises(SystemExit):
-                context_daemon._validate_startup()
+        with patch.object(context_daemon, "REMOTE_SYNC_URL", "http://example.com/api"), self.assertRaises(SystemExit):
+            context_daemon._validate_startup()
 
     def test_localhost_http_is_allowed(self) -> None:
         """localhost http:// must pass (no SystemExit)."""
-        with patch.object(context_daemon, "REMOTE_SYNC_URL", "http://127.0.0.1:8090/api/v1"):
-            with patch.object(context_daemon, "LOCAL_STORAGE_ROOT", _FAKE_STORAGE):
-                # Should not raise
-                context_daemon._validate_startup()
+        with (
+            patch.object(context_daemon, "REMOTE_SYNC_URL", "http://127.0.0.1:8090/api/v1"),
+            patch.object(context_daemon, "LOCAL_STORAGE_ROOT", _FAKE_STORAGE),
+        ):
+            # Should not raise
+            context_daemon._validate_startup()
 
     def test_https_non_localhost_is_allowed(self) -> None:
         """HTTPS for non-localhost must pass."""
-        with patch.object(context_daemon, "REMOTE_SYNC_URL", "https://remote.example.com/api"):
-            with patch.object(context_daemon, "LOCAL_STORAGE_ROOT", _FAKE_STORAGE):
-                context_daemon._validate_startup()
+        with (
+            patch.object(context_daemon, "REMOTE_SYNC_URL", "https://remote.example.com/api"),
+            patch.object(context_daemon, "LOCAL_STORAGE_ROOT", _FAKE_STORAGE),
+        ):
+            context_daemon._validate_startup()
 
     def test_storage_root_foreign_uid_raises(self) -> None:
         """Storage root owned by another user must trigger SystemExit."""
@@ -93,13 +96,15 @@ class TestValidateStartup(unittest.TestCase):
         tmp = tempfile.mkdtemp(prefix="cg_foreign_")
         try:
             storage = Path(tmp)
-            with patch.object(context_daemon, "REMOTE_SYNC_URL", "http://127.0.0.1:8090/api/v1"):
-                with patch.object(context_daemon, "LOCAL_STORAGE_ROOT", storage):
-                    with patch("pathlib.Path.lstat", return_value=fake_stat):
-                        with patch("pathlib.Path.exists", return_value=True):
-                            with patch("pathlib.Path.is_symlink", return_value=False):
-                                with self.assertRaises(SystemExit):
-                                    context_daemon._validate_startup()
+            with (
+                patch.object(context_daemon, "REMOTE_SYNC_URL", "http://127.0.0.1:8090/api/v1"),
+                patch.object(context_daemon, "LOCAL_STORAGE_ROOT", storage),
+                patch("pathlib.Path.lstat", return_value=fake_stat),
+                patch("pathlib.Path.exists", return_value=True),
+                patch("pathlib.Path.is_symlink", return_value=False),
+                self.assertRaises(SystemExit),
+            ):
+                context_daemon._validate_startup()
         finally:
             import shutil
 
@@ -113,10 +118,12 @@ class TestValidateStartup(unittest.TestCase):
             real_dir.mkdir()
             link_dir = Path(tmp) / "link"
             link_dir.symlink_to(real_dir)
-            with patch.object(context_daemon, "REMOTE_SYNC_URL", "http://127.0.0.1:8090/api/v1"):
-                with patch.object(context_daemon, "LOCAL_STORAGE_ROOT", link_dir):
-                    # Should not raise (may log a warning)
-                    context_daemon._validate_startup()
+            with (
+                patch.object(context_daemon, "REMOTE_SYNC_URL", "http://127.0.0.1:8090/api/v1"),
+                patch.object(context_daemon, "LOCAL_STORAGE_ROOT", link_dir),
+            ):
+                # Should not raise (may log a warning)
+                context_daemon._validate_startup()
         finally:
             import shutil
 
@@ -657,9 +664,11 @@ class TestNextSleepIntervalNearestDue(unittest.TestCase):
             "source": "test",
         }
 
-        with patch.object(context_daemon, "NIGHT_POLL_START_HOUR", 23):
-            with patch.object(context_daemon, "NIGHT_POLL_END_HOUR", 7):
-                sleep_s = self.tracker.next_sleep_interval()
+        with (
+            patch.object(context_daemon, "NIGHT_POLL_START_HOUR", 23),
+            patch.object(context_daemon, "NIGHT_POLL_END_HOUR", 7),
+        ):
+            sleep_s = self.tracker.next_sleep_interval()
 
         self.assertLessEqual(sleep_s, max(1, FAST_POLL_INTERVAL_SEC))
 
@@ -676,9 +685,11 @@ class TestNextSleepIntervalNearestDue(unittest.TestCase):
             "source": "test",
         }
 
-        with patch.object(context_daemon, "NIGHT_POLL_START_HOUR", 23):
-            with patch.object(context_daemon, "NIGHT_POLL_END_HOUR", 7):
-                sleep_s = self.tracker.next_sleep_interval()
+        with (
+            patch.object(context_daemon, "NIGHT_POLL_START_HOUR", 23),
+            patch.object(context_daemon, "NIGHT_POLL_END_HOUR", 7),
+        ):
+            sleep_s = self.tracker.next_sleep_interval()
 
         # Sleep should be reduced from the full POLL_INTERVAL_SEC
         self.assertLessEqual(sleep_s, context_daemon.POLL_INTERVAL_SEC)
@@ -693,9 +704,11 @@ class TestNextSleepIntervalNearestDue(unittest.TestCase):
             "source": "test",
         }
 
-        with patch.object(context_daemon, "NIGHT_POLL_START_HOUR", 23):
-            with patch.object(context_daemon, "NIGHT_POLL_END_HOUR", 7):
-                sleep_s = self.tracker.next_sleep_interval()
+        with (
+            patch.object(context_daemon, "NIGHT_POLL_START_HOUR", 23),
+            patch.object(context_daemon, "NIGHT_POLL_END_HOUR", 7),
+        ):
+            sleep_s = self.tracker.next_sleep_interval()
 
         self.assertGreaterEqual(sleep_s, 1)
 
@@ -704,9 +717,11 @@ class TestNextSleepIntervalNearestDue(unittest.TestCase):
         self.tracker.sessions.clear()
 
         # Force daytime: set night window to a range that excludes all hours (start == end).
-        with patch.object(context_daemon, "NIGHT_POLL_START_HOUR", 0):
-            with patch.object(context_daemon, "NIGHT_POLL_END_HOUR", 0):
-                sleep_s = self.tracker.next_sleep_interval()
+        with (
+            patch.object(context_daemon, "NIGHT_POLL_START_HOUR", 0),
+            patch.object(context_daemon, "NIGHT_POLL_END_HOUR", 0),
+        ):
+            sleep_s = self.tracker.next_sleep_interval()
 
         self.assertGreaterEqual(sleep_s, 1)
         self.assertLessEqual(sleep_s, context_daemon.IDLE_SLEEP_CAP_SEC)
@@ -724,21 +739,25 @@ class TestReleaseSingleInstanceLock(unittest.TestCase):
         """_release_single_instance_lock closes the fd and sets _LOCK_FD to None."""
         mock_fd = 99  # Fake file descriptor integer
 
-        with patch.object(context_daemon, "_LOCK_FD", mock_fd, create=True):
-            with patch("os.close") as mock_close:
-                with patch.object(context_daemon, "LOCK_FILE") as mock_lock_file:
-                    mock_lock_file.unlink = MagicMock()
-                    context_daemon._release_single_instance_lock()
-                mock_close.assert_called_once_with(mock_fd)
+        with (
+            patch.object(context_daemon, "_LOCK_FD", mock_fd, create=True),
+            patch("os.close") as mock_close,
+            patch.object(context_daemon, "LOCK_FILE") as mock_lock_file,
+        ):
+            mock_lock_file.unlink = MagicMock()
+            context_daemon._release_single_instance_lock()
+        mock_close.assert_called_once_with(mock_fd)
 
     def test_no_error_when_lock_fd_is_none(self) -> None:
         """_release_single_instance_lock handles _LOCK_FD=None gracefully."""
         import contextlib
 
-        with patch.object(context_daemon, "_LOCK_FD", None, create=True):
-            with patch("os.close") as mock_close:
-                with contextlib.suppress(Exception):
-                    context_daemon._release_single_instance_lock()
+        with (
+            patch.object(context_daemon, "_LOCK_FD", None, create=True),
+            patch("os.close") as mock_close,
+            contextlib.suppress(Exception),
+        ):
+            context_daemon._release_single_instance_lock()
         mock_close.assert_not_called()
 
 

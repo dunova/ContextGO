@@ -42,8 +42,9 @@ def test_lazy_import_run():
 
 def test_getattr_unknown_raises():
     """Accessing a non-existent attribute should raise AttributeError."""
-    import contextgo
     import pytest
+
+    import contextgo
 
     with pytest.raises(AttributeError, match="no attribute"):
         _ = contextgo.nonexistent_attr_xyz

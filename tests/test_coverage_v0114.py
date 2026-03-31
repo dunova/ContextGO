@@ -11,14 +11,9 @@ Targets:
 from __future__ import annotations
 
 import os
-import sqlite3
 import sys
-import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch
-
-import pytest
-
+from unittest.mock import MagicMock
 
 # ---------------------------------------------------------------------------
 # session_index._try_sync — read-only env path

@@ -36,15 +36,15 @@ from pathlib import Path
 from typing import Any
 
 try:
+    from secret_redaction import _SECRET_REPLACEMENTS as _SECRET_REPLACEMENTS_FULL
     from sqlite_retry import retry_commit as _retry_commit
     from sqlite_retry import retry_sqlite as _retry_sqlite
     from sqlite_retry import retry_sqlite_many as _retry_sqlite_many
-    from secret_redaction import _SECRET_REPLACEMENTS as _SECRET_REPLACEMENTS_FULL
 except ImportError:  # pragma: no cover
+    from .secret_redaction import _SECRET_REPLACEMENTS as _SECRET_REPLACEMENTS_FULL  # type: ignore[import-not-found]
     from .sqlite_retry import retry_commit as _retry_commit  # type: ignore[import-not-found]
     from .sqlite_retry import retry_sqlite as _retry_sqlite
     from .sqlite_retry import retry_sqlite_many as _retry_sqlite_many
-    from .secret_redaction import _SECRET_REPLACEMENTS as _SECRET_REPLACEMENTS_FULL  # type: ignore[import-not-found]
 
 # ---------------------------------------------------------------------------
 # In-process search result cache (TTL-based)
@@ -171,32 +171,32 @@ _SECRET_PATTERNS: list[re.Pattern[str]] = [pat for pat, _repl in _SECRET_REPLACE
 # skipped entirely.  The list covers the most common secret prefixes; add new
 # entries here whenever a new pattern is added to secret_redaction.
 _REDACT_FAST_MARKERS: tuple[str, ...] = (
-    "sk-",           # OpenAI / Anthropic API keys
-    "ghp_",          # GitHub personal access tokens
-    "ghu_",          # GitHub user-to-server tokens
-    "ghs_",          # GitHub server-to-server tokens
-    "ghr_",          # GitHub refresh tokens
-    "AKIA",          # AWS access key IDs
-    "ASIA",          # AWS temporary access key IDs
-    "xoxb-",         # Slack bot tokens
-    "xoxp-",         # Slack user tokens
-    "xapp-",         # Slack app tokens
-    "xoxa-",         # Slack workspace access tokens
-    "xoxr-",         # Slack workspace refresh tokens
-    "EAA",           # Facebook/Meta access tokens
-    "ya29.",         # Google OAuth2 access tokens
-    "AIza",          # Google API keys
-    "-----BEGIN",    # PEM-encoded private keys / certificates
-    "token",         # Generic "token" keyword (case-insensitive check done below)
-    "secret",        # Generic "secret" keyword
-    "password",      # Generic "password" keyword
-    "passwd",        # Generic "passwd" keyword
-    "api_key",       # Generic api_key patterns
-    "apikey",        # Alternative spelling
-    "private_key",   # Generic private key field names
-    "access_key",    # Generic access key field names
-    "Authorization", # HTTP Authorization header value
-    "Bearer ",       # Bearer token in auth headers
+    "sk-",  # OpenAI / Anthropic API keys
+    "ghp_",  # GitHub personal access tokens
+    "ghu_",  # GitHub user-to-server tokens
+    "ghs_",  # GitHub server-to-server tokens
+    "ghr_",  # GitHub refresh tokens
+    "AKIA",  # AWS access key IDs
+    "ASIA",  # AWS temporary access key IDs
+    "xoxb-",  # Slack bot tokens
+    "xoxp-",  # Slack user tokens
+    "xapp-",  # Slack app tokens
+    "xoxa-",  # Slack workspace access tokens
+    "xoxr-",  # Slack workspace refresh tokens
+    "EAA",  # Facebook/Meta access tokens
+    "ya29.",  # Google OAuth2 access tokens
+    "AIza",  # Google API keys
+    "-----BEGIN",  # PEM-encoded private keys / certificates
+    "token",  # Generic "token" keyword (case-insensitive check done below)
+    "secret",  # Generic "secret" keyword
+    "password",  # Generic "password" keyword
+    "passwd",  # Generic "passwd" keyword
+    "api_key",  # Generic api_key patterns
+    "apikey",  # Alternative spelling
+    "private_key",  # Generic private key field names
+    "access_key",  # Generic access key field names
+    "Authorization",  # HTTP Authorization header value
+    "Bearer ",  # Bearer token in auth headers
 )
 
 # Lower-cased version for case-insensitive fast check on the generic markers.

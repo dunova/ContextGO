@@ -22,11 +22,15 @@
 
 ---
 
-> **No Docker. No MCP broker. No external vector database. Install with `pipx`, run one health check, and ContextGO starts discovering local AI chat history immediately.**
+> **Your AI agent starts from zero every conversation. It forgets what was decided yesterday, why that approach was abandoned, and what the team already tried.**
 >
-> ContextGO unifies Codex, Claude, and shell session histories into one searchable,
-> auditable index stored entirely on your machine. Hybrid semantic search (model2vec + BM25).
-> Native Rust/Go scanning. Persistent cross-session memory that any AI coding agent can query.
+> ContextGO fixes this. It indexes every Codex, Claude, and shell session locally -- no Docker,
+> no MCP broker, no external vector database, no cloud dependency. Install in one line with
+> `pipx install contextgo`. The next `contextgo search` query returns results across your entire
+> coding history, including sessions from weeks ago, across all your AI tools at once.
+>
+> Hybrid semantic search (model2vec + BM25). Native Rust/Go scanning for speed. Persistent
+> cross-session memory that any AI coding agent can query without any integration code.
 
 ---
 
@@ -152,13 +156,15 @@ contextgo smoke --sandbox
 | Local-first by default | **Yes** | Partial | Partial | No |
 | Docker-free | **Yes** | Yes | Partial | No |
 | Multi-agent session index | **Yes** | No | No | Partial |
+| Cross-tool history (Codex + Claude + shell) | **Yes** | No | No | No |
 | Hybrid semantic search | **Yes** | No | No | Partial |
 | Native Rust/Go scan | **Yes** | No | No | No |
 | MCP-free by default | **Yes** | Yes | No | No |
 | Built-in delivery validation | **Yes** | No | No | No |
 | CJK / Unicode full support | **Yes** | Partial | No | No |
+| One-line install, zero config | **Yes** | No | No | No |
 
-**Key numbers:** 2,041 tests | 97.1% coverage | Python 3.10+ | Hybrid search < 5ms (warm)
+**Key numbers:** 2,183 tests | 97.1% coverage | Python 3.10+ | Hybrid search < 5ms (warm) | 6 AI tool sources
 
 ---
 
@@ -261,6 +267,16 @@ contextgo maintain --enqueue-missing # index all existing sessions
 contextgo smoke                     # maintainer smoke suite
 contextgo maintain --dry-run        # clean and repair local index
 contextgo serve --port 37677        # start local viewer at 127.0.0.1:37677
+```
+
+### Daemon Mode
+
+ContextGO can run as a background daemon to continuously index your sessions:
+
+```bash
+contextgo daemon start
+contextgo daemon status
+contextgo daemon stop
 ```
 
 ### Shell Integration & Completion
@@ -441,11 +457,15 @@ Copyright 2025--2026 [Dunova](https://github.com/dunova).
 
 ---
 
-> **无需 Docker，无需 MCP 代理，无需外部向量数据库。使用 `pipx` 安装，跑一次 health，ContextGO 就会开始自动发现本地 AI 聊天历史。**
+> **你的 AI Agent 每次对话都从零开始。它忘记了昨天的决策、那个方案为什么被放弃、团队已经试过什么。**
 >
-> ContextGO 将 Codex、Claude 和 Shell 会话历史统一为一条可检索、可追溯的索引，
-> 全部存储在本机。内置混合语义搜索（model2vec + BM25）。Rust/Go 原生扫描引擎。
-> 为每个 AI 编码 Agent 提供跨会话记忆。
+> ContextGO 解决这个问题。它在本地索引所有 Codex、Claude 和 Shell 会话历史——无需
+> Docker，无需 MCP 代理，无需外部向量数据库，无需云端依赖。一行命令安装：
+> `pipx install contextgo`。下一次 `contextgo search` 查询即可跨越数周历史、
+> 跨越所有 AI 工具，返回完整结果。
+>
+> 混合语义搜索（model2vec + BM25）。Rust/Go 原生扫描引擎保障速度。
+> 任何 AI 编码 Agent 无需集成代码即可直接查询跨会话持久记忆。
 
 ---
 
@@ -569,13 +589,15 @@ contextgo smoke --sandbox
 | 默认本地优先 | **是** | 部分 | 部分 | 否 |
 | 无需 Docker | **是** | 是 | 部分 | 否 |
 | 多 Agent 会话索引 | **是** | 否 | 否 | 部分 |
+| 跨工具历史（Codex + Claude + Shell） | **是** | 否 | 否 | 否 |
 | 混合语义搜索 | **是** | 否 | 否 | 部分 |
 | Rust/Go 原生扫描 | **是** | 否 | 否 | 否 |
 | 默认无 MCP | **是** | 是 | 否 | 否 |
 | 内置交付验证链 | **是** | 否 | 否 | 否 |
 | CJK / Unicode 全面支持 | **是** | 部分 | 否 | 否 |
+| 一行安装，零配置 | **是** | 否 | 否 | 否 |
 
-**关键数据：** 2,041 项测试 | 97.14% 覆盖率 | Python 3.10+ | 混合搜索 < 5ms（热状态）
+**关键数据：** 2,183 项测试 | 97.1% 覆盖率 | Python 3.10+ | 混合搜索 < 5ms（热状态）| 6 个 AI 工具来源
 
 ---
 
@@ -678,6 +700,16 @@ contextgo maintain --enqueue-missing   # 索引所有已有会话
 contextgo smoke                        # 维护者 smoke 测试套件
 contextgo maintain --dry-run           # 清理并修复本地索引
 contextgo serve --port 37677           # 在 127.0.0.1:37677 启动本地 Viewer
+```
+
+### Daemon 模式
+
+ContextGO 可作为后台 daemon 持续索引你的会话：
+
+```bash
+contextgo daemon start
+contextgo daemon status
+contextgo daemon stop
 ```
 
 ### Shell 集成与补全

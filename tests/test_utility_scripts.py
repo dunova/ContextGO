@@ -1314,7 +1314,7 @@ class TestContextServerMainGuard(unittest.TestCase):
     fragile and can start a real HTTP server in full-suite runs.
     """
 
-    pass  # __main__ block covered by pragma: no cover
+    # __main__ block covered by pragma: no cover
 
 
 class TestSmokeInstalledRuntimeSkipSandbox(unittest.TestCase):

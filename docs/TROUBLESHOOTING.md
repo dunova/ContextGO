@@ -95,7 +95,7 @@ bash scripts/context_healthcheck.sh
 
 **搜索无结果**
 
-**Symptom / 症状:** `context_cli search "..."` returns empty results for sessions you expect to find.
+**Symptom / 症状:** `contextgo search "..."` returns empty results for sessions you expect to find.
 
 **Cause / 原因:** The daemon has not written recent sessions yet, source directories are not being watched, or the index has not been refreshed.
 
@@ -243,13 +243,13 @@ bash scripts/context_healthcheck.sh
 
 **Smoke 测试失败**
 
-**Symptom / 症状:** `context_cli smoke --sandbox` exits with a non-zero code.
+**Symptom / 症状:** `contextgo smoke --sandbox` exits with a non-zero code.
 
 The smoke test runs these steps in order:
 
 Smoke 测试按以下顺序执行：
 
-1. `context_cli health`
+1. `contextgo health`
 2. e2e quality gate
 3. write / read / export / import
 4. semantic pipeline

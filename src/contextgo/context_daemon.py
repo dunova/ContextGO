@@ -53,11 +53,11 @@ except ImportError:
 try:
     from context_config import env_bool, env_float, env_int, env_str, storage_root
     from memory_index import strip_private_blocks, sync_index_from_storage
-    from secret_redaction import _SECRET_REPLACEMENTS, sanitize_text as _sanitize_text_impl
+    from secret_redaction import sanitize_text as _sanitize_text_impl
 except ImportError:  # pragma: no cover - alternate import path
     from .context_config import env_bool, env_float, env_int, env_str, storage_root  # type: ignore[import-not-found]
     from .memory_index import strip_private_blocks, sync_index_from_storage  # type: ignore[import-not-found]
-    from .secret_redaction import _SECRET_REPLACEMENTS, sanitize_text as _sanitize_text_impl  # type: ignore[import-not-found]
+    from .secret_redaction import sanitize_text as _sanitize_text_impl
 
 
 # Env-var helpers — all daemon settings are prefixed CONTEXTGO_
@@ -83,8 +83,12 @@ def _cfg_str(name: str, default: str) -> str:
 
 # Optional remote sync; the default (local-only) path never contacts a server.
 REMOTE_SYNC_URL: str = _cfg_str("REMOTE_URL", default="http://127.0.0.1:8090/api/v1")
+
+
 def _remote_resource_endpoint() -> str:
     return f"{REMOTE_SYNC_URL.rstrip('/')}/resources"
+
+
 REMOTE_HISTORY_TARGET: str = "contextgo://resources/shared/history"
 
 # Storage paths
@@ -193,6 +197,7 @@ def _import_httpx() -> bool:
             _HTTPX_AVAILABLE = False
             _logger.info("httpx not installed; remote sync disabled.")
     return _HTTPX_AVAILABLE
+
 
 # Poll / timing configuration
 # Night-mode: off-hours (23:00-07:00) sleep is expanded to NIGHT_POLL_INTERVAL_SEC.
@@ -335,6 +340,31 @@ _SAFE_FILENAME_PART_RE: re.Pattern[str] = re.compile(r"[^A-Za-z0-9._-]+")
 _IGNORE_SHELL_CMD_PREFIXES = ("history", "fc ")
 
 # _SECRET_REPLACEMENTS and sanitize_text are imported from secret_redaction above.
+
+# Fast-path secret marker set: if none of these substrings are present in a
+# text, it cannot contain any of the secrets matched by the 26-regex scan.
+_FAST_MARKERS: frozenset[str] = frozenset(
+    {
+        "sk-",
+        "ghp_",
+        "ghu_",
+        "ghs_",
+        "ghr_",
+        "github_pat_",
+        "AKIA",
+        "ASIA",
+        "xoxb-",
+        "xoxp-",
+        "Bearer",
+        "eyJ",
+        "hvs.",
+        "dckr_pat_",
+        "postgres://",
+        "mysql://",
+        "mongodb://",
+        "-----BEGIN",
+    }
+)
 
 # Graceful shutdown — shared flag and event set by signal handlers
 
@@ -1395,6 +1425,10 @@ class SessionTracker:
         """Strip private blocks and redact secrets; truncate to 4000 characters."""
         if not text:
             return ""
+        # Fast path: skip regex scan if no secret-like markers present
+        text_lower = text.lower()
+        if not any(m.lower() in text_lower for m in _FAST_MARKERS):
+            return text[:4000]
         out = strip_private_blocks(text).strip()
         out = _sanitize_text_impl(out)
         return out[:4000]
@@ -1532,6 +1566,10 @@ class SessionTracker:
         source_safe = self._sanitize_filename_part(source, default="source")
         sid_safe = self._sanitize_filename_part(sid, default="sid")
         file_path = local_dir / f"{source_safe}_{ts}_{sid_safe[:24]}.md"
+
+        # Path containment: ensure export stays inside local_dir
+        if not file_path.resolve().is_relative_to(local_dir.resolve()):
+            raise ValueError("Export path escapes target directory")
 
         formatted = (
             f"# {title}\n\n"
@@ -1821,7 +1859,7 @@ class SessionTracker:
 
         Includes:
         - RSS memory from ``resource.getrusage`` (OS-level)
-        - Python-object sizes via ``sys.getsizeof`` for sessions and cursors
+        - Serialised sizes via ``json.dumps`` for sessions and cursors
         - Count of recently active sources
         """
         now = time.time()
@@ -1837,10 +1875,16 @@ class SessionTracker:
             except (OSError, ValueError):
                 pass
 
-        # Shallow object-size tracking (does not recurse into values, but gives
-        # a useful signal for the size of the top-level dicts themselves).
-        sessions_sz_kb = sys.getsizeof(self.sessions) / 1024
-        cursors_sz_kb = sys.getsizeof(self.file_cursors) / 1024
+        # Serialised-size tracking: json.dumps recurses into values and gives a
+        # much more accurate estimate than sys.getsizeof (which is shallow).
+        try:
+            sessions_sz_kb = len(json.dumps(self.sessions, default=str)) / 1024
+        except (TypeError, ValueError):
+            sessions_sz_kb = 0.0
+        try:
+            cursors_sz_kb = len(json.dumps(self.file_cursors, default=str)) / 1024
+        except (TypeError, ValueError):
+            cursors_sz_kb = 0.0
 
         pending_count = sum(1 for _ in PENDING_DIR.glob("*.md")) if PENDING_DIR.exists() else 0
         active_sources = [*self.active_jsonl.keys(), *self.active_shell.keys()]

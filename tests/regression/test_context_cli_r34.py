@@ -596,18 +596,16 @@ class TestMainGuard(unittest.TestCase):
 
     def test_main_guard_raises_system_exit(self) -> None:
         """Line 834: raise SystemExit(main()) is exercised when __name__ == '__main__'."""
-        with mock.patch.object(context_cli, "main", return_value=0) as mock_main:
-            with self.assertRaises(SystemExit) as ctx:
-                raise SystemExit(context_cli.main())
+        with mock.patch.object(context_cli, "main", return_value=0) as mock_main, self.assertRaises(SystemExit) as ctx:
+            raise SystemExit(context_cli.main())
 
         mock_main.assert_called_once()
         self.assertEqual(ctx.exception.code, 0)
 
     def test_main_guard_propagates_nonzero_exit(self) -> None:
         """main() returning nonzero must produce SystemExit with that code."""
-        with mock.patch.object(context_cli, "main", return_value=2):
-            with self.assertRaises(SystemExit) as ctx:
-                raise SystemExit(context_cli.main())
+        with mock.patch.object(context_cli, "main", return_value=2), self.assertRaises(SystemExit) as ctx:
+            raise SystemExit(context_cli.main())
 
         self.assertEqual(ctx.exception.code, 2)
 

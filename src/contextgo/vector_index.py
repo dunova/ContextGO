@@ -25,9 +25,10 @@ import sqlite3
 import sys
 import threading
 import time
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Generator
+from typing import Any
 
 try:
     from context_config import env_int, env_str
@@ -103,12 +104,7 @@ _VECTOR_MATRIX_CACHE_LOCK = threading.Lock()
 # Whitelist of safe path characters for ATTACH DATABASE path validation.
 # Colon (':') is intentionally excluded to block SQLite URI schemes such as
 # "file:///etc/passwd?mode=ro" that could be injected via env vars.
-_SAFE_PATH_CHARS: frozenset[str] = frozenset(
-    "abcdefghijklmnopqrstuvwxyz"
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-    "0123456789"
-    "/.-_"
-)
+_SAFE_PATH_CHARS: frozenset[str] = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/.-_")
 
 
 def _load_model() -> Any:
@@ -372,10 +368,7 @@ def _store_batch(
     now_epoch: int,
 ) -> None:
     """Insert or replace a batch of vectors using executemany for efficiency."""
-    rows = [
-        (path, _pack_vector(vectors[i]), VECTOR_MODEL_NAME, VECTOR_DIM, now_epoch)
-        for i, path in enumerate(paths)
-    ]
+    rows = [(path, _pack_vector(vectors[i]), VECTOR_MODEL_NAME, VECTOR_DIM, now_epoch) for i, path in enumerate(paths)]
     conn.executemany(
         "INSERT OR REPLACE INTO session_vectors "
         "(file_path, embedding, model_name, vector_dim, indexed_at_epoch) "

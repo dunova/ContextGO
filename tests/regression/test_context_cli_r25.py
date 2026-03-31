@@ -509,11 +509,11 @@ class TestCmdSemanticConcurrency(unittest.TestCase):
         with (
             mock.patch.object(context_cli, "_local_memory_matches", return_value=[]),
             mock.patch.object(context_cli, "_get_session_index", return_value=si_mock),
+            ThreadPoolExecutor(max_workers=4) as pool,
         ):
-            with ThreadPoolExecutor(max_workers=4) as pool:
-                futures = [pool.submit(run_semantic) for _ in range(4)]
-                for f in futures:
-                    f.result(timeout=10)
+            futures = [pool.submit(run_semantic) for _ in range(4)]
+            for f in futures:
+                f.result(timeout=10)
 
         self.assertEqual(errors, [])
         self.assertEqual(results, [0, 0, 0, 0])
@@ -533,11 +533,9 @@ class TestErrorHandlingInCommands(unittest.TestCase):
         with (
             mock.patch.object(context_cli, "_local_memory_matches", side_effect=RuntimeError("db error")),
             mock.patch("builtins.print"),
+            contextlib.suppress(RuntimeError),
         ):
-            try:
-                context_cli.cmd_semantic(args)
-            except RuntimeError:
-                pass  # Also acceptable if propagated
+            context_cli.cmd_semantic(args)
 
     def test_cmd_semantic_session_index_exception(self) -> None:
         """If session_index raises, cmd_semantic must not crash."""
@@ -548,11 +546,9 @@ class TestErrorHandlingInCommands(unittest.TestCase):
             mock.patch.object(context_cli, "_local_memory_matches", return_value=[]),
             mock.patch.object(context_cli, "_get_session_index", return_value=si_mock),
             mock.patch("builtins.print"),
+            contextlib.suppress(OSError),
         ):
-            try:
-                context_cli.cmd_semantic(args)
-            except OSError:
-                pass
+            context_cli.cmd_semantic(args)
 
     def test_cmd_health_session_index_exception_handled(self) -> None:
         """If session_index raises, cmd_health must not crash."""
@@ -562,11 +558,9 @@ class TestErrorHandlingInCommands(unittest.TestCase):
         with (
             mock.patch.object(context_cli, "_get_session_index", return_value=si_mock),
             mock.patch("builtins.print"),
+            contextlib.suppress(RuntimeError),
         ):
-            try:
-                context_cli.cmd_health(args)
-            except RuntimeError:
-                pass  # Also acceptable
+            context_cli.cmd_health(args)
 
     def test_cmd_health_native_exception_handled(self) -> None:
         """If context_native.health_payload raises, cmd_health must not crash."""
@@ -580,12 +574,10 @@ class TestErrorHandlingInCommands(unittest.TestCase):
             mock.patch.object(context_cli, "_source_freshness", return_value={}),
             mock.patch.object(context_cli, "_remote_process_count", return_value=0),
             mock.patch("builtins.print"),
+            contextlib.suppress(OSError),
         ):
             # Must not crash; either propagates or handles the error gracefully
-            try:
-                context_cli.cmd_health(args)
-            except OSError:
-                pass  # Also acceptable if it propagates
+            context_cli.cmd_health(args)
 
 
 # ---------------------------------------------------------------------------

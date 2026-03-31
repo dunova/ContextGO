@@ -116,16 +116,18 @@ def _import_vector_index() -> ModuleType:
     """Import and return the vector_index module (deferred; raises ImportError with hint on failure)."""
     try:
         import vector_index as _m  # type: ignore[import-not-found]  # noqa: PLC0415
+
         return _m
     except ImportError:
         pass
     try:
         from . import vector_index as _m  # type: ignore[import-not-found]  # noqa: PLC0415
+
         return _m
     except ImportError:
         raise ImportError(
             'vector dependencies not installed. Run: pipx install "contextgo[vector]"'
-            " / 向量依赖未安装，请运行：pipx install \"contextgo[vector]\""
+            ' / 向量依赖未安装，请运行：pipx install "contextgo[vector]"'
         ) from None
 
 
@@ -710,7 +712,10 @@ def cmd_health(args: argparse.Namespace) -> int:
     try:
         memory_root_exists: bool = future_memory_root.result(timeout=_HEALTH_TIMEOUT)
     except FuturesTimeoutError:
-        print("Warning: memory root check timed out, falling back to direct stat. / 警告：内存根目录检查超时，回退到直接检测。", file=sys.stderr)
+        print(
+            "Warning: memory root check timed out, falling back to direct stat. / 警告：内存根目录检查超时，回退到直接检测。",
+            file=sys.stderr,
+        )
         memory_root_exists = LOCAL_SHARED_ROOT.exists()
     except Exception as exc:
         _logger.warning("Memory root check future failed: %s", exc)
@@ -1360,8 +1365,12 @@ def _add_maintain_subcommand(sub: object) -> None:
     p.add_argument("--include-subagents", action="store_true", help="Include sub-agent sessions in maintenance")
     p.add_argument("--repair-queue", action="store_true", help="Repair stalled or failed queue entries")
     p.add_argument("--enqueue-missing", action="store_true", help="Scan for and enqueue sessions not yet in the index")
-    p.add_argument("--max-enqueue", type=int, default=2000, help="Maximum sessions to enqueue in one run (default: 2000)")
-    p.add_argument("--stale-minutes", type=int, default=15, help="Treat queue entries older than N minutes as stale (default: 15)")
+    p.add_argument(
+        "--max-enqueue", type=int, default=2000, help="Maximum sessions to enqueue in one run (default: 2000)"
+    )
+    p.add_argument(
+        "--stale-minutes", type=int, default=15, help="Treat queue entries older than N minutes as stale (default: 15)"
+    )
     p.add_argument("--dry-run", action="store_true", help="Preview changes without writing to disk or database")
 
 
@@ -1493,7 +1502,7 @@ def _add_utility_subcommands(sub: object) -> None:
         description=(
             "Print a shell integration script that adds convenience aliases.\n\n"
             "To activate in your current session:\n"
-            "  eval \"$(contextgo shell-init)\"\n\n"
+            '  eval "$(contextgo shell-init)"\n\n'
             "To make permanent, add the eval line to ~/.bashrc or ~/.zshrc.\n\n"
             "Aliases added:\n"
             "  cg  — contextgo q (quick recall)\n"
@@ -1510,7 +1519,7 @@ def _add_utility_subcommands(sub: object) -> None:
             "Print a shell completion script for bash, zsh, or fish.\n\n"
             "Examples:\n"
             "  source <(contextgo completion bash)     # activate in current bash session\n"
-            "  eval \"$(contextgo completion zsh)\"      # activate in current zsh session\n"
+            '  eval "$(contextgo completion zsh)"      # activate in current zsh session\n'
             "  contextgo completion fish | source      # activate in current fish session\n\n"
             "To make completions permanent, add the eval line to your shell rc file\n"
             "(~/.bashrc, ~/.zshrc) or copy the fish output to\n"
@@ -1547,13 +1556,13 @@ def build_parser() -> object:
             "  contextgo save --title 'Fix' --content '...' # save a memory\n"
             "  contextgo health                              # system health check\n"
             "  contextgo serve                               # start memory viewer\n"
-            "  eval \"$(contextgo shell-init)\"               # add cg/cgs/cgse aliases"
+            '  eval "$(contextgo shell-init)"               # add cg/cgs/cgse aliases'
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Run 'contextgo <command> --help' for detailed help on any subcommand.\n"
             "Environment variables: see .env.example in the project root.\n"
-            "Shell integration: eval \"$(contextgo shell-init)\"\n\n"
+            'Shell integration: eval "$(contextgo shell-init)"\n\n'
             "Documentation: https://github.com/dunova/ContextGO\n"
             "Bug reports: https://github.com/dunova/ContextGO/issues"
         ),

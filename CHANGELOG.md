@@ -9,6 +9,41 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.12.0] — 2026-03-31
+
+### Security / 安全
+- **Export path containment**: `_export()` now validates resolved path stays inside target directory / 导出路径逃逸防护
+- **Redaction marker unification**: All 32 secret patterns now replace with unified `***REDACTED***` marker / 脱敏标记统一为单一格式
+- **Sanitize fast-path**: Module-level `_FAST_MARKERS` frozenset pre-screens text before running 26 regex patterns / 脱敏快速前检跳过无关文本
+
+### Performance / 性能
+- **Heartbeat accuracy**: Replaced `sys.getsizeof()` (shallow) with `json.dumps()` (deep) for memory reporting / 心跳内存报告改用深度序列化估算
+
+### Reliability / 可靠性
+- **DB integrity check**: `context_maintenance` now runs `PRAGMA integrity_check` before any write operations / 维护前先检查数据库完整性
+- **Thread-safe sync**: `sync_session_index` protected by `threading.Lock` / 索引同步加线程锁
+- **Cache isolation**: Tests auto-clear module-level caches via conftest autouse fixture / 测试间缓存隔离
+
+### Packaging / 打包
+- **Wheel cleanup**: `context_smoke.py` and `memory_viewer.py` excluded from wheel / wheel 排除更多 devtool
+- **noise_markers.json force-include**: Explicitly included in wheel via `[tool.hatch.build.targets.wheel.force-include]` / 数据文件显式包含
+- **mkdir mode=0o700**: `context_native.py` cache dir creation now uses secure mode / 缓存目录创建统一安全权限
+
+### Testing / 测试
+- **secret_redaction test suite**: 50+ test cases covering all 32 token patterns / 脱敏模块完整测试覆盖
+- **Ruff lint clean**: All 92 lint violations fixed (SIM117, SIM105, F401) / 全量 lint 清零
+
+### CI / 持续集成
+- **Fix verify pipeline**: Corrected `scripts/context_cli.py` reference, safety 3.x compat, ruff version alignment / CI 流水线修复
+- **Dependency bumps**: Merged ruff 0.15.8, safety 3.7.0, httpx 0.28.1, pytest 9.0.2, actions group updates / 依赖批量升级
+
+### Documentation / 文档
+- **README commercial rewrite**: Pain-point-driven tagline, updated comparison table, test count refresh / README 商业级重写
+- **Daemon mode docs**: Added daemon start/status/stop in README and Chinese version / 新增 daemon 模式文档
+- **TROUBLESHOOTING fix**: Corrected `context_cli` → `contextgo` command references / 故障排查命令名修正
+
+---
+
 ## [0.11.11] — 2026-03-30
 
 ### Packaging / 打包
