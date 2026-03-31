@@ -347,6 +347,7 @@ _IGNORE_SHELL_CMD_PREFIXES = ("history", "fc ")
 # text, it cannot contain any of the secrets matched by the 26-regex scan.
 _FAST_MARKERS: frozenset[str] = frozenset(
     {
+        # Specific token prefixes
         "sk-",
         "ghp_",
         "ghu_",
@@ -355,16 +356,48 @@ _FAST_MARKERS: frozenset[str] = frozenset(
         "github_pat_",
         "AKIA",
         "ASIA",
+        "AROA",
         "xoxb-",
         "xoxp-",
-        "Bearer",
+        "xoxa-",
         "eyJ",
         "hvs.",
         "dckr_pat_",
+        "glpat-",
+        "npm_",
+        "hf_",
+        "sk_test_",
+        "sk_live_",
+        "rk_test_",
+        "rk_live_",
+        "SG.",
+        "AIza",
+        # DSN/URL patterns
         "postgres://",
+        "postgresql://",
         "mysql://",
         "mongodb://",
+        "redis://",
+        # PEM keys
         "-----BEGIN",
+        # Auth headers / CLI flags
+        "Bearer",
+        "bearer",
+        "--token",
+        "--api-key",
+        "--api_key",
+        # Generic key=value patterns
+        "api_key",
+        "api-key",
+        "apikey",
+        "token=",
+        "token:",
+        "password=",
+        "password:",
+        "secret=",
+        "secret:",
+        # Azure SAS
+        "sig=",
     }
 )
 
