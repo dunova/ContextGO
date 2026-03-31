@@ -1105,11 +1105,10 @@ class TestMainFunction(unittest.TestCase):
                 return False
 
         fake_tracker = FakeTracker()
-        sleep_calls = [0]
 
-        def stop_after_one(secs: float) -> None:
-            sleep_calls[0] += 1
+        def stop_after_one_wait(timeout: float = None) -> bool:
             context_daemon._shutdown = True
+            return False  # simulate not-set
 
         # Patch time.monotonic to simulate budget exceeded immediately
         mono_vals = iter([0.0, 1000.0, 1000.0, 1000.0, 1000.0, 1000.0])
@@ -1120,7 +1119,7 @@ class TestMainFunction(unittest.TestCase):
             patch.object(context_daemon, "_validate_startup"),
             patch.object(context_daemon, "_setup_logging"),
             patch.object(context_daemon, "_acquire_single_instance_lock", return_value=True),
-            patch("time.sleep", side_effect=stop_after_one),
+            patch.object(context_daemon._stop_event, "wait", side_effect=stop_after_one_wait),
             patch("time.monotonic", side_effect=mono_vals),
         ):
             try:
