@@ -515,6 +515,7 @@ class TestCLIIntegration(unittest.TestCase):
     @patch("contextgo.context_prewarm.prewarm_from_stdin", return_value=0)
     def test_cmd_prewarm_delegates(self, mock_pfstdin: object) -> None:
         import argparse
+
         from contextgo import context_cli
         args = argparse.Namespace(command="prewarm")
         rc = context_cli.cmd_prewarm(args)
@@ -523,6 +524,7 @@ class TestCLIIntegration(unittest.TestCase):
     @patch("contextgo.context_prewarm.setup_all")
     def test_cmd_setup_calls_setup_all(self, mock_sa: object) -> None:
         import argparse
+
         from contextgo import context_cli
         mock_sa.return_value = {"Claude Code (hook)": True, "Codex CLI": False, "OpenClaw": False, "Claude Code (policy)": True}  # type: ignore[union-attr]
         args = argparse.Namespace(command="setup")
@@ -532,6 +534,7 @@ class TestCLIIntegration(unittest.TestCase):
     @patch("contextgo.context_prewarm.teardown_all")
     def test_cmd_unsetup_calls_teardown_all(self, mock_ta: object) -> None:
         import argparse
+
         from contextgo import context_cli
         mock_ta.return_value = {"Claude Code (hook)": True, "Codex CLI": True, "OpenClaw": True, "Claude Code (policy)": True}  # type: ignore[union-attr]
         args = argparse.Namespace(command="unsetup")

@@ -19,6 +19,7 @@ Hook integration (Claude Code):
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import re
@@ -351,10 +352,8 @@ def _atomic_write(filepath: Path, content: str) -> None:
         Path(tmp_path).replace(real_path)
     except BaseException:
         # Clean up temp file on any failure.
-        try:
+        with contextlib.suppress(OSError):
             Path(tmp_path).unlink(missing_ok=True)
-        except OSError:
-            pass
         raise
 
 
