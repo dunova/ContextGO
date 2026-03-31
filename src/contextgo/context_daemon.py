@@ -1427,11 +1427,12 @@ class SessionTracker:
         """Strip private blocks and redact secrets; truncate to 4000 characters."""
         if not text:
             return ""
-        # Fast path: skip regex scan if no secret-like markers present
-        text_lower = text.lower()
-        if not any(m.lower() in text_lower for m in _FAST_MARKERS):
-            return text[:4000]
+        # Always strip private blocks first
         out = strip_private_blocks(text).strip()
+        # Fast path: skip secret regex scan if no secret-like markers present
+        text_lower = out.lower()
+        if not any(m.lower() in text_lower for m in _FAST_MARKERS):
+            return out[:4000]
         out = _sanitize_text_impl(out)
         return out[:4000]
 
