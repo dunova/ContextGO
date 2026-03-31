@@ -495,8 +495,9 @@ def run_smoke(
 def main() -> int:
     """Entry point: run smoke suite and print JSON report to stdout."""
     root = Path(__file__).resolve().parent
+    repo_root = root.parent.parent  # src/contextgo/ -> src/ -> repo root
     cli_path = root / "context_cli.py"
-    quality_gate_path = root / "e2e_quality_gate.py"
+    quality_gate_path = repo_root / "scripts" / "e2e_quality_gate.py"
 
     payload = run_smoke(cli_path, quality_gate_path)
     output = {
