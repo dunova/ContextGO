@@ -928,13 +928,9 @@ class TestMainFunction(unittest.TestCase):
     def _run_main_one_cycle(self, extra_patches: dict | None = None, **kwargs: bool) -> None:
         """Run main() for one iteration then trigger shutdown."""
 
-        shutdown_after = [False]
-
-        def set_shutdown(*args: object, **kw: object) -> None:
-            # Allow one real sleep call, then set _shutdown to stop the loop
-            if not shutdown_after[0]:
-                shutdown_after[0] = True
+        def stop_after_one_wait(timeout: float = None) -> bool:
             context_daemon._shutdown = True
+            return False
 
         patches = {
             "context_daemon._shutdown": False,
@@ -948,7 +944,7 @@ class TestMainFunction(unittest.TestCase):
             patch.object(context_daemon, "_setup_logging"),
             patch.object(context_daemon, "_acquire_single_instance_lock", return_value=True),
             patch.object(context_daemon, "_shutdown", False),
-            patch("time.sleep", side_effect=set_shutdown),
+            patch.object(context_daemon._stop_event, "wait", side_effect=stop_after_one_wait),
         ):
             try:
                 context_daemon.main()
@@ -995,18 +991,19 @@ class TestMainFunction(unittest.TestCase):
         mock_watcher._directories = []
         mock_watcher.has_changes.return_value = False  # no changes
 
-        sleep_vals = []
+        wait_vals = []
 
-        def capture_sleep(secs: float) -> None:
-            sleep_vals.append(secs)
+        def capture_wait(timeout: float = None) -> bool:
+            wait_vals.append(timeout)
             context_daemon._shutdown = True
+            return False
 
         with (
             patch.object(context_daemon, "_build_file_watcher", return_value=mock_watcher),
             patch.object(context_daemon, "_validate_startup"),
             patch.object(context_daemon, "_setup_logging"),
             patch.object(context_daemon, "_acquire_single_instance_lock", return_value=True),
-            patch("time.sleep", side_effect=capture_sleep),
+            patch.object(context_daemon._stop_event, "wait", side_effect=capture_wait),
         ):
             try:
                 context_daemon.main()
@@ -1015,17 +1012,18 @@ class TestMainFunction(unittest.TestCase):
             finally:
                 context_daemon._shutdown = False
 
-        # Sleep should have been called at least once
-        self.assertGreater(len(sleep_vals), 0)
+        # Wait should have been called at least once
+        self.assertGreater(len(wait_vals), 0)
         mock_watcher.close.assert_called()
 
     def test_main_loop_jitter_applied(self) -> None:
         """main() adds jitter to sleep when LOOP_JITTER_SEC > 0."""
-        sleep_vals = []
+        wait_vals = []
 
-        def capture_sleep(secs: float) -> None:
-            sleep_vals.append(secs)
+        def capture_wait(timeout: float = None) -> bool:
+            wait_vals.append(timeout)
             context_daemon._shutdown = True
+            return False
 
         with (
             patch.object(context_daemon, "LOOP_JITTER_SEC", 0.5),
@@ -1033,7 +1031,7 @@ class TestMainFunction(unittest.TestCase):
             patch.object(context_daemon, "_validate_startup"),
             patch.object(context_daemon, "_setup_logging"),
             patch.object(context_daemon, "_acquire_single_instance_lock", return_value=True),
-            patch("time.sleep", side_effect=capture_sleep),
+            patch.object(context_daemon._stop_event, "wait", side_effect=capture_wait),
         ):
             try:
                 context_daemon.main()
@@ -1042,7 +1040,7 @@ class TestMainFunction(unittest.TestCase):
             finally:
                 context_daemon._shutdown = False
 
-        self.assertGreater(len(sleep_vals), 0)
+        self.assertGreater(len(wait_vals), 0)
 
     def test_main_acquire_lock_failure_exits(self) -> None:
         """main() raises SystemExit when lock acquisition fails."""
