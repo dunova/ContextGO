@@ -640,13 +640,16 @@ def cmd_smoke(args: argparse.Namespace) -> int:
     if not cli_path.exists():
         cli_path = symlink_dir / "context_cli.py"
 
-    # e2e_quality_gate.py lives alongside context_cli.py.  When context_cli.py
-    # is invoked via a symlink from scripts/, __file__.parent points to scripts/
-    # while __file__.resolve().parent points to src/contextgo/.  Try both so
-    # the gate is found regardless of how the CLI is launched.
+    # e2e_quality_gate.py lives in scripts/ at the repo root.  Try multiple
+    # search strategies so the gate is found regardless of how the CLI is
+    # launched (pip install, symlink from scripts/, editable install, etc.).
     e2e_gate_path = resolved_dir / "e2e_quality_gate.py"
     if not e2e_gate_path.exists():
         e2e_gate_path = symlink_dir / "e2e_quality_gate.py"
+    if not e2e_gate_path.exists():
+        # Try repo root: src/contextgo/ -> src/ -> repo_root/scripts/
+        repo_root = resolved_dir.parent.parent
+        e2e_gate_path = repo_root / "scripts" / "e2e_quality_gate.py"
     if not e2e_gate_path.exists():
         print(
             '{"ok": false, "note": "e2e_quality_gate.py not found — cannot run smoke test"}',
