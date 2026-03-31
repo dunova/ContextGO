@@ -24,6 +24,7 @@ src/contextgo/     Python runtime package
   context_native.py    Rust/Go backend orchestration
   context_smoke.py     Smoke test suite
   context_maintenance.py  Index cleanup and repair
+  context_prewarm.py   Auto context prewarm engine (hooks + setup)
   vector_index.py      Optional hybrid vector search (model2vec + BM25 + RRF)
   source_adapters.py   External tool auto-discovery + normalization
 tests/             Full automated test suite

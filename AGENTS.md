@@ -15,6 +15,7 @@
 
 ```bash
 pipx install "contextgo[vector]" || pipx upgrade "contextgo[vector]"
+contextgo setup       # one-command auto-prewarm for Claude Code / Codex / OpenClaw
 contextgo health
 eval "$(contextgo shell-init)"
 ```
@@ -49,6 +50,9 @@ Storage root: `~/.contextgo` (override: `CONTEXTGO_STORAGE_ROOT`)
 ## Key Commands / 核心命令
 
 ```bash
+# Auto-prewarm setup (one-time, configures hooks for all AI tools) / 自动预热配置
+contextgo setup
+
 # Health check / 健康检查
 contextgo health
 

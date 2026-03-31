@@ -32,7 +32,7 @@ flowchart LR
     end
 
     subgraph Interface
-        CLI["context_cli<br/>search · semantic · save · export · import · serve · maintain · native-scan · smoke · health · vector-sync · vector-status · sources · q · shell-init · completion"]
+        CLI["context_cli<br/>search · semantic · save · prewarm · setup · export · import · serve · maintain · native-scan · smoke · health · vector-sync · vector-status · sources · q · shell-init · completion"]
         SRV["context_server<br/>local viewer HTTP API"]
     end
 
@@ -76,6 +76,7 @@ ContextGO/
 │   ├── context_maintenance.py # Index cleanup and repair
 │   ├── context_smoke.py       # Smoke test suite
 │   ├── source_adapters.py     # External tool auto-discovery + normalization
+│   ├── context_prewarm.py     # Auto context prewarm engine (hooks + setup)
 │   ├── vector_index.py        # Hybrid semantic search (model2vec + BM25 + RRF)
 │   └── sqlite_retry.py        # Shared SQLite retry helpers (exponential backoff)
 ├── tests/                     # Full automated test suite

@@ -22,11 +22,13 @@ __all__ = [
     "cmd_import",
     "cmd_maintain",
     "cmd_native_scan",
+    "cmd_prewarm",
     "cmd_q",
     "cmd_save",
     "cmd_search",
     "cmd_semantic",
     "cmd_serve",
+    "cmd_setup",
     "cmd_shell_init",
     "cmd_smoke",
     "cmd_vector_status",
@@ -85,6 +87,15 @@ def _get_memory_index() -> ModuleType:
         import memory_index as _m  # type: ignore[import-not-found]
     except ImportError:
         from . import memory_index as _m  # type: ignore[import-not-found]
+    return _m
+
+
+def _get_context_prewarm() -> ModuleType:
+    """Lazy import of context_prewarm — deferred until first use."""
+    try:
+        import context_prewarm as _m  # type: ignore[import-not-found]
+    except ImportError:
+        from . import context_prewarm as _m  # type: ignore[import-not-found]
     return _m
 
 
@@ -1160,6 +1171,46 @@ def cmd_completion(args: argparse.Namespace) -> int:
 
 
 # ───────────────────────────────────────────────
+# Prewarm & setup commands
+# ───────────────────────────────────────────────
+
+
+def cmd_prewarm(args: argparse.Namespace) -> int:
+    """Auto-prewarm: read user message from stdin, search memory, print branded results."""
+    return _get_context_prewarm().prewarm_from_stdin()
+
+
+def cmd_setup(args: argparse.Namespace) -> int:
+    """One-command setup: configure all detected AI tools for automatic prewarm."""
+    pw = _get_context_prewarm()
+
+    print(f"{pw.BRAND} — 自动上下文预热配置")
+    print("=" * 48)
+    print()
+
+    results = pw.setup_all()
+
+    all_ok = True
+    for tool, ok in results.items():
+        status = "OK" if ok else "SKIP (tool not found)"
+        if not ok:
+            all_ok = False
+        print(f"  {tool}: {status}")
+
+    print()
+    if all_ok:
+        print(
+            "配置完成！新对话将自动执行上下文预热。\n"
+            "Setup complete! New conversations will auto-prewarm context.\n"
+            "\n"
+            '测试预热: echo \'{"prompt":{"content":"test query"}}\' | contextgo prewarm'
+        )
+    else:
+        print("部分工具未检测到，已跳过。\nSome tools were not detected and skipped.")
+    return 0
+
+
+# ───────────────────────────────────────────────
 # Command dispatch table
 # ───────────────────────────────────────────────
 
@@ -1180,6 +1231,8 @@ COMMANDS: dict[str, object] = {
     "q": cmd_q,
     "shell-init": cmd_shell_init,
     "completion": cmd_completion,
+    "prewarm": cmd_prewarm,
+    "setup": cmd_setup,
 }
 
 
@@ -1471,6 +1524,46 @@ def _add_vector_subcommands(sub: object) -> None:
     )
 
 
+def _add_prewarm_setup_subcommands(sub: object) -> None:
+    """Register the ``prewarm`` and ``setup`` subcommands."""
+    import argparse as _ap  # noqa: PLC0415
+
+    sub.add_parser(  # type: ignore[union-attr]
+        "prewarm",
+        help="Auto context prewarm (reads user message from stdin, outputs recall results)",
+        description=(
+            "Automatic context prewarm engine. Reads a JSON payload from stdin,\n"
+            "extracts keywords from the user message, searches memory and session\n"
+            "index, and prints branded recall results to stdout.\n\n"
+            "Designed to be called as a Claude Code UserPromptSubmit hook.\n"
+            "Run 'contextgo setup' to configure the hook automatically.\n\n"
+            "Manual test:\n"
+            '  echo \'{"prompt":{"content":"how did we fix the auth bug?"}}\' | contextgo prewarm\n\n'
+            "Exit codes: always 0 (advisory, never blocks user messages)."
+        ),
+        formatter_class=_ap.RawDescriptionHelpFormatter,
+    )
+
+    sub.add_parser(  # type: ignore[union-attr]
+        "setup",
+        help="One-command setup: configure all AI tools for automatic context prewarm",
+        description=(
+            "Detect installed AI coding tools (Claude Code, Codex, OpenClaw) and\n"
+            "configure each one for automatic context prewarm on new conversations.\n\n"
+            "What this does:\n"
+            "  - Claude Code: writes UserPromptSubmit hook to ~/.claude/settings.json\n"
+            "  - Codex CLI:   injects context-first policy into ~/.codex/AGENTS.md\n"
+            "  - OpenClaw:    injects context-first policy into workspace AGENTS.md\n\n"
+            "Run once after installing ContextGO. Idempotent (safe to re-run).\n\n"
+            "Examples:\n"
+            "  contextgo setup                # configure all detected tools\n"
+            "  pipx install contextgo && contextgo setup   # install + configure\n\n"
+            "Exit codes: 0 = success."
+        ),
+        formatter_class=_ap.RawDescriptionHelpFormatter,
+    )
+
+
 def _add_utility_subcommands(sub: object) -> None:
     """Register the ``sources``, ``q``, ``shell-init``, and ``completion`` subcommands."""
     import argparse as _ap  # noqa: PLC0415
@@ -1591,6 +1684,7 @@ def build_parser() -> object:
     _add_native_scan_subcommand(sub)
     _add_smoke_health_subcommands(sub)
     _add_vector_subcommands(sub)
+    _add_prewarm_setup_subcommands(sub)
     _add_utility_subcommands(sub)
 
     _PARSER = parser
@@ -1648,6 +1742,7 @@ def main(argv: list[str] | None = None) -> int:
 _LAZY_MODULE_GETTERS: dict[str, object] = {
     "context_core": _get_context_core,
     "context_native": _get_context_native,
+    "context_prewarm": _get_context_prewarm,
     "context_smoke": _get_context_smoke,
     "session_index": _get_session_index,
     "memory_index": _get_memory_index,
