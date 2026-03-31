@@ -487,5 +487,140 @@ class TestAtomicWrite(unittest.TestCase):
             self.assertEqual(files[0].name, "test.json")
 
 
+class TestCLIIntegration(unittest.TestCase):
+    """CLI dispatch and main() integration."""
+
+    def test_commands_dict_contains_prewarm_setup_unsetup(self) -> None:
+        from contextgo import context_cli
+        self.assertIn("prewarm", context_cli.COMMANDS)
+        self.assertIn("setup", context_cli.COMMANDS)
+        self.assertIn("unsetup", context_cli.COMMANDS)
+
+    def test_commands_point_to_correct_functions(self) -> None:
+        from contextgo import context_cli
+        self.assertIs(context_cli.COMMANDS["prewarm"], context_cli.cmd_prewarm)
+        self.assertIs(context_cli.COMMANDS["setup"], context_cli.cmd_setup)
+        self.assertIs(context_cli.COMMANDS["unsetup"], context_cli.cmd_unsetup)
+
+    def test_build_parser_has_prewarm_setup_unsetup(self) -> None:
+        from contextgo import context_cli
+        parser = context_cli.build_parser()
+        subs_actions = [a for a in parser._actions if hasattr(a, "_name_parser_map")]
+        self.assertTrue(len(subs_actions) > 0)
+        names = subs_actions[0]._name_parser_map
+        self.assertIn("prewarm", names)
+        self.assertIn("setup", names)
+        self.assertIn("unsetup", names)
+
+    @patch("contextgo.context_prewarm.prewarm_from_stdin", return_value=0)
+    def test_cmd_prewarm_delegates(self, mock_pfstdin: object) -> None:
+        import argparse
+        from contextgo import context_cli
+        args = argparse.Namespace(command="prewarm")
+        rc = context_cli.cmd_prewarm(args)
+        self.assertEqual(rc, 0)
+
+    @patch("contextgo.context_prewarm.setup_all")
+    def test_cmd_setup_calls_setup_all(self, mock_sa: object) -> None:
+        import argparse
+        from contextgo import context_cli
+        mock_sa.return_value = {"Claude Code (hook)": True, "Codex CLI": False, "OpenClaw": False, "Claude Code (policy)": True}  # type: ignore[union-attr]
+        args = argparse.Namespace(command="setup")
+        rc = context_cli.cmd_setup(args)
+        self.assertEqual(rc, 0)
+
+    @patch("contextgo.context_prewarm.teardown_all")
+    def test_cmd_unsetup_calls_teardown_all(self, mock_ta: object) -> None:
+        import argparse
+        from contextgo import context_cli
+        mock_ta.return_value = {"Claude Code (hook)": True, "Codex CLI": True, "OpenClaw": True, "Claude Code (policy)": True}  # type: ignore[union-attr]
+        args = argparse.Namespace(command="unsetup")
+        rc = context_cli.cmd_unsetup(args)
+        self.assertEqual(rc, 0)
+
+
+class TestSetupAllKeys(unittest.TestCase):
+    """Verify setup_all returns all expected keys."""
+
+    def test_returns_all_expected_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(Path, "home", return_value=Path(tmp)):
+                (Path(tmp) / ".claude").mkdir()
+                results = pw.setup_all()
+        expected_keys = {"Claude Code (hook)", "Claude Code (policy)", "Codex CLI", "OpenClaw"}
+        self.assertEqual(set(results.keys()), expected_keys)
+
+    def test_teardown_all_returns_all_expected_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(Path, "home", return_value=Path(tmp)):
+                results = pw.teardown_all()
+        expected_keys = {"Claude Code (hook)", "Claude Code (policy)", "Codex CLI", "OpenClaw"}
+        self.assertEqual(set(results.keys()), expected_keys)
+
+
+class TestSetupOpenclaw(unittest.TestCase):
+    """OpenClaw setup tests."""
+
+    def test_setup_with_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            oc = Path(tmp) / ".openclaw" / "workspace"
+            oc.mkdir(parents=True)
+            (oc / "AGENTS.md").write_text("# OpenClaw\n")
+            with patch.object(Path, "home", return_value=Path(tmp)):
+                result = pw.setup_openclaw()
+            self.assertTrue(result)
+            self.assertIn("SCF:CONTEXT-FIRST:START", (oc / "AGENTS.md").read_text())
+
+    def test_setup_missing_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(Path, "home", return_value=Path(tmp)):
+                result = pw.setup_openclaw()
+            self.assertFalse(result)
+
+
+class TestPrewarmStdoutCapture(unittest.TestCase):
+    """Verify stdout output from prewarm_from_stdin."""
+
+    @patch("sys.stdin")
+    @patch("contextgo.context_prewarm.prewarm", return_value="[ContextGO] 上下文预热完成 — 找到 1 条")
+    @patch("builtins.print")
+    def test_output_printed_to_stdout(self, mock_print: object, mock_prewarm: object, mock_stdin: object) -> None:
+        mock_stdin.read.return_value = json.dumps({"prompt": {"content": "deploy pipeline fix auth"}})  # type: ignore[union-attr]
+        pw.prewarm_from_stdin()
+        mock_print.assert_called_once()  # type: ignore[union-attr]
+        printed = mock_print.call_args[0][0]  # type: ignore[union-attr]
+        self.assertIn("[ContextGO]", printed)
+
+    @patch("sys.stdin")
+    @patch("contextgo.context_prewarm.prewarm", return_value="")
+    @patch("builtins.print")
+    def test_no_output_when_empty(self, mock_print: object, mock_prewarm: object, mock_stdin: object) -> None:
+        mock_stdin.read.return_value = json.dumps({"prompt": {"content": "deploy pipeline fix auth"}})  # type: ignore[union-attr]
+        pw.prewarm_from_stdin()
+        mock_print.assert_not_called()  # type: ignore[union-attr]
+
+    @patch("sys.stdin")
+    @patch("contextgo.context_prewarm.prewarm", return_value="")
+    def test_message_boundary_length_4(self, mock_prewarm: object, mock_stdin: object) -> None:
+        """Message with exactly 4 chars after strip should be processed."""
+        mock_stdin.read.return_value = json.dumps({"prompt": {"content": "abcd"}})  # type: ignore[union-attr]
+        pw.prewarm_from_stdin()
+        mock_prewarm.assert_called_once_with("abcd")  # type: ignore[union-attr]
+
+
+class TestPrewarmTimeout(unittest.TestCase):
+    """Timeout and concurrent execution paths."""
+
+    def test_prewarm_respects_timeout(self) -> None:
+        """Prewarm should not block beyond timeout even with slow modules."""
+        import time as _t
+        t0 = _t.monotonic()
+        # With unavailable modules, should return quickly.
+        result = pw.prewarm("some obscure query xyz999", timeout=0.5)
+        elapsed = _t.monotonic() - t0
+        self.assertLess(elapsed, 3.0)
+        self.assertIsInstance(result, str)
+
+
 if __name__ == "__main__":
     unittest.main()
