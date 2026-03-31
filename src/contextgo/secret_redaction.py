@@ -26,19 +26,14 @@ import re
 # ---------------------------------------------------------------------------
 # Ordered list of (pattern, replacement) pairs applied during sanitisation.
 # Compiled once at import time for efficiency.
-# Replacements preserve a human-readable prefix where possible so that
-# log reviewers can tell which token *type* was scrubbed.
+#
+# ORDERING MATTERS: specific token patterns MUST come before generic
+# key=value patterns, otherwise "API_KEY=sk-ant-..." would have the
+# value replaced by *** before the sk-ant- pattern gets a chance to
+# produce the more informative "sk-ant-***" replacement.
 # ---------------------------------------------------------------------------
 _SECRET_REPLACEMENTS: list[tuple[re.Pattern[str], str]] = [
-    # --- Generic key=value / key: value patterns ---
-    (re.compile(r"(api[_-]?key\s*[=:]\s*)([^\s\"']+)", re.IGNORECASE), r"\1***"),
-    (re.compile(r"(token\s*[=:]\s*)([^\s\"']+)", re.IGNORECASE), r"\1***"),
-    (re.compile(r"(password\s*[=:]\s*)([^\s\"']+)", re.IGNORECASE), r"\1***"),
-    (re.compile(r"(secret\s*[=:]\s*)([^\s\"']+)", re.IGNORECASE), r"\1***"),
-    (re.compile(r"(--api-key\s+)([^\s]+)", re.IGNORECASE), r"\1***"),
-    (re.compile(r"(--token\s+)([^\s]+)", re.IGNORECASE), r"\1***"),
-    # --- Authorization headers ---
-    (re.compile(r"(Authorization\s*:\s*Bearer\s+)([^\s\"']+)", re.IGNORECASE), r"\1***"),
+    # ===== SPECIFIC TOKEN PATTERNS (run first) =====
     # --- OpenAI / Anthropic keys ---
     (re.compile(r"\bsk-proj-[A-Za-z0-9_-]{16,}\b"), "sk-proj-***"),
     (re.compile(r"\bsk-ant-[A-Za-z0-9_-]{16,}\b"), "sk-ant-***"),
@@ -84,6 +79,16 @@ _SECRET_REPLACEMENTS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\bdckr_pat_[A-Za-z0-9_-]{20,}\b"), "dckr_pat_***"),
     # --- Database connection strings ---
     (re.compile(r"((?:postgres|mysql|mongodb|redis)(?:ql)?://[^:]+:)[^\s@]+(@)", re.IGNORECASE), r"\1***@"),
+    # ===== GENERIC KEY=VALUE PATTERNS (run last) =====
+    # These catch remaining secrets not matched by specific patterns above.
+    (re.compile(r"(api[_-]?key\s*[=:]\s*)([^\s\"']+)", re.IGNORECASE), r"\1***"),
+    (re.compile(r"(token\s*[=:]\s*)([^\s\"']+)", re.IGNORECASE), r"\1***"),
+    (re.compile(r"(password\s*[=:]\s*)([^\s\"']+)", re.IGNORECASE), r"\1***"),
+    (re.compile(r"(secret\s*[=:]\s*)([^\s\"']+)", re.IGNORECASE), r"\1***"),
+    (re.compile(r"(--api-key\s+)([^\s]+)", re.IGNORECASE), r"\1***"),
+    (re.compile(r"(--token\s+)([^\s]+)", re.IGNORECASE), r"\1***"),
+    # --- Authorization headers ---
+    (re.compile(r"(Authorization\s*:\s*Bearer\s+)([^\s\"']+)", re.IGNORECASE), r"\1***"),
 ]
 
 
