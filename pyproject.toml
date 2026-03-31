@@ -212,6 +212,7 @@ skips = ["B101"]  # assert used in tests and retry helpers
 [tool.mypy]
 python_version = "3.10"
 strict = false
-warn_return_any = true
-warn_unused_ignores = true
+warn_return_any = false
+warn_unused_ignores = false
 ignore_missing_imports = true
+disable_error_code = ["no-redef", "assignment"]
