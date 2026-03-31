@@ -195,7 +195,7 @@ class TestFileWatcherNOLibc(unittest.TestCase):
             d = Path(tmp)
             with (
                 patch.object(context_daemon, "_LIBC", None),
-                patch.object(context_daemon.logger, "debug") as mock_debug,
+                patch.object(context_daemon._logger, "debug") as mock_debug,
             ):
                 watcher = _FileWatcher([d])
                 watcher.close()
