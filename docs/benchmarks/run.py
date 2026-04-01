@@ -19,7 +19,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SRC_DIR = REPO_ROOT / "src" / "contextgo"
 SCRIPTS_DIR = REPO_ROOT / "scripts"
 DEFAULT_QUERY = os.environ.get("CONTEXTGO_BENCH_QUERY", "benchmark")
