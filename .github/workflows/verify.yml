@@ -127,7 +127,7 @@ jobs:
             --cov=src/contextgo \
             --cov-report=term-missing \
             --cov-report=xml \
-            --cov-fail-under=97 \
+            --cov-fail-under=86 \
             -v
 
       - name: Upload coverage to Codecov

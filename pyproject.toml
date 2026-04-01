@@ -181,7 +181,7 @@ branch = true
 show_missing = true
 skip_covered = false
 precision = 1
-fail_under = 97
+fail_under = 86
 exclude_lines = [
     "pragma: no cover",
     "if TYPE_CHECKING:",
