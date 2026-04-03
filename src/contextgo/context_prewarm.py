@@ -497,18 +497,27 @@ _CLAUDE_CODE_HOOK = {
 _SCF_MARKER_START = "<!-- SCF:CONTEXT-FIRST:START -->"
 _SCF_MARKER_END = "<!-- SCF:CONTEXT-FIRST:END -->"
 _SCF_POLICY_BLOCK = f"""{_SCF_MARKER_START}
-## ContextGO Context-First Policy (auto-injected by `contextgo setup`)
+## ⚠️ ContextGO Context-First Policy (HIGHEST PRIORITY)
 
-When the task involves existing code optimization/debugging, historical decisions,
-cross-terminal handoff, or system diagnosis — **always prewarm context first**.
+**THIS SECTION OVERRIDES ALL OTHER CONTEXT DISCOVERY INSTRUCTIONS.**
+**Before ANY file scanning, reading, or code analysis — you MUST run ContextGO first.**
 
-**Mandatory execution order:**
+### When to activate (ANY of these):
+- Continuing previous work / "continue" / "接着做"
+- User mentions past work, prior decisions, or project history
+- Optimizing/debugging/refactoring existing code
+- Cross-session handoff (another AI worked on this)
+- User asks "what was done before" or "current status"
+- Any task involving long-running projects (QuantX, ContextGO, etc.)
+
+### Mandatory execution order (BEFORE any file operations):
 1. Run ``contextgo semantic "<topic>" --limit 3`` (memory files first)
 2. If no hits: ``contextgo search "<keywords>" --limit 5``
 3. Narrow scope from results before any ``ls`` / ``rg`` scan
 4. **Forbidden**: blind scanning of ``~/``, ``/Volumes/*``, etc. without prewarm
 
-When saving important findings: ``contextgo save --title "..." --content "..." --tags "..."``
+### Save important findings:
+``contextgo save --title "..." --content "..." --tags "..."``
 {_SCF_MARKER_END}"""
 
 
