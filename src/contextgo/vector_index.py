@@ -68,8 +68,8 @@ def vector_available() -> bool:
     if _VECTOR_AVAILABLE is not None:
         return _VECTOR_AVAILABLE
     try:
-        import model2vec  # noqa: F401
-        import numpy  # noqa: F401
+        import model2vec  # type: ignore[import-not-found]  # noqa: PLC0415
+        import numpy  # type: ignore[import-not-found]  # noqa: F401
 
         _VECTOR_AVAILABLE = True
     except ImportError:
@@ -114,7 +114,7 @@ def _load_model() -> Any:
         return _MODEL
     with _MODEL_LOCK:
         if _MODEL is None:
-            from model2vec import StaticModel  # noqa: PLC0415
+            from model2vec import StaticModel  # type: ignore[import-not-found]  # noqa: PLC0415
 
             print(
                 f"Loading vector model ({VECTOR_MODEL_NAME})… / 正在加载向量模型…",
@@ -404,6 +404,9 @@ def vector_search_session(
     # Determine candidate pool size with a hard upper bound to prevent OOM.
     candidate_limit = limit * VECTOR_SEARCH_MULT
 
+    paths: list[str] = []
+    matrix: Any = None
+
     # Check cache validity then load only if stale.
     with _open_vdb(vdb, timeout=30) as conn:
         conn.execute("PRAGMA cache_size=-16000")
@@ -416,22 +419,18 @@ def vector_search_session(
             cached_entry = _VECTOR_MATRIX_CACHE.get(vdb)
             if cached_entry is not None and cached_entry[0] == cache_key:
                 paths, matrix = cached_entry[1], cached_entry[2]
-                rows = None
             else:
                 rows = conn.execute(
                     "SELECT file_path, embedding FROM session_vectors LIMIT ?",
                     (candidate_limit,),
                 ).fetchall()
+                if rows:
+                    paths = [r[0] for r in rows]
+                    matrix = np.array([_unpack_vector(r[1]) for r in rows], dtype=np.float32)
+                    with _VECTOR_MATRIX_CACHE_LOCK:
+                        _VECTOR_MATRIX_CACHE[vdb] = (cache_key, paths, matrix)
 
-    if rows is not None:
-        if not rows:
-            return []
-        paths = [r[0] for r in rows]
-        matrix = np.array([_unpack_vector(r[1]) for r in rows], dtype=np.float32)
-        with _VECTOR_MATRIX_CACHE_LOCK:
-            _VECTOR_MATRIX_CACHE[vdb] = (cache_key, paths, matrix)
-
-    if not paths:
+    if not paths or matrix is None:
         return []
 
     # Batch cosine similarity
@@ -488,7 +487,7 @@ def bm25s_search_session(
     cache_key = (row_count, max_rowid)
 
     try:
-        import bm25s  # noqa: PLC0415
+        import bm25s  # type: ignore[import-not-found]  # noqa: PLC0415
 
         with _BM25_CACHE_LOCK:
             cached = _BM25_CACHE.get(sdb)

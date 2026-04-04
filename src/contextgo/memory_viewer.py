@@ -311,7 +311,7 @@ class Handler(BaseHTTPRequestHandler):
     server_version = "ContextGOViewer/1.0"
 
     # Silence per-request access logging; errors surface as JSON responses.
-    def log_message(self, fmt: str, *args: object) -> None:
+    def log_message(self, format: str, *args: object) -> None:
         return
 
     def setup(self) -> None:

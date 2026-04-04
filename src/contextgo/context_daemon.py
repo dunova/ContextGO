@@ -2005,6 +2005,7 @@ def main() -> None:
 
     while not _shutdown:
         had_error = False
+        watcher_has_changes: bool = False
         try:
             # Drain any pending inotify events before deciding whether to poll.
             if file_watcher is not None:

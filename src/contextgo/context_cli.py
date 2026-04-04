@@ -319,25 +319,27 @@ def _configure_viewer_module(module: ModuleType, host: str, port: int, token: st
     if hasattr(module, "apply_runtime_config"):
         module.apply_runtime_config(host, port, token_value)
     else:
-        module.HOST = host
-        module.PORT = port
-        module.VIEWER_TOKEN = token_value
+        module.__dict__["HOST"] = host  # type: ignore[attr-defined]
+        module.__dict__["PORT"] = port  # type: ignore[attr-defined]
+        module.__dict__["VIEWER_TOKEN"] = token_value  # type: ignore[attr-defined]
 
 
 def _compact_smoke_payload(payload: dict[str, object]) -> dict[str, object]:
     """Return a condensed smoke payload with name/ok/rc fields only (plus detail on failure)."""
-    results = []
-    for item in payload.get("results", []):
-        if not isinstance(item, dict):
-            continue
-        row: dict[str, object] = {
-            "name": item.get("name"),
-            "ok": item.get("ok"),
-            "rc": item.get("rc"),
-        }
-        if not item.get("ok"):
-            row["detail"] = item.get("detail")
-        results.append(row)
+    results: list[dict[str, object]] = []
+    items = payload.get("results")
+    if isinstance(items, list):
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            row: dict[str, object] = {
+                "name": item.get("name"),
+                "ok": item.get("ok"),
+                "rc": item.get("rc"),
+            }
+            if not item.get("ok"):
+                row["detail"] = item.get("detail")
+            results.append(row)
     return {"summary": payload.get("summary"), "results": results}
 
 
@@ -361,7 +363,7 @@ def _source_freshness() -> dict[str, dict[str, object]]:
     return source_freshness_snapshot(HOME)
 
 
-def _safe_source_freshness() -> dict[str, object]:
+def _safe_source_freshness() -> dict[str, dict[str, object]]:
     """Wrapper around _source_freshness() that never raises.
 
     Any exception is caught and surfaced as an ``"error"`` key so that
@@ -372,7 +374,7 @@ def _safe_source_freshness() -> dict[str, object]:
         return _source_freshness()
     except Exception as exc:
         _logger.exception("_source_freshness failed: %s", exc)
-        return {"error": f"source_freshness: error — {exc}"}
+        return {"error": {"detail": f"source_freshness: error — {exc}"}}
 
 
 def _remote_process_count() -> int:
@@ -438,13 +440,13 @@ def cmd_semantic(args: argparse.Namespace) -> int:
     limit: int = args.limit
     _SEARCH_TIMEOUT = 5.0  # seconds per search path
 
-    pool = _get_thread_pool()
+    pool = _get_thread_pool()  # type: ignore[attr-defined]
     if not hasattr(pool, "submit"):
         raise RuntimeError("Thread pool is not properly initialized")
 
     # Submit both search paths in parallel.
-    future_memory = pool.submit(_local_memory_matches, query, limit)
-    future_session = pool.submit(
+    future_memory = pool.submit(_local_memory_matches, query, limit)  # type: ignore[attr-defined]
+    future_session = pool.submit(  # type: ignore[attr-defined]
         _get_session_index().format_search_results,
         query,
         "content",
@@ -703,14 +705,14 @@ def cmd_health(args: argparse.Namespace) -> int:
 
     _HEALTH_TIMEOUT = 10.0  # seconds per health sub-check
 
-    pool = _get_thread_pool()
+    pool = _get_thread_pool()  # type: ignore[attr-defined]
     if not hasattr(pool, "submit"):
         raise RuntimeError("Thread pool is not properly initialized")
 
     # Submit all three independent health checks in parallel.
-    future_session = pool.submit(_get_session_index().health_payload)
-    future_memory_root = pool.submit(lambda: LOCAL_SHARED_ROOT.exists())
-    future_native = pool.submit(_get_context_native().health_payload)
+    future_session = pool.submit(_get_session_index().health_payload)  # type: ignore[attr-defined]
+    future_memory_root = pool.submit(lambda: LOCAL_SHARED_ROOT.exists())  # type: ignore[attr-defined]
+    future_native = pool.submit(_get_context_native().health_payload)  # type: ignore[attr-defined]
 
     # Collect session index result.
     try:
@@ -959,7 +961,7 @@ def cmd_q(args: argparse.Namespace) -> int:
     limit = getattr(args, "limit", 5)
 
     # Session ID detection: 8+ hex chars, optional dashes
-    if _uuid_prefix_pattern().match(query):
+    if _uuid_prefix_pattern().match(query):  # type: ignore[attr-defined]
         return _q_session_lookup(query, limit, as_json)
 
     return _q_search(query, limit, as_json)
