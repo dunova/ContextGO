@@ -37,7 +37,7 @@ __all__ = [
     "adapter_dirty_epoch",
 ]
 
-ADAPTER_SCHEMA_VERSION = "2026-03-31-adapter-v2"
+ADAPTER_SCHEMA_VERSION = "2026-04-15-adapter-v3"
 
 
 def _home() -> Path:
@@ -248,6 +248,21 @@ def _openclaw_session_candidates(home: Path) -> list[Path]:
             continue
         matches.extend(root.glob("*/sessions/*.jsonl"))
     return sorted(matches)
+
+
+def _factory_session_roots(home: Path) -> list[Path]:
+    base = home / ".factory" / "sessions"
+    if not base.is_dir():
+        return []
+    roots = [base]
+    with contextlib.suppress(OSError):
+        roots.extend(sorted(child for child in base.iterdir() if child.is_dir()))
+    return roots
+
+
+def _hermes_session_root(home: Path) -> Path | None:
+    candidate = home / ".hermes" / "sessions"
+    return candidate if candidate.is_dir() else None
 
 
 _ALLOWED_EXTENSION_IDS = frozenset(
@@ -539,6 +554,161 @@ def _sync_openclaw_sessions(home: Path) -> dict[str, object]:
         "sessions": sessions_written,
         "removed": removed,
         "path": str(session_files[0].parent) if session_files else None,
+    }
+
+
+def _session_title_from_jsonl(source_file: Path, default_title: str) -> tuple[str, str]:
+    title = default_title
+    directory = ""
+    try:
+        with source_file.open("r", encoding="utf-8", errors="ignore") as f:
+            for idx, line in enumerate(f):
+                raw = line.strip()
+                if not raw:
+                    continue
+                with contextlib.suppress(json.JSONDecodeError):
+                    data = json.loads(raw)
+                    if isinstance(data, dict):
+                        title = str(
+                            data.get("sessionTitle")
+                            or data.get("title")
+                            or data.get("session_title")
+                            or data.get("name")
+                            or title
+                        )
+                        directory = str(data.get("cwd") or data.get("directory") or directory)
+                        if title != default_title or directory:
+                            break
+                if idx >= 5:
+                    break
+    except OSError:
+        pass
+    return title, directory
+
+
+def _sync_factory_sessions(home: Path) -> dict[str, object]:
+    session_roots = _factory_session_roots(home)
+    adapter_dir = _adapter_root(home) / "factory_session"
+    keep: set[Path] = set()
+    sessions_written = 0
+    changed = False
+    detected = False
+
+    for root in session_roots:
+        if not root.is_dir():
+            continue
+        detected = True
+        for source_file in sorted(root.glob("*.jsonl")):
+            title, directory = _session_title_from_jsonl(source_file, source_file.stem)
+            texts: list[str] = []
+            if title.strip():
+                texts.append(f"[title] {title.strip()}")
+            if directory.strip():
+                texts.append(f"[directory] {directory.strip()}")
+            with contextlib.suppress(OSError, UnicodeDecodeError):
+                for line in source_file.read_text(encoding="utf-8", errors="ignore").splitlines():
+                    raw = line.strip()
+                    if not raw:
+                        continue
+                    with contextlib.suppress(json.JSONDecodeError):
+                        texts.extend(_extract_text_fragments(json.loads(raw)))
+            mtime = max(1, int(_safe_mtime(source_file)))
+            out_path = adapter_dir / f"{_safe_name(source_file.stem)}__{_safe_name(title, 'factory')}.jsonl"
+            out_changed = _write_adapter_file(
+                out_path,
+                texts,
+                mtime,
+                meta={
+                    "session_id": source_file.stem,
+                    "title": title,
+                    "directory": directory,
+                    "source_type": "factory_session",
+                },
+            )
+            if out_path.exists():
+                keep.add(out_path)
+                sessions_written += 1
+            if out_changed:
+                changed = True
+
+    removed = _prune_stale(adapter_dir, keep)
+    if changed or removed:
+        _mark_dirty(home)
+    return {
+        "detected": detected,
+        "sessions": sessions_written,
+        "removed": removed,
+        "path": str(session_roots[0]) if session_roots else None,
+    }
+
+
+def _sync_hermes_sessions(home: Path) -> dict[str, object]:
+    sessions_dir = _hermes_session_root(home)
+    adapter_dir = _adapter_root(home) / "hermes_session"
+    keep: set[Path] = set()
+    sessions_written = 0
+    changed = False
+    if sessions_dir is None:
+        removed = _prune_stale(adapter_dir, keep)
+        return {"detected": False, "sessions": 0, "removed": removed, "path": None}
+
+    for source_file in sorted(sessions_dir.glob("*.jsonl")):
+        sid = source_file.stem
+        title = sid
+        platform = ""
+        sidecar_candidates = [
+            sessions_dir / f"session_{sid}.json",
+            sessions_dir / f"{sid}.json",
+        ]
+        for sidecar in sidecar_candidates:
+            if not sidecar.is_file():
+                continue
+            with contextlib.suppress(OSError, json.JSONDecodeError):
+                data = json.loads(sidecar.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    sid = str(data.get("session_id") or data.get("id") or sid)
+                    title = str(data.get("title") or data.get("session_title") or sid)
+                    platform = str(data.get("platform") or "")
+                    break
+        texts: list[str] = []
+        if title.strip():
+            texts.append(f"[title] {title.strip()}")
+        if platform.strip():
+            texts.append(f"[platform] {platform.strip()}")
+        with contextlib.suppress(OSError, UnicodeDecodeError):
+            for line in source_file.read_text(encoding="utf-8", errors="ignore").splitlines():
+                raw = line.strip()
+                if not raw:
+                    continue
+                with contextlib.suppress(json.JSONDecodeError):
+                    texts.extend(_extract_text_fragments(json.loads(raw)))
+        mtime = max(1, int(_safe_mtime(source_file)))
+        out_path = adapter_dir / f"{_safe_name(sid)}__{_safe_name(title, 'hermes')}.jsonl"
+        out_changed = _write_adapter_file(
+            out_path,
+            texts,
+            mtime,
+            meta={
+                "session_id": sid,
+                "title": title,
+                "platform": platform,
+                "source_type": "hermes_session",
+            },
+        )
+        if out_path.exists():
+            keep.add(out_path)
+            sessions_written += 1
+        if out_changed:
+            changed = True
+
+    removed = _prune_stale(adapter_dir, keep)
+    if changed or removed:
+        _mark_dirty(home)
+    return {
+        "detected": True,
+        "sessions": sessions_written,
+        "removed": removed,
+        "path": str(sessions_dir),
     }
 
 
@@ -1166,6 +1336,8 @@ def sync_all_adapters(home: Path | None = None) -> dict[str, dict[str, object]]:
         "opencode_session": _sync_opencode_sessions,
         "kilo_session": _sync_kilo_sessions,
         "openclaw_session": _sync_openclaw_sessions,
+        "factory_session": _sync_factory_sessions,
+        "hermes_session": _sync_hermes_sessions,
         "cline_session": _sync_cline_sessions,
         "roo_session": _sync_roo_sessions,
         "continue_session": _sync_continue_sessions,
@@ -1190,6 +1362,8 @@ _ALL_ADAPTER_TYPES = (
     "opencode_session",
     "kilo_session",
     "openclaw_session",
+    "factory_session",
+    "hermes_session",
     "cline_session",
     "roo_session",
     "continue_session",
@@ -1282,6 +1456,8 @@ def source_freshness_snapshot(home: Path | None = None) -> dict[str, dict[str, o
         "opencode_db": _resolve_existing(_opencode_db_candidates(current_home)),
         "kilo_storage": _resolve_existing(_kilo_storage_candidates(current_home)),
         "openclaw_sessions_root": openclaw_sessions[0].parent if openclaw_sessions else None,
+        "factory_sessions_root": _resolve_existing([current_home / ".factory" / "sessions"]),
+        "hermes_sessions_root": _resolve_existing([current_home / ".hermes" / "sessions"]),
         "shell_zsh": _resolve_existing([current_home / ".zsh_history"]),
         "shell_bash": _resolve_existing([current_home / ".bash_history"]),
         "antigravity_latest": antigravity_candidates[0] if antigravity_candidates else None,
@@ -1357,6 +1533,20 @@ def source_inventory(home: Path | None = None) -> dict[str, object]:
             "session_files": len(by_type.get("openclaw_session", [])),
             "history_files": 0,
             "adapter": adapter_stats.get("openclaw_session", {}),
+        },
+        {
+            "platform": "factory",
+            "detected": bool(by_type.get("factory_session")),
+            "session_files": len(by_type.get("factory_session", [])),
+            "history_files": 0,
+            "adapter": adapter_stats.get("factory_session", {}),
+        },
+        {
+            "platform": "hermes",
+            "detected": bool(by_type.get("hermes_session")),
+            "session_files": len(by_type.get("hermes_session", [])),
+            "history_files": 0,
+            "adapter": adapter_stats.get("hermes_session", {}),
         },
         {
             "platform": "cline",

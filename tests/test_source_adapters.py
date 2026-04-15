@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import sqlite3
 import sys
@@ -31,7 +32,8 @@ class SourceAdaptersTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.env.stop()
-        self.tmpdir.cleanup()
+        with contextlib.suppress(OSError):
+            self.tmpdir.cleanup()
 
     def _create_opencode_db(self) -> Path:
         db_path = self.home / ".local" / "share" / "opencode" / "opencode.db"
@@ -90,10 +92,60 @@ class SourceAdaptersTests(unittest.TestCase):
         )
         return session_path
 
+    def _create_factory_session(self) -> Path:
+        session_path = self.home / ".factory" / "sessions" / "-Users-test-project" / "ses_factory_1.jsonl"
+        session_path.parent.mkdir(parents=True, exist_ok=True)
+        session_path.write_text(
+            "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "type": "session_start",
+                            "id": "ses_factory_1",
+                            "title": "Factory Session",
+                            "sessionTitle": "Factory Session",
+                            "cwd": "/work/factory",
+                        },
+                        ensure_ascii=False,
+                    ),
+                    json.dumps(
+                        {
+                            "type": "message",
+                            "message": {"role": "user", "content": [{"type": "text", "text": "Factory says hi"}]},
+                        },
+                        ensure_ascii=False,
+                    ),
+                ]
+            ),
+            encoding="utf-8",
+        )
+        return session_path
+
+    def _create_hermes_session(self) -> Path:
+        sessions_dir = self.home / ".hermes" / "sessions"
+        sessions_dir.mkdir(parents=True, exist_ok=True)
+        session_path = sessions_dir / "ses_hermes_1.jsonl"
+        session_path.write_text(
+            "\n".join(
+                [
+                    json.dumps({"role": "user", "content": "Hermes hello"}, ensure_ascii=False),
+                    json.dumps({"role": "assistant", "content": "Hermes reply"}, ensure_ascii=False),
+                ]
+            ),
+            encoding="utf-8",
+        )
+        (sessions_dir / "session_ses_hermes_1.json").write_text(
+            json.dumps({"session_id": "ses_hermes_1", "title": "Hermes Session", "platform": "cli"}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        return session_path
+
     def test_sync_all_adapters_writes_all_supported_outputs(self) -> None:
         self._create_opencode_db()
         self._create_kilo_storage()
         self._create_openclaw_session()
+        self._create_factory_session()
+        self._create_hermes_session()
 
         with mock.patch.object(source_adapters, "_home", return_value=self.home):
             result = source_adapters.sync_all_adapters()
@@ -101,16 +153,22 @@ class SourceAdaptersTests(unittest.TestCase):
         self.assertTrue(result["opencode_session"]["detected"])
         self.assertTrue(result["kilo_session"]["detected"])
         self.assertTrue(result["openclaw_session"]["detected"])
+        self.assertTrue(result["factory_session"]["detected"])
+        self.assertTrue(result["hermes_session"]["detected"])
 
         adapter_root = source_adapters._adapter_root(self.home)
         self.assertTrue(any((adapter_root / "opencode_session").glob("*.jsonl")))
         self.assertTrue(any((adapter_root / "kilo_session").glob("*.jsonl")))
         self.assertTrue(any((adapter_root / "openclaw_session").glob("*.jsonl")))
+        self.assertTrue(any((adapter_root / "factory_session").glob("*.jsonl")))
+        self.assertTrue(any((adapter_root / "hermes_session").glob("*.jsonl")))
 
     def test_discover_index_sources_includes_adapter_sessions_and_histories(self) -> None:
         self._create_opencode_db()
         self._create_kilo_storage()
         self._create_openclaw_session()
+        self._create_factory_session()
+        self._create_hermes_session()
         codex_history = self.home / ".codex" / "history.jsonl"
         codex_history.parent.mkdir(parents=True, exist_ok=True)
         codex_history.write_text(json.dumps({"text": "codex history"}), encoding="utf-8")
@@ -123,11 +181,15 @@ class SourceAdaptersTests(unittest.TestCase):
         self.assertIn("opencode_session", discovered_types)
         self.assertIn("kilo_session", discovered_types)
         self.assertIn("openclaw_session", discovered_types)
+        self.assertIn("factory_session", discovered_types)
+        self.assertIn("hermes_session", discovered_types)
 
     def test_source_inventory_reports_detected_platforms(self) -> None:
         self._create_opencode_db()
         self._create_kilo_storage()
         self._create_openclaw_session()
+        self._create_factory_session()
+        self._create_hermes_session()
 
         with mock.patch.object(source_adapters, "_home", return_value=self.home):
             inventory = source_adapters.source_inventory()
@@ -136,11 +198,15 @@ class SourceAdaptersTests(unittest.TestCase):
         self.assertTrue(platforms["opencode"]["detected"])
         self.assertTrue(platforms["kilo"]["detected"])
         self.assertTrue(platforms["openclaw"]["detected"])
+        self.assertTrue(platforms["factory"]["detected"])
+        self.assertTrue(platforms["hermes"]["detected"])
 
     def test_source_freshness_snapshot_includes_adapter_and_new_platforms(self) -> None:
         opencode_db = self._create_opencode_db()
         self._create_kilo_storage()
         self._create_openclaw_session()
+        self._create_factory_session()
+        self._create_hermes_session()
 
         with mock.patch.object(source_adapters, "_home", return_value=self.home):
             snapshot = source_adapters.source_freshness_snapshot()
@@ -149,6 +215,8 @@ class SourceAdaptersTests(unittest.TestCase):
         self.assertEqual(snapshot["opencode_db"]["path"], str(opencode_db))
         self.assertTrue(snapshot["kilo_storage"]["exists"])
         self.assertTrue(snapshot["openclaw_sessions_root"]["exists"])
+        self.assertTrue(snapshot["factory_sessions_root"]["exists"])
+        self.assertTrue(snapshot["hermes_sessions_root"]["exists"])
         self.assertIn("opencode_session_count", snapshot["adapter_sessions"])
 
     def test_sync_all_adapters_handles_missing_sources_and_prunes_stale(self) -> None:

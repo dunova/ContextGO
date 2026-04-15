@@ -1017,6 +1017,49 @@ def _remove_scf_policy(filepath: Path) -> bool:
     return True
 
 
+def _upsert_json_string_field(filepath: Path, field: str, content: str) -> bool:
+    """Set a top-level JSON string field, preserving unrelated config."""
+    real_path = filepath.resolve()
+    if not real_path.parent.exists():
+        return False
+    data: dict[str, Any] = {}
+    if real_path.exists():
+        try:
+            loaded = json.loads(real_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                data = loaded
+        except (OSError, json.JSONDecodeError):
+            return False
+    if data.get(field) == content:
+        return True
+    data[field] = content
+    try:
+        _atomic_write(real_path, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+    except OSError:
+        return False
+    return True
+
+
+def _remove_json_string_field(filepath: Path, field: str) -> bool:
+    real_path = filepath.resolve()
+    if not real_path.exists():
+        return True
+    try:
+        loaded = json.loads(real_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(loaded, dict):
+        return True
+    if field not in loaded:
+        return True
+    loaded.pop(field, None)
+    try:
+        _atomic_write(real_path, json.dumps(loaded, ensure_ascii=False, indent=2) + "\n")
+    except OSError:
+        return False
+    return True
+
+
 def setup_codex() -> bool:
     """Inject SCF policy into ``~/.codex/AGENTS.md``."""
     return _inject_scf_policy(Path.home() / ".codex" / "AGENTS.md")
@@ -1106,6 +1149,85 @@ def setup_antigravity() -> bool:
 def teardown_antigravity() -> bool:
     """Remove SCF policy from Antigravity GEMINI.md."""
     return _remove_scf_policy(Path.home() / ".gemini" / "GEMINI.md")
+
+
+def setup_opencode() -> bool:
+    """Inject smart-recall instructions into OpenCode config files."""
+    content = _SCF_POLICY_BLOCK
+    candidates = [
+        Path.home() / ".opencode" / "opencode.json",
+        Path.home() / ".config" / "opencode" / "opencode.json",
+    ]
+    touched = False
+    for config_file in candidates:
+        if _upsert_json_string_field(config_file, "instructions", content):
+            touched = True
+    return touched
+
+
+def teardown_opencode() -> bool:
+    """Remove smart-recall instructions from OpenCode config files."""
+    candidates = [
+        Path.home() / ".opencode" / "opencode.json",
+        Path.home() / ".config" / "opencode" / "opencode.json",
+    ]
+    ok = True
+    for config_file in candidates:
+        if not _remove_json_string_field(config_file, "instructions"):
+            ok = False
+    return ok
+
+
+def setup_hermes() -> bool:
+    """Inject smart-recall policy into Hermes global SOUL.md."""
+    targets = [
+        Path.home() / ".hermes" / "SOUL.md",
+        Path.home() / ".hermes" / "hermes-agent" / "AGENTS.md",
+    ]
+    touched = False
+    for target in targets:
+        if _inject_scf_policy(target):
+            touched = True
+    return touched
+
+
+def teardown_hermes() -> bool:
+    """Remove smart-recall policy from Hermes global prompt files."""
+    targets = [
+        Path.home() / ".hermes" / "SOUL.md",
+        Path.home() / ".hermes" / "hermes-agent" / "AGENTS.md",
+    ]
+    ok = True
+    for target in targets:
+        if not _remove_scf_policy(target):
+            ok = False
+    return ok
+
+
+def setup_factory() -> bool:
+    """Inject smart-recall policy into Factory/Droid prompt files."""
+    factory_root = Path.home() / ".factory"
+    touched = False
+    if _inject_scf_policy(factory_root / "AGENTS.md"):
+        touched = True
+    droids_dir = factory_root / "droids"
+    if droids_dir.is_dir():
+        for md in droids_dir.glob("*.md"):
+            if _inject_scf_policy(md):
+                touched = True
+    return touched
+
+
+def teardown_factory() -> bool:
+    """Remove smart-recall policy from Factory/Droid prompt files."""
+    factory_root = Path.home() / ".factory"
+    ok = _remove_scf_policy(factory_root / "AGENTS.md")
+    droids_dir = factory_root / "droids"
+    if droids_dir.is_dir():
+        for md in droids_dir.glob("*.md"):
+            if not _remove_scf_policy(md):
+                ok = False
+    return ok
 
 
 def setup_copilot() -> bool:
@@ -1216,8 +1338,17 @@ def setup_all() -> dict[str, bool]:
     # Accio Work — SCF policy into all agent AGENTS.md files.
     results["Accio"] = setup_accio()
 
+    # OpenCode — smart-recall instructions in opencode.json.
+    results["OpenCode"] = setup_opencode()
+
     # Antigravity (Gemini) — SCF policy into GEMINI.md.
     results["Antigravity"] = setup_antigravity()
+
+    # Hermes — global SOUL.md and local agent AGENTS.md.
+    results["Hermes"] = setup_hermes()
+
+    # Factory / Droid — global and droid prompt markdowns.
+    results["Factory Droid"] = setup_factory()
 
     # GitHub Copilot — SCF policy into project-level .github/copilot-instructions.md.
     results["GitHub Copilot"] = setup_copilot()
@@ -1240,7 +1371,10 @@ def teardown_all() -> dict[str, bool]:
     results["Codex CLI"] = teardown_codex()
     results["OpenClaw"] = teardown_openclaw()
     results["Accio"] = teardown_accio()
+    results["OpenCode"] = teardown_opencode()
     results["Antigravity"] = teardown_antigravity()
+    results["Hermes"] = teardown_hermes()
+    results["Factory Droid"] = teardown_factory()
     results["GitHub Copilot"] = teardown_copilot()
 
     results["Cursor"] = teardown_cursor()

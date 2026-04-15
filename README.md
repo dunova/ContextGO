@@ -57,7 +57,7 @@ contextgo search "authentication" --limit 5
 > Install pipx: `brew install pipx` (macOS) or `apt install pipx` (Debian/Ubuntu).
 
 ContextGO auto-discovers all supported local sources with no configuration:
-`Codex` · `Claude Code` · `Cursor` · `Accio Work` · `Gemini/Antigravity` · `OpenCode` · `Kilo` · `OpenClaw` · `zsh/bash shell history`
+`Codex` · `Claude Code` · `Cursor` · `OpenCode` · `Factory/Droid` · `Hermes` · `Accio Work` · `Gemini/Antigravity` · `Kilo` · `OpenClaw` · `zsh/bash shell history`
 
 **Enable hybrid search after you have existing history:**
 
@@ -255,6 +255,9 @@ Copy the contents of [`AGENTS.md`](AGENTS.md) into your tool's persistent instru
 | Claude Code | `~/.claude/CLAUDE.md` (append AGENTS.md content) |
 | Codex | `AGENTS.md` in project root (already works if repo is cloned) |
 | Cursor | `.cursorrules` in project root |
+| OpenCode | `~/.opencode/opencode.json` or `~/.config/opencode/opencode.json` (`instructions`) |
+| Hermes | `~/.hermes/SOUL.md` |
+| Factory / Droid | `~/.factory/droids/*.md` and `~/.factory/AGENTS.md` |
 | Windsurf | `.windsurfrules` in project root |
 | Other | Your tool's system prompt or instruction file |
 

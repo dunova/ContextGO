@@ -1579,6 +1579,8 @@ def _add_prewarm_setup_subcommands(sub: object) -> None:
             "  - Claude Code: writes smart-recall policy into ~/.claude/CLAUDE.md\n"
             "  - Codex CLI:   injects context-first policy into ~/.codex/AGENTS.md\n"
             "  - OpenClaw:    injects context-first policy into workspace AGENTS.md\n\n"
+            "  - OpenCode / Hermes / Factory Droid: inject smart recall into their\n"
+            "    runtime config or prompt files\n"
             "  - Accio / Antigravity / Copilot / Cursor: inject policy into their\n"
             "    instruction entrypoints when present\n\n"
             "Run once after installing ContextGO. Idempotent (safe to re-run).\n\n"

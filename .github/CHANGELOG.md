@@ -9,6 +9,28 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.12.3] — 2026-04-15
+
+### Platform Coverage / 平台覆盖
+- **Factory / Droid sessions indexed**: ContextGO now ingests local Factory/Droid session JSONL files under `~/.factory/sessions/**`, making Droid work visible to every other supported agent. / Factory/Droid 会话已纳入统一索引
+- **Hermes sessions indexed**: ContextGO now ingests Hermes session JSONL files under `~/.hermes/sessions/`, enabling cross-agent recall of Hermes conversations. / Hermes 会话已纳入统一索引
+- **Cross-platform inventory expanded**: `contextgo sources` now reports `factory` and `hermes` as first-class platforms alongside Codex, Claude, Cursor, OpenCode, and others. / 平台清单新增 factory 与 hermes
+
+### Invocation / 默认调用
+- **OpenCode smart recall enabled**: `contextgo setup` now injects smart-recall instructions into OpenCode config files via the `instructions` field. / OpenCode 默认调用入口已接通
+- **Hermes smart recall enabled**: `contextgo setup` now injects smart-recall policy into `~/.hermes/SOUL.md` and the local Hermes agent prompt files. / Hermes 默认调用入口已接通
+- **Factory / Droid smart recall enabled**: `contextgo setup` now injects smart-recall policy into `~/.factory/AGENTS.md` and `~/.factory/droids/*.md`. / Factory/Droid 默认调用入口已接通
+
+### Documentation / 文档
+- **README support matrix refreshed**: README and Chinese README now describe OpenCode, Hermes, and Factory/Droid instruction entrypoints explicitly. / 首页支持面与入口说明已更新
+- **CLI setup copy refreshed**: `contextgo setup --help` now reflects the actual supported invocation surfaces. / CLI 帮助文案与真实支持面一致
+
+### Testing / 测试
+- **Adapter coverage expanded**: Added tests for Factory and Hermes adapter sync, inventory, and freshness reporting. / Factory 与 Hermes adapter 测试已补齐
+- **Setup coverage expanded**: Added tests for OpenCode, Hermes, and Factory/Droid smart-recall setup. / OpenCode、Hermes、Factory/Droid 默认调用测试已补齐
+
+---
+
 ## [0.12.2] — 2026-04-15
 
 ### Features / 功能
@@ -838,7 +860,8 @@ Foundational release of the local-first `contextgo` runtime. All context capture
 
 ---
 
-[Unreleased]: https://github.com/dunova/ContextGO/compare/v0.12.2...HEAD
+[Unreleased]: https://github.com/dunova/ContextGO/compare/v0.12.3...HEAD
+[0.12.3]: https://github.com/dunova/ContextGO/compare/v0.12.2...v0.12.3
 [0.12.2]: https://github.com/dunova/ContextGO/compare/v0.12.1...v0.12.2
 [0.12.1]: https://github.com/dunova/ContextGO/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/dunova/ContextGO/compare/v0.11.11...v0.12.0

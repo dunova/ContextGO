@@ -56,7 +56,7 @@ contextgo search "authentication" --limit 5
 > 安装 pipx：`brew install pipx`（macOS）或 `apt install pipx`（Debian/Ubuntu）。
 
 ContextGO 无需任何配置，自动发现所有受支持的本地来源：
-`Codex` · `Claude Code` · `Cursor` · `Accio Work` · `Gemini/Antigravity` · `OpenCode` · `Kilo` · `OpenClaw` · `zsh/bash 终端历史`
+`Codex` · `Claude Code` · `Cursor` · `OpenCode` · `Factory/Droid` · `Hermes` · `Accio Work` · `Gemini/Antigravity` · `Kilo` · `OpenClaw` · `zsh/bash 终端历史`
 
 **已有历史会话后，启用混合搜索：**
 
@@ -251,6 +251,9 @@ contextgo vector-status
 | Claude Code | `~/.claude/CLAUDE.md`（追加 AGENTS.md 内容） |
 | Codex | 项目根目录的 `AGENTS.md`（克隆仓库后自动生效） |
 | Cursor | 项目根目录的 `.cursorrules` |
+| OpenCode | `~/.opencode/opencode.json` 或 `~/.config/opencode/opencode.json`（`instructions` 字段） |
+| Hermes | `~/.hermes/SOUL.md` |
+| Factory / Droid | `~/.factory/droids/*.md` 与 `~/.factory/AGENTS.md` |
 | Windsurf | 项目根目录的 `.windsurfrules` |
 | 其他工具 | 你的工具的系统提示词或指令文件 |
 

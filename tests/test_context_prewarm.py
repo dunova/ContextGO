@@ -511,6 +511,45 @@ class TestSetupClaudeMd(unittest.TestCase):
             self.assertIn("SCF:CONTEXT-FIRST", (claude / "CLAUDE.md").read_text())
 
 
+class TestSetupAdditionalPlatforms(unittest.TestCase):
+    """OpenCode / Hermes / Factory policy injection."""
+
+    def test_setup_opencode_instructions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            opencode = Path(tmp) / ".opencode"
+            opencode.mkdir()
+            (opencode / "opencode.json").write_text(json.dumps({"model": "x"}), encoding="utf-8")
+            with patch.object(Path, "home", return_value=Path(tmp)):
+                result = pw.setup_opencode()
+            self.assertTrue(result)
+            data = json.loads((opencode / "opencode.json").read_text(encoding="utf-8"))
+            self.assertIn("instructions", data)
+            self.assertIn("Smart Recall Policy", data["instructions"])
+
+    def test_setup_hermes_soul(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            hermes = Path(tmp) / ".hermes"
+            hermes.mkdir()
+            (hermes / "SOUL.md").write_text("# Soul\n", encoding="utf-8")
+            agent_dir = hermes / "hermes-agent"
+            agent_dir.mkdir()
+            (agent_dir / "AGENTS.md").write_text("# Agent\n", encoding="utf-8")
+            with patch.object(Path, "home", return_value=Path(tmp)):
+                result = pw.setup_hermes()
+            self.assertTrue(result)
+            self.assertIn("SCF:CONTEXT-FIRST", (hermes / "SOUL.md").read_text(encoding="utf-8"))
+
+    def test_setup_factory_droids(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            droids_dir = Path(tmp) / ".factory" / "droids"
+            droids_dir.mkdir(parents=True)
+            (droids_dir / "worker.md").write_text("# Worker\n", encoding="utf-8")
+            with patch.object(Path, "home", return_value=Path(tmp)):
+                result = pw.setup_factory()
+            self.assertTrue(result)
+            self.assertIn("SCF:CONTEXT-FIRST", (droids_dir / "worker.md").read_text(encoding="utf-8"))
+
+
 class TestSetupClaudeCodeCorruptJson(unittest.TestCase):
     """Handle corrupt settings.json gracefully."""
 
@@ -646,6 +685,9 @@ class TestSetupAllKeys(unittest.TestCase):
             "OpenClaw",
             "Antigravity",
             "Accio",
+            "OpenCode",
+            "Hermes",
+            "Factory Droid",
             "GitHub Copilot",
             "Cursor",
         }
@@ -662,6 +704,9 @@ class TestSetupAllKeys(unittest.TestCase):
             "OpenClaw",
             "Antigravity",
             "Accio",
+            "OpenCode",
+            "Hermes",
+            "Factory Droid",
             "GitHub Copilot",
             "Cursor",
         }
