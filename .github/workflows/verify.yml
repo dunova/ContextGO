@@ -32,7 +32,7 @@ jobs:
           python-version: "3.11"
 
       - name: Cache pip (lint)
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v4
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v4
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-lint-${{ hashFiles('pyproject.toml') }}
@@ -107,7 +107,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Cache pip (test)
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v4
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v4
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-test-${{ matrix.python-version }}-${{ hashFiles('pyproject.toml') }}
@@ -182,7 +182,7 @@ jobs:
           components: clippy
 
       - name: Cache Cargo
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v4
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v4
         with:
           path: |
             ~/.cargo/registry
@@ -220,7 +220,7 @@ jobs:
           python-version: "3.11"
 
       - name: Cache pip (quality)
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v4
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v4
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-quality-3.11-${{ hashFiles('pyproject.toml') }}
