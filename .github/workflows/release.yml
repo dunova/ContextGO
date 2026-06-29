@@ -34,7 +34,7 @@ jobs:
       version: ${{ steps.tag.outputs.version }}
       has_notes: ${{ steps.notes.outputs.has_notes }}
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v4
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v4
 
       - name: Parse tag version
         id: tag
@@ -103,9 +103,9 @@ jobs:
     timeout-minutes: 20
     needs: validate
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v4
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v4
 
-      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
         with:
           python-version: "3.13"
 
@@ -123,7 +123,7 @@ jobs:
             -v
 
       - name: Set up Go
-        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c  # v5
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16  # v5
         with:
           go-version: "1.22"
           cache-dependency-path: native/session_scan_go/go.mod
@@ -142,7 +142,7 @@ jobs:
           components: clippy
 
       - name: Cache Cargo
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v4
         with:
           path: |
             ~/.cargo/registry
@@ -172,13 +172,13 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v4
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v4
         with:
           fetch-depth: 0
 
       - name: Create GitHub release (with release notes)
         if: needs.validate.outputs.has_notes == 'true'
-        uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe  # v2
+        uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b  # v2
         with:
           body_path: docs/RELEASE_NOTES_${{ needs.validate.outputs.version }}.md
           generate_release_notes: false
@@ -188,7 +188,7 @@ jobs:
 
       - name: Create GitHub release (auto-generated notes)
         if: needs.validate.outputs.has_notes != 'true'
-        uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe  # v2
+        uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b  # v2
         with:
           generate_release_notes: true
           draft: false
@@ -209,10 +209,10 @@ jobs:
       name: pypi
       url: https://pypi.org/p/contextgo
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v4
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v4
 
       - name: Set up Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
         with:
           python-version: "3.12"
 
@@ -226,6 +226,6 @@ jobs:
         run: twine check dist/*
 
       - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@ed0c53931b1dc9bd32cbe73a98c7f6766f8a527e  # v1.13.0
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b  # v1.14.0
         with:
           skip-existing: true
