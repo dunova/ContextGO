@@ -387,6 +387,8 @@ class TestWriteMemoryMarkdown(unittest.TestCase):
             self.assertTrue(path.exists())
 
     def test_file_permissions_are_0600(self) -> None:
+        if os.name == "nt":
+            self.skipTest("POSIX file mode bits are not reliable on Windows")
         with tempfile.TemporaryDirectory() as tmpdir:
             path = context_core.write_memory_markdown(
                 "Perms Test",

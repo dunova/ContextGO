@@ -16,6 +16,7 @@ import argparse
 import datetime as dt
 import json
 import logging
+import re
 import sqlite3
 import sys
 import uuid
@@ -45,7 +46,7 @@ SessionItem = tuple[str, Path, str]  # (source_type, file_path, session_id)
 
 _SOURCE_CODEX = "codex"
 _SOURCE_CLAUDE = "claude"
-_SUBAGENT_FRAGMENT = "/subagents/"
+_SUBAGENT_RE = re.compile(r"[\\/]subagents[\\/]")
 _TERMINAL_STATUSES = frozenset({"done", "failed", "error"})
 
 # Default DB path — derived from CONTEXTGO_STORAGE_ROOT or ~/.contextgo.
@@ -195,7 +196,7 @@ def collect_local_session_files(
 
     if claude_root.is_dir():
         for p in sorted(claude_root.rglob("*.jsonl")):
-            if not include_subagents and _SUBAGENT_FRAGMENT in str(p):
+            if not include_subagents and _SUBAGENT_RE.search(str(p)):
                 continue
             items.append((_SOURCE_CLAUDE, p, p.stem))
 
@@ -314,7 +315,7 @@ def enqueue_missing(
         payload = json.dumps(
             {
                 "session_id": sid,
-                "session_file_path": str(path),
+                "session_file_path": path.as_posix(),
                 "session_type": stype,
                 "source_event": "manual_full_backfill",
             },

@@ -21,9 +21,16 @@ class Check:
     elapsed_sec: float
 
 
+def _portable_args(args: list[str]) -> list[str]:
+    """Normalize Python executable aliases for Windows and uv environments."""
+    if args and args[0] in {"python", "python3"}:
+        return [sys.executable, *args[1:]]
+    return args
+
+
 def run_cmd(args: list[str], timeout: int = 30) -> tuple[int, str, str]:
     """Run a subprocess and return (returncode, stdout, stderr)."""
-    proc = subprocess.run(args, capture_output=True, text=True, timeout=timeout, check=False)
+    proc = subprocess.run(_portable_args(args), capture_output=True, text=True, timeout=timeout, check=False)
     return proc.returncode, proc.stdout or "", proc.stderr or ""
 
 

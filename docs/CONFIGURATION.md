@@ -191,7 +191,7 @@ These variables tune polling frequency, memory limits, and error handling. The d
 
 ## Remote sync
 
-Remote sync is disabled by default. Enable only when a ContextGO sync server is running.
+The legacy HTTP export remains disabled by default. The recommended multi-machine backend is the explicit GitHub Contents sync described below; it is also disabled until `contextgo sync init` is run.
 
 远程同步默认关闭，仅在有 ContextGO 同步服务器时启用。
 
@@ -202,6 +202,17 @@ Remote sync is disabled by default. Enable only when a ContextGO sync server is 
 | `CONTEXTGO_EXPORT_HTTP_TIMEOUT_SEC` | `30` | Timeout (seconds) for outbound HTTP export requests. / 出站 HTTP 导出请求超时（秒）。 |
 | `CONTEXTGO_PENDING_HTTP_TIMEOUT_SEC` | `15` | Timeout (seconds) for retrying pending outbound requests. / 重试待发 HTTP 请求超时（秒）。 |
 | `CONTEXTGO_PENDING_RETRY_INTERVAL_SEC` | `60` | Seconds between retries of failed pending uploads. / 失败待发上传重试间隔（秒）。 |
+
+### Encrypted GitHub sync / 加密 GitHub 同步
+
+| Setting / 配置 | Default / 默认 | Description / 说明 |
+|---|---|---|
+| `CONTEXTGO_CONFIG_DIR` | platform-native | Local sync profile directory. / 本地同步配置目录。 |
+| `CONTEXTGO_SYNC_PASSWORD` | empty | Non-interactive sync passphrase source. / 非交互同步口令来源。 |
+| `CONTEXTGO_GITHUB_TOKEN` | empty | Fine-grained GitHub token; never written into ContextGO files. / GitHub Token，不写入 ContextGO 文件。 |
+| `CONTEXTGO_GITHUB_SYNC_INTERVAL_SEC` | `900` | Daemon sync interval after explicit initialization. / 显式初始化后的 daemon 同步周期。 |
+
+`contextgo sync init --repo OWNER/REPO` creates a local profile without uploading data. `sync run` pulls other device shards, imports them idempotently by fingerprint, then writes the current device shard. The public manifest contains only KDF parameters, schema, and algorithm names. A damaged or mismatched manifest fails closed and cannot overwrite existing shards.
 
 ---
 
@@ -240,7 +251,7 @@ Remote sync is disabled by default. Enable only when a ContextGO sync server is 
 
 ```bash
 # Print the resolved storage root / 打印实际存储根目录
-python3 -c "from contextgo.context_config import storage_root; print(storage_root())"
+python -c "from contextgo.context_config import storage_root; print(storage_root())"
 
 # Full health check / 完整健康检查
 contextgo health

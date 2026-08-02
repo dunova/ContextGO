@@ -9,6 +9,15 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.13.0] — 2026-08-02
+
+### Full overhaul / 全版本大修
+- Added a dependency-light cross-platform runtime for Windows, macOS, and Linux: native user directories, atomic private writes, portable PID/process handling, and Task Scheduler/launchd/systemd-user service definitions. / 新增统一跨平台运行时、目录、进程与服务管理。
+- Added explicit privacy-first GitHub Contents synchronization with AES-256-GCM, scrypt KDF, compressed per-device shards, a public non-secret manifest, idempotent import, conflict fail-closed behavior, offline backoff, and daemon pull-then-push. / 新增显式开启的端到端加密 GitHub 多机同步。
+- Added `contextgo sync init|status|pull|push|run|disable` and `contextgo daemon install|uninstall|start|stop|status`. / 新增同步与 daemon 管理 CLI。
+- Added Windows AppData adapter candidates and replaced quality-gate `python3` assumptions with `sys.executable`. / 补齐 Windows AppData 适配并修复 Windows 解释器假设。
+- Added Windows/macOS/Linux CI runtime matrix, sync security tests, daemon scheduling tests, and portable E2E/smoke verification. / 增加三系统 CI、同步安全测试、daemon 调度测试和跨平台 E2E。
+
 ## [0.12.4] — 2026-04-15
 
 ### Recall Quality / 召回质量

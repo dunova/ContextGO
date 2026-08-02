@@ -413,8 +413,8 @@ def _parse_markdown(path: Path) -> Observation | None:
     if not body_lines:
         body_lines = lines
 
-    content = strip_private_blocks("\n".join(body_lines)).strip()
-    title = strip_private_blocks(title).strip() or path.stem
+    content = _sanitize_text("\n".join(body_lines)).strip()
+    title = _sanitize_text(title).strip() or path.stem
     if not content:
         return None
 
@@ -990,11 +990,26 @@ def index_stats() -> dict[str, Any]:
 # Export / Import
 
 
+_PORTABLE_PATH_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"(?i)[A-Z]:[\\/](?:Users|Documents and Settings)[\\/][^\\/\s]+(?:[\\/][^\s]*)?"),
+    re.compile(r"/(?:Users|home)/[^/\s]+(?:/[^\s]*)?"),
+)
+
+
+def _portable_text(text: str) -> str:
+    """Sanitize secrets/private blocks and remove machine-specific home paths."""
+    cleaned = _sanitize_text(text)
+    for pattern in _PORTABLE_PATH_PATTERNS:
+        cleaned = pattern.sub("<local-path-redacted>", cleaned)
+    return cleaned
+
+
 def export_observations_payload(
     query: str = "",
     *,
     limit: int = 5000,
     source_type: str = "all",
+    portable: bool = False,
 ) -> dict[str, Any]:
     """Sync the index and return a serialisable export payload.
 
@@ -1030,7 +1045,32 @@ def export_observations_payload(
                 break
             offset += len(batch)
 
+    if portable:
+        portable_rows: list[dict[str, Any]] = []
+        identity_cache: dict[str, str] = {}
+        for row in rows:
+            source = str(row.get("source_type") or "import")
+            session_id = str(row.get("session_id") or "imported")
+            identity_key = f"{source}|{session_id}"
+            stable_id = identity_cache.get(identity_key)
+            if stable_id is None:
+                stable_id = hashlib.sha256(identity_key.encode("utf-8")).hexdigest()[:24]
+                identity_cache[identity_key] = stable_id
+            portable_rows.append(
+                {
+                    **row,
+                    "title": _portable_text(str(row.get("title") or "")),
+                    "content": _portable_text(str(row.get("content") or "")),
+                    "tags": [_portable_text(str(tag)) for tag in row.get("tags", [])],
+                    "file_path": f"sync://{source}",
+                    "session_id": f"sync-{stable_id}",
+                }
+            )
+        rows = portable_rows
+
     return {
+        "schema_version": 1,
+        "portable": portable,
         "exported_at": datetime.now(timezone.utc).isoformat(),
         "query": query,
         "source_type": source_type,

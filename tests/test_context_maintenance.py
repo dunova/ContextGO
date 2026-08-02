@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import runpy
 import sqlite3
 import subprocess
@@ -899,6 +900,8 @@ class TestCorruptedIndexEntries(unittest.TestCase):
 
     def test_enqueue_missing_with_path_containing_special_chars(self) -> None:
         """enqueue_missing handles paths with special characters without crashing."""
+        if os.name == "nt":
+            self.skipTest("POSIX virtual path spelling is not a Windows Path contract")
         conn, cur = _make_db()
         special_path = Path("/tmp/session with spaces & symbols !@#$.jsonl")
         missing = [("codex", special_path, "special-session")]

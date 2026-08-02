@@ -69,7 +69,7 @@ class FakeStaticModel:
 # would use mock.patch.dict and remove numpy sub-modules on teardown).
 _FAKE_MODEL2VEC = types.ModuleType("model2vec")
 _FAKE_MODEL2VEC.StaticModel = FakeStaticModel  # type: ignore[attr-defined]
-sys.modules.setdefault("model2vec", _FAKE_MODEL2VEC)
+sys.modules["model2vec"] = _FAKE_MODEL2VEC
 
 import vector_index  # noqa: E402
 

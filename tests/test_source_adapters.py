@@ -135,7 +135,9 @@ class SourceAdaptersTests(unittest.TestCase):
             encoding="utf-8",
         )
         (sessions_dir / "session_ses_hermes_1.json").write_text(
-            json.dumps({"session_id": "ses_hermes_1", "title": "Hermes Session", "platform": "cli"}, ensure_ascii=False),
+            json.dumps(
+                {"session_id": "ses_hermes_1", "title": "Hermes Session", "platform": "cli"}, ensure_ascii=False
+            ),
             encoding="utf-8",
         )
         return session_path
@@ -347,6 +349,66 @@ class SourceAdaptersTests(unittest.TestCase):
         self.assertTrue(result["openclaw_session"]["detected"])
         written = next((source_adapters._adapter_root(self.home) / "openclaw_session").glob("*.jsonl"))
         self.assertIn("claw text", written.read_text(encoding="utf-8"))
+
+    def test_accio_and_copilot_adapters_sync_metadata_and_tools(self) -> None:
+        accio = self.home / ".accio" / "accounts" / "account-a" / "agents" / "agent-1" / "sessions"
+        accio.mkdir(parents=True)
+        (accio / "ses_accio.messages.jsonl").write_text(
+            "\n".join(
+                [
+                    json.dumps({"content": "Accio user text"}),
+                    json.dumps({"content": [{"type": "text", "text": "Accio assistant text"}]}),
+                    "bad-json",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        (accio / "ses_accio.messages.meta.jsonc").write_text(
+            '{"title":"Accio title", // comment\n"agentId":"agent-1"}', encoding="utf-8"
+        )
+        copilot = self.home / ".copilot" / "session-state" / "cop-1"
+        copilot.mkdir(parents=True)
+        (copilot / "events.jsonl").write_text(
+            "\n".join(
+                [
+                    json.dumps(
+                        {"type": "session.start", "data": {"context": {"cwd": "/work/copilot"}, "startTime": "now"}}
+                    ),
+                    json.dumps({"type": "session.model_change", "data": {"newModel": "gpt"}}),
+                    json.dumps({"type": "user.message", "data": {"content": "Copilot asks"}}),
+                    json.dumps({"type": "assistant.message", "data": {"toolRequests": [{"name": "terminal"}]}}),
+                    json.dumps({"type": "tool.execution_complete", "data": {"toolName": "terminal", "output": "done"}}),
+                ]
+            ),
+            encoding="utf-8",
+        )
+        with mock.patch.object(source_adapters, "_home", return_value=self.home):
+            result = source_adapters.sync_all_adapters()
+        self.assertGreater(result["accio_session"]["sessions"], 0)
+        self.assertGreater(result["copilot_session"]["sessions"], 0)
+        accio_text = "".join(
+            p.read_text(encoding="utf-8")
+            for p in (source_adapters._adapter_root(self.home) / "accio_session").glob("*.jsonl")
+        )
+        copilot_text = "".join(
+            p.read_text(encoding="utf-8")
+            for p in (source_adapters._adapter_root(self.home) / "copilot_session").glob("*.jsonl")
+        )
+        self.assertIn("Accio title", accio_text)
+        self.assertIn("Called tools", copilot_text)
+
+    def test_adapter_schema_migrates_and_helper_edges(self) -> None:
+        root = self.root / "adapter-root"
+        root.mkdir()
+        (root / "old.jsonl").write_text("old", encoding="utf-8")
+        source_adapters._ensure_adapter_schema(root)
+        self.assertFalse((root / "old.jsonl").exists())
+        self.assertEqual((root / ".schema_version").read_text(encoding="utf-8"), source_adapters.ADAPTER_SCHEMA_VERSION)
+        self.assertEqual(source_adapters._safe_name("!!!"), "session")
+        self.assertEqual(
+            source_adapters._extract_text_fragments({"content": ["one", "one", {"text": "two"}]}), ["one", "two"]
+        )
+        self.assertIsNone(source_adapters._normalize_text_value(""))
 
 
 if __name__ == "__main__":

@@ -163,6 +163,12 @@ class SourceAdaptersTests(unittest.TestCase):
         roots = source_adapters._cline_family_task_roots(self.home, ext_id)
         self.assertEqual(roots, [tasks_dir])
 
+    def test_windows_cline_roots_include_roaming_appdata(self) -> None:
+        ext_id = "saoudrizwan.claude-dev"
+        tasks_dir = self.home / "AppData" / "Roaming" / "Code" / "User" / "globalStorage" / ext_id / "tasks"
+        tasks_dir.mkdir(parents=True)
+        self.assertIn(tasks_dir, source_adapters._cline_family_task_roots(self.home, ext_id))
+
     def test_cline_family_task_roots_returns_empty_when_nothing_exists(self) -> None:
         roots = source_adapters._cline_family_task_roots(self.home, "saoudrizwan.claude-dev")
         self.assertEqual(roots, [])
@@ -175,6 +181,11 @@ class SourceAdaptersTests(unittest.TestCase):
         roots = source_adapters._cline_family_task_roots(self.home, ext_id)
         # Whitelist rejects unknown extension IDs
         self.assertEqual(roots, [])
+
+    def test_windows_vscdb_workspace_root_is_detected(self) -> None:
+        root = self.home / "AppData" / "Roaming" / "Cursor" / "User" / "workspaceStorage"
+        root.mkdir(parents=True)
+        self.assertIn(root, source_adapters._vscdb_workspace_roots(self.home, "Cursor"))
 
     # ------------------------------------------------------------------
     # Tests: _sync_continue_sessions

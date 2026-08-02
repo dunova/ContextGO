@@ -20,6 +20,15 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+try:
+    from context_runtime import cache_dir as _runtime_cache_dir
+    from context_runtime import config_dir as _runtime_config_dir
+    from context_runtime import storage_root as _runtime_storage_root
+except ImportError:  # pragma: no cover
+    from .context_runtime import cache_dir as _runtime_cache_dir
+    from .context_runtime import config_dir as _runtime_config_dir
+    from .context_runtime import storage_root as _runtime_storage_root
+
 if TYPE_CHECKING:
     from typing import TypeVar
 
@@ -30,6 +39,8 @@ __all__ = [
     "env_float",
     "env_int",
     "env_str",
+    "cache_dir",
+    "config_dir",
     "storage_root",
 ]
 
@@ -115,9 +126,7 @@ def storage_root(default_home_name: str = ".contextgo") -> Path:
     Raises:
         ValueError: If the resolved path is not absolute or is too short.
     """
-    env_val = os.environ.get("CONTEXTGO_STORAGE_ROOT")
-    raw = env_val if env_val and env_val.strip() else str(Path.home() / default_home_name)
-    resolved = Path(os.path.expanduser(raw)).resolve()
+    resolved = _runtime_storage_root(default_home_name)
 
     if not resolved.is_absolute():
         raise ValueError(f"CONTEXTGO_STORAGE_ROOT resolved to a non-absolute path: {resolved}")
@@ -127,3 +136,13 @@ def storage_root(default_home_name: str = ".contextgo") -> Path:
             f"({resolved}). Refusing to use a top-level directory as the storage root."
         )
     return resolved
+
+
+def config_dir() -> Path:
+    """Return the platform-native ContextGO configuration directory."""
+    return _runtime_config_dir()
+
+
+def cache_dir() -> Path:
+    """Return the platform-native ContextGO cache directory."""
+    return _runtime_cache_dir()

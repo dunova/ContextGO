@@ -187,7 +187,9 @@ class TestPrewarmClassification(unittest.TestCase):
                 cwd = Path(tmp) / "repo"
                 cwd.mkdir()
                 pw._save_prewarm_state("fix auth refresh bug", ["refresh", "auth", "bug"], "new-topic", cwd)
-                decision = pw._classify_prewarm("auth refresh token 再补一个测试", ["refresh", "auth", "token", "测试"], cwd=cwd)
+                decision = pw._classify_prewarm(
+                    "auth refresh token 再补一个测试", ["refresh", "auth", "token", "测试"], cwd=cwd
+                )
         self.assertFalse(decision["trigger"])
         self.assertEqual(decision["reason"], "same-topic")
 
@@ -586,7 +588,10 @@ class TestAtomicWrite(unittest.TestCase):
             real_file = Path(tmp) / "real.json"
             real_file.write_text("original")
             link = Path(tmp) / "link.json"
-            link.symlink_to(real_file)
+            try:
+                link.symlink_to(real_file)
+            except OSError as exc:
+                self.skipTest(f"symlink creation unavailable: {exc}")
             pw._atomic_write(link, "updated via symlink")
             self.assertEqual(real_file.read_text(), "updated via symlink")
 

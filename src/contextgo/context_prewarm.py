@@ -572,7 +572,9 @@ def _format_session_rows(session_results: list[dict[str, Any]]) -> str:
         return ""
     lines = [f"Found {len(session_results)} sessions (local index):"]
     for idx, row in enumerate(session_results, 1):
-        lines.append(f"[{idx}] {str(row.get('created_at', ''))[:10]} | {row.get('session_id', '')} | {row.get('source_type', '')}")
+        lines.append(
+            f"[{idx}] {str(row.get('created_at', ''))[:10]} | {row.get('session_id', '')} | {row.get('source_type', '')}"
+        )
         lines.append(f"    {row.get('title', '')}")
         lines.append(f"    File: {row.get('file_path', '')}")
         lines.append(f"    > {row.get('snippet', '')}")
@@ -696,7 +698,9 @@ def _format_prewarm_output(
         lines.append(f"{_PREWARM_DONE} ({elapsed:.1f}s) — {label}")
         lines.append(f"关键词: {', '.join(keywords[:4])}")
         if graph_hint:
-            lines.append("建议: 这是结构类问题；若当前环境有 graph，先用 graph 看架构/影响半径，再用 ContextGO 查历史决策。")
+            lines.append(
+                "建议: 这是结构类问题；若当前环境有 graph，先用 graph 看架构/影响半径，再用 ContextGO 查历史决策。"
+            )
         for item in trimmed:
             title = item.get("title", "Untitled")
             tags = item.get("tags", "")
@@ -1261,9 +1265,8 @@ def teardown_copilot() -> bool:
     removed = True
     for project_root in [Path.home() / "ContextGO", Path.home() / "QuantX", Path.home() / "happycapy" / "QuantX"]:
         instructions_file = project_root / ".github" / "copilot-instructions.md"
-        if instructions_file.exists():
-            if not _remove_scf_policy(instructions_file):
-                removed = False
+        if instructions_file.exists() and not _remove_scf_policy(instructions_file):
+            removed = False
     return removed
 
 
@@ -1318,9 +1321,8 @@ def teardown_cursor() -> bool:
         if not project_root.exists():
             continue
         rules_file = project_root / ".cursorrules"
-        if rules_file.exists():
-            if not _remove_scf_policy(rules_file):
-                removed = False
+        if rules_file.exists() and not _remove_scf_policy(rules_file):
+            removed = False
 
     return removed
 

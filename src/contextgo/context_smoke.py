@@ -20,6 +20,7 @@ import contextlib
 import errno
 import json
 import os
+import shutil
 import socket
 import subprocess
 import sys
@@ -37,6 +38,13 @@ from typing import Any
 # ---------------------------------------------------------------------------
 
 
+def _portable_args(args: list[str]) -> list[str]:
+    """Normalize Python executable aliases for Windows and uv environments."""
+    if args and args[0] in {"python", "python3"}:
+        return [sys.executable, *args[1:]]
+    return args
+
+
 def run_cmd(
     args: list[str],
     timeout: int = 60,
@@ -52,7 +60,7 @@ def run_cmd(
     merged_env: dict[str, str] | None = None
     if env:
         merged_env = {**os.environ, **env}
-    proc = subprocess.run(args, capture_output=True, timeout=timeout, env=merged_env, check=False)
+    proc = subprocess.run(_portable_args(args), capture_output=True, timeout=timeout, env=merged_env, check=False)
     stdout = (proc.stdout or b"").decode("utf-8", errors="replace")
     stderr = (proc.stderr or b"").decode("utf-8", errors="replace")
     return proc.returncode, stdout, stderr
@@ -102,6 +110,14 @@ def test_healthcheck(healthcheck_path: Path) -> dict[str, Any]:
             "rc": 0,
             "ok": True,
             "detail": {"skipped": True, "reason": f"not found: {healthcheck_path}"},
+        }
+    bash = shutil.which("bash")
+    if not bash:
+        return {
+            "name": "healthcheck",
+            "rc": 0,
+            "ok": True,
+            "detail": {"skipped": True, "reason": "bash unavailable; portable Python health checks already ran"},
         }
     rc, out, err = run_cmd(["bash", str(healthcheck_path), "--quiet"])
     return {

@@ -341,7 +341,7 @@ def _build_rust_cmd(
     compilation.
     """
     env: dict[str, str] = os.environ.copy()
-    env.setdefault("CONTEXTGO_ACTIVE_WORKDIR", str(Path.cwd()))
+    env.setdefault("CONTEXTGO_ACTIVE_WORKDIR", Path.cwd().as_posix())
 
     if release and _rust_binary_is_fresh():
         cmd: list[str] = [str(RUST_RELEASE_BIN)]
@@ -394,7 +394,7 @@ def _build_go_cmd(
         json_output=json_output,
     )
     env: dict[str, str] = os.environ.copy()
-    env.setdefault("CONTEXTGO_ACTIVE_WORKDIR", str(Path.cwd()))
+    env.setdefault("CONTEXTGO_ACTIVE_WORKDIR", Path.cwd().as_posix())
     return cmd, GO_PROJECT, env
 
 

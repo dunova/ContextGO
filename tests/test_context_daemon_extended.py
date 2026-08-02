@@ -72,7 +72,10 @@ class TestIsSafeSource(unittest.TestCase):
         target = Path(self.tmp) / "target.jsonl"
         target.write_text("data")
         link = Path(self.tmp) / "link.jsonl"
-        link.symlink_to(target)
+        try:
+            link.symlink_to(target)
+        except (OSError, NotImplementedError) as exc:
+            self.skipTest(f"symbolic links unavailable: {exc}")
         self.assertFalse(SessionTracker._is_safe_source(link))
 
     def test_directory_returns_false(self) -> None:
@@ -81,6 +84,8 @@ class TestIsSafeSource(unittest.TestCase):
         self.assertFalse(SessionTracker._is_safe_source(d))
 
     def test_foreign_owned_file_returns_false(self) -> None:
+        if not hasattr(os, "getuid"):
+            self.skipTest("POSIX ownership is unavailable on this platform")
         p = Path(self.tmp) / "foreign.jsonl"
         p.write_text("data")
         # Simulate foreign uid by patching Path.lstat at the class level
@@ -202,7 +207,10 @@ class TestTailFile(unittest.TestCase):
         p = Path(self.tmp) / "unsafe.jsonl"
         p.write_text("data")
         link = Path(self.tmp) / "sym.jsonl"
-        link.symlink_to(p)
+        try:
+            link.symlink_to(p)
+        except (OSError, NotImplementedError) as exc:
+            self.skipTest(f"symbolic links unavailable: {exc}")
         key = self.tracker._cursor_key("jsonl", "test", link)
         result = self.tracker._tail_file(key, link, "test")
         self.assertIsNone(result)
@@ -955,6 +963,49 @@ class TestMaybeSyncIndex(unittest.TestCase):
             # Should not raise
             self.tracker.maybe_sync_index()
         self.assertGreater(self.tracker._error_count, 0)
+
+
+# ---------------------------------------------------------------------------
+# encrypted GitHub sync scheduling
+# ---------------------------------------------------------------------------
+
+
+class TestMaybeGithubSync(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tracker = _make_tracker()
+
+    def _module(self, *, enabled: bool = True, error: Exception | None = None) -> MagicMock:
+        module = MagicMock()
+        module.auto_sync_enabled.return_value = enabled
+        module.SyncError = RuntimeError
+        if error is not None:
+            module.run_sync.side_effect = error
+        else:
+            module.run_sync.return_value = {"completed_at": "now"}
+        return module
+
+    def test_unconfigured_sync_never_contacts_network(self) -> None:
+        module = self._module(enabled=False)
+        with patch.dict(sys.modules, {"context_sync": module}):
+            self.tracker.maybe_github_sync()
+        module.run_sync.assert_not_called()
+
+    def test_enabled_sync_runs_after_interval(self) -> None:
+        module = self._module()
+        self.tracker._last_github_sync = 0
+        with patch.dict(sys.modules, {"context_sync": module}):
+            self.tracker.maybe_github_sync()
+        module.run_sync.assert_called_once()
+        self.assertEqual(self.tracker._github_sync_failures, 0)
+
+    def test_network_failure_is_contained_and_backed_off(self) -> None:
+        module = self._module(error=RuntimeError("offline"))
+        self.tracker._last_github_sync = 0
+        with patch.dict(sys.modules, {"context_sync": module}):
+            self.tracker.maybe_github_sync()
+            self.tracker.maybe_github_sync()
+        module.run_sync.assert_called_once()
+        self.assertEqual(self.tracker._github_sync_failures, 1)
 
 
 # ---------------------------------------------------------------------------

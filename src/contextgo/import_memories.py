@@ -15,7 +15,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("input", help="Input JSON path exported by export_memories.py")
     parser.add_argument("--no-sync", action="store_true", help="Skip sync_index_from_storage after import.")
     args = parser.parse_args(argv)
-    ctx_argv = ["import", str(Path(args.input).expanduser())]
+    input_path = str(Path(args.input).expanduser()) if str(args.input).startswith("~") else str(args.input)
+    ctx_argv = ["import", input_path]
     if args.no_sync:
         ctx_argv.append("--no-sync")
     return int(context_cli.main(ctx_argv))

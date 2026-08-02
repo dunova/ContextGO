@@ -34,6 +34,8 @@ __all__ = [
     "cmd_smoke",
     "cmd_vector_status",
     "cmd_vector_sync",
+    "cmd_sync",
+    "cmd_daemon",
     "export_observations_payload",
     "import_observations_payload",
     "main",
@@ -100,6 +102,24 @@ def _get_context_prewarm() -> ModuleType:
     return _m
 
 
+def _get_context_sync() -> ModuleType:
+    """Lazy import of the encrypted synchronization module."""
+    try:
+        import context_sync as _m  # type: ignore[import-not-found]
+    except ImportError:
+        from . import context_sync as _m  # type: ignore[import-not-found]
+    return _m
+
+
+def _get_context_runtime() -> ModuleType:
+    """Lazy import of the cross-platform runtime module."""
+    try:
+        import context_runtime as _m  # type: ignore[import-not-found]
+    except ImportError:
+        from . import context_runtime as _m  # type: ignore[import-not-found]
+    return _m
+
+
 def _read_version() -> str:
     """Read and return the version string from the VERSION file next to pyproject.toml.
 
@@ -143,7 +163,7 @@ def _import_vector_index() -> ModuleType:
         ) from None
 
 
-HOME = Path.home()
+HOME = _get_context_runtime().user_home()
 LOCAL_STORAGE_ROOT = storage_root()
 LOCAL_SHARED_ROOT = LOCAL_STORAGE_ROOT / "resources" / "shared"
 LOCAL_CONVERSATIONS_ROOT = LOCAL_SHARED_ROOT / "conversations"
@@ -565,6 +585,93 @@ def cmd_import(args: argparse.Namespace) -> int:
         f"import done inserted={result.get('inserted', 0)} skipped={result.get('skipped', 0)} db={result.get('db_path', '')}"
     )
     return 0
+
+
+def cmd_sync(args: argparse.Namespace) -> int:
+    """Configure and operate encrypted multi-machine synchronization."""
+    sync = _get_context_sync()
+    action = getattr(args, "sync_action", "")
+    try:
+        if action == "init":
+            cfg = sync.init_sync(
+                args.repo,
+                branch=args.branch,
+                password=args.password,
+                store_key=not args.no_store_key,
+                device_id=args.device_id,
+                auto_sync=not args.no_auto,
+            )
+            _print_json(
+                {
+                    "configured": True,
+                    "repository": cfg.repository,
+                    "device_id": cfg.device_id,
+                    "key_stored_locally": cfg.store_key,
+                    "next": "contextgo sync run",
+                },
+                pretty=True,
+            )
+            return 0
+        if action == "status":
+            _print_json(sync.sync_status(include_remote=args.remote), pretty=True)
+            return 0
+        if action == "pull":
+            _print_json(sync.pull_sync(password=args.password, token=args.token), pretty=True)
+            return 0
+        if action == "push":
+            _print_json(sync.push_sync(password=args.password, token=args.token, limit=args.limit), pretty=True)
+            return 0
+        if action == "run":
+            _print_json(sync.run_sync(password=args.password, token=args.token, limit=args.limit), pretty=True)
+            return 0
+        if action == "disable":
+            result = sync.disable_sync()
+            _print_json(result, pretty=True)
+            return 0
+        print("Error: unknown sync action", file=sys.stderr)
+        return 2
+    except sync.SyncError as exc:
+        print(f"Sync error: {exc}", file=sys.stderr)
+        return 1
+
+
+def cmd_daemon(args: argparse.Namespace) -> int:
+    """Manage the ContextGO daemon through native OS process/service APIs."""
+    runtime = _get_context_runtime()
+    action = getattr(args, "daemon_action", "")
+    try:
+        if action == "run":
+            _load_module("context_daemon").main()
+            return 0
+        if action == "start":
+            _print_json({"started": True, "pid": runtime.start_daemon()}, pretty=True)
+            return 0
+        if action == "stop":
+            _print_json({"stopped": runtime.stop_daemon()}, pretty=True)
+            return 0
+        if action == "status":
+            status = runtime.daemon_status()
+            _print_json(
+                {
+                    "running": status.running,
+                    "pid": status.pid,
+                    "pid_file": status.pid_file,
+                    "service": status.service,
+                },
+                pretty=True,
+            )
+            return 0
+        if action == "install":
+            _print_json(runtime.install_service(), pretty=True)
+            return 0
+        if action == "uninstall":
+            _print_json(runtime.uninstall_service(), pretty=True)
+            return 0
+        print("Error: unknown daemon action", file=sys.stderr)
+        return 2
+    except (OSError, RuntimeError) as exc:
+        print(f"Daemon error: {exc}", file=sys.stderr)
+        return 1
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
@@ -1242,6 +1349,8 @@ COMMANDS: dict[str, object] = {
     "save": cmd_save,
     "export": cmd_export,
     "import": cmd_import,
+    "sync": cmd_sync,
+    "daemon": cmd_daemon,
     "serve": cmd_serve,
     "maintain": cmd_maintain,
     "native-scan": cmd_native_scan,
@@ -1381,6 +1490,39 @@ def _add_export_import_subcommands(sub: object) -> None:
         action="store_true",
         help="Skip the storage sync step after import (faster, but index may be stale)",
     )
+
+
+def _add_sync_daemon_subcommands(sub: object) -> None:
+    """Register encrypted GitHub sync and cross-platform daemon commands."""
+    sync = sub.add_parser("sync", help="Manage encrypted multi-machine synchronization through GitHub")
+    sync_sub = sync.add_subparsers(dest="sync_action", required=True)
+    init = sync_sub.add_parser("init", help="Initialize local encrypted GitHub sync")
+    init.add_argument("--repo", required=True, help="GitHub repository in owner/name form")
+    init.add_argument("--branch", default="main")
+    init.add_argument("--password", help="Sync password; otherwise CONTEXTGO_SYNC_PASSWORD or secure prompt")
+    init.add_argument("--device-id", help="Stable device shard ID; generated when omitted")
+    init.add_argument("--no-store-key", action="store_true", help="Derive key from password on every run")
+    init.add_argument("--no-auto", action="store_true", help="Disable daemon automatic sync flag")
+    status = sync_sub.add_parser("status", help="Show local sync configuration")
+    status.add_argument("--remote", action="store_true", help="Also list encrypted remote shards")
+    for name in ("pull", "push", "run"):
+        parser = sync_sub.add_parser(name, help=f"{name.title()} encrypted ContextGO shards")
+        parser.add_argument("--password", help="Sync password or CONTEXTGO_SYNC_PASSWORD")
+        parser.add_argument("--token", help="GitHub token or CONTEXTGO_GITHUB_TOKEN/GITHUB_TOKEN")
+        parser.add_argument("--limit", type=int, default=50000)
+    sync_sub.add_parser("disable", help="Disable automatic sync without deleting local data")
+
+    daemon = sub.add_parser("daemon", help="Run and manage the ContextGO background daemon")
+    daemon_sub = daemon.add_subparsers(dest="daemon_action", required=True)
+    for name, help_text in (
+        ("run", "Run the daemon in the foreground"),
+        ("start", "Start the daemon detached"),
+        ("stop", "Stop the daemon"),
+        ("status", "Show daemon status"),
+        ("install", "Install the native per-user background service"),
+        ("uninstall", "Remove the service definition but preserve data"),
+    ):
+        daemon_sub.add_parser(name, help=help_text)
 
 
 def _add_serve_subcommand(sub: object) -> None:
@@ -1725,6 +1867,7 @@ def build_parser() -> object:
     _add_search_semantic_subcommands(sub)
     _add_save_subcommand(sub)
     _add_export_import_subcommands(sub)
+    _add_sync_daemon_subcommands(sub)
     _add_serve_subcommand(sub)
     _add_maintain_subcommand(sub)
     _add_native_scan_subcommand(sub)
@@ -1792,6 +1935,8 @@ _LAZY_MODULE_GETTERS: dict[str, object] = {
     "context_smoke": _get_context_smoke,
     "session_index": _get_session_index,
     "memory_index": _get_memory_index,
+    "context_sync": _get_context_sync,
+    "context_runtime": _get_context_runtime,
 }
 
 

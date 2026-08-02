@@ -402,12 +402,12 @@ _SNIPPET_MAX_CHARS = 120
 
 
 def _home() -> Path:
-    """Return the current user's home directory.
-
-    Isolated as a function so tests can monkeypatch it without affecting
-    ``Path.home`` globally.
-    """
-    return Path.home()
+    """Return the effective user home directory."""
+    try:
+        from context_runtime import user_home
+    except ImportError:  # pragma: no cover
+        from .context_runtime import user_home
+    return user_home()
 
 
 def _normalize_file_path(path: Path) -> str:
@@ -416,7 +416,7 @@ def _normalize_file_path(path: Path) -> str:
     Falls back to the un-resolved string if ``Path.resolve`` raises.
     """
     try:
-        return str(path.resolve())
+        return path.resolve().as_posix()
     except OSError:
         return str(path)
 
@@ -956,14 +956,6 @@ def _iter_sources() -> list[tuple[str, Path]]:
     """Return cached ``(source_type, path)`` pairs for all discoverable sources."""
     now = time.monotonic()
     current_home = str(_home())
-    if (
-        SOURCE_CACHE_TTL_SEC > 0
-        and _SOURCE_CACHE.get("expires_at", 0.0) > now
-        and _SOURCE_CACHE.get("items")
-        and _SOURCE_CACHE.get("home") == current_home
-    ):
-        return list(_SOURCE_CACHE["items"])
-
     native_backend = EXPERIMENTAL_SYNC_BACKEND
     if native_backend in {"rust", "go"}:
         try:
@@ -982,6 +974,13 @@ def _iter_sources() -> list[tuple[str, Path]]:
                     return items
         except (OSError, RuntimeError):
             pass
+    if (
+        SOURCE_CACHE_TTL_SEC > 0
+        and _SOURCE_CACHE.get("expires_at", 0.0) > now
+        and _SOURCE_CACHE.get("items")
+        and _SOURCE_CACHE.get("home") == current_home
+    ):
+        return list(_SOURCE_CACHE["items"])
 
     home = Path(current_home)
     discovered = discover_index_sources(home)

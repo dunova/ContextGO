@@ -186,6 +186,8 @@ class TestBuildParser(unittest.TestCase):
             "save",
             "export",
             "import",
+            "sync",
+            "daemon",
             "serve",
             "maintain",
             "native-scan",

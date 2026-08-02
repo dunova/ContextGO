@@ -143,6 +143,44 @@ jobs:
         run: PYTHONPATH=docs python -m benchmarks --iterations 1 --warmup 0 --query benchmark
 
   # -------------------------------------------------------------------------
+  # Cross-platform installed-runtime contract.  This deliberately exercises
+  # Windows/macOS without Bash, python3, pgrep, launchctl or systemd assumptions.
+  # -------------------------------------------------------------------------
+  platform-runtime:
+    name: Runtime ${{ matrix.os }} / Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    needs: lint
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+        python-version: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v4
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install cross-platform runtime
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev,sync]"
+
+      - name: Runtime and sync contract tests
+        run: python -m pytest -o addopts="" tests/test_context_runtime.py tests/test_context_sync.py tests/test_context_config.py -q
+
+      - name: Portable end-to-end quality gate
+        run: python scripts/e2e_quality_gate.py
+
+      - name: Installed CLI contract
+        run: |
+          contextgo --version
+          contextgo daemon status
+          contextgo smoke --sandbox
+
+  # -------------------------------------------------------------------------
   # 3. Go tests
   # -------------------------------------------------------------------------
   go-test:
@@ -210,6 +248,7 @@ jobs:
     timeout-minutes: 15
     needs:
       - python-test
+      - platform-runtime
       - go-test
       - rust-check
     steps:

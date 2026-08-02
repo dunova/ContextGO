@@ -68,7 +68,7 @@ def vector_available() -> bool:
     if _VECTOR_AVAILABLE is not None:
         return _VECTOR_AVAILABLE
     try:
-        import model2vec  # type: ignore[import-not-found]  # noqa: PLC0415
+        import model2vec  # type: ignore[import-not-found]  # noqa: F401, PLC0415
         import numpy  # type: ignore[import-not-found]  # noqa: F401
 
         _VECTOR_AVAILABLE = True
@@ -101,10 +101,10 @@ _VECTOR_MATRIX_CACHE: dict[str, tuple[tuple[int, int], list[str], Any]] = {}
 # vdb_path -> ((row_count, max_rowid), paths, matrix)
 _VECTOR_MATRIX_CACHE_LOCK = threading.Lock()
 
-# Whitelist of safe path characters for ATTACH DATABASE path validation.
-# Colon (':') is intentionally excluded to block SQLite URI schemes such as
-# "file:///etc/passwd?mode=ro" that could be injected via env vars.
-_SAFE_PATH_CHARS: frozenset[str] = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/.-_")
+# Path validation is performed on a resolved Path object. Windows drive-colons
+# and backslashes are valid filesystem characters; URI/query syntax is rejected
+# separately before the path is passed to SQLite.
+_UNSAFE_PATH_MARKERS = ("?", "#", "\x00")
 
 
 def _load_model() -> Any:
@@ -291,21 +291,11 @@ def embed_pending_session_docs(
         if sdb_path.suffix != ".db" or not sdb_path.exists():
             raise ValueError("Invalid session database path")
         sdb_str = str(sdb_path)
-        # Strict whitelist: resolve the path and verify it only contains safe
-        # characters (alphanumeric, '/', '.', '-', '_').  This guards against
-        # SQL-injection payloads even though ATTACH DATABASE does not support
-        # parameter binding in SQLite.
-        if not all(c in _SAFE_PATH_CHARS for c in sdb_str):
+        if any(marker in sdb_str for marker in _UNSAFE_PATH_MARKERS):
             raise ValueError("Unsafe characters in database path")
-        # Explicit colon guard: blocks SQLite URI schemes (e.g. file:///etc/passwd?mode=ro)
-        # that could be injected via CONTEXTGO_VECTOR_DB_PATH or session_db_path.
-        if ":" in sdb_str:
-            raise ValueError("Colon not allowed in database path")
-        # Path traversal guard: the resolved path must share the same parent directory.
-        resolved = Path(sdb_str).resolve()
-        if not str(resolved).startswith(str(Path(sdb_str).parent.resolve())):
-            raise ValueError("Path traversal detected in database path")
-        conn.execute(f"ATTACH DATABASE '{sdb_str}' AS sessions")
+        # SQLite's ATTACH syntax cannot bind a path parameter. Escape the only
+        # SQL-significant character permitted in a normal filesystem path.
+        conn.execute("ATTACH DATABASE ? AS sessions", (sdb_str,))
 
         # Find pending documents
         if force:
@@ -417,18 +407,18 @@ def vector_search_session(
 
         with _VECTOR_MATRIX_CACHE_LOCK:
             cached_entry = _VECTOR_MATRIX_CACHE.get(vdb)
-            if cached_entry is not None and cached_entry[0] == cache_key:
-                paths, matrix = cached_entry[1], cached_entry[2]
-            else:
-                rows = conn.execute(
-                    "SELECT file_path, embedding FROM session_vectors LIMIT ?",
-                    (candidate_limit,),
-                ).fetchall()
-                if rows:
-                    paths = [r[0] for r in rows]
-                    matrix = np.array([_unpack_vector(r[1]) for r in rows], dtype=np.float32)
-                    with _VECTOR_MATRIX_CACHE_LOCK:
-                        _VECTOR_MATRIX_CACHE[vdb] = (cache_key, paths, matrix)
+        if cached_entry is not None and cached_entry[0] == cache_key:
+            paths, matrix = cached_entry[1], cached_entry[2]
+        else:
+            rows = conn.execute(
+                "SELECT file_path, embedding FROM session_vectors LIMIT ?",
+                (candidate_limit,),
+            ).fetchall()
+            if rows:
+                paths = [r[0] for r in rows]
+                matrix = np.array([_unpack_vector(r[1]) for r in rows], dtype=np.float32)
+                with _VECTOR_MATRIX_CACHE_LOCK:
+                    _VECTOR_MATRIX_CACHE[vdb] = (cache_key, paths, matrix)
 
     if not paths or matrix is None:
         return []

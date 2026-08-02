@@ -8,6 +8,7 @@ import json
 import os
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import time
 from dataclasses import dataclass
@@ -99,10 +100,17 @@ def prepare_fixture_home(home: Path) -> None:
     (home / ".bash_history").write_text("ls\nNotebookLM bash history\n", encoding="utf-8")
 
 
+def _portable_args(args: list[str]) -> list[str]:
+    """Normalize Python executable aliases for Windows and uv environments."""
+    if args and args[0] in {"python", "python3"}:
+        return [sys.executable, *args[1:]]
+    return args
+
+
 def run_cmd(args: list[str], env: dict[str, str], timeout: int = 20) -> tuple[int, str, str]:
     """Run a subprocess with the given env and return (returncode, stdout, stderr)."""
     proc = subprocess.run(
-        args,
+        _portable_args(args),
         cwd=str(REPO_ROOT),
         capture_output=True,
         text=True,
@@ -116,7 +124,7 @@ def run_cmd(args: list[str], env: dict[str, str], timeout: int = 20) -> tuple[in
 def case_health(env: dict[str, str]) -> CaseResult:
     """Run the health command and verify all_ok is True."""
     t0 = time.time()
-    rc, out, err = run_cmd(["python3", str(CONTEXT_CLI), "health"], env)
+    rc, out, err = run_cmd([sys.executable, str(CONTEXT_CLI), "health"], env)
     payload = {}
     text = out or err
     start = text.find("{")
@@ -141,7 +149,7 @@ def case_save_and_readback(env: dict[str, str]) -> CaseResult:
     marker = f"gate-marker-{int(time.time())}"
     rc_save, out_save, _ = run_cmd(
         [
-            "python3",
+            sys.executable,
             str(CONTEXT_CLI),
             "save",
             "--title",
@@ -153,7 +161,7 @@ def case_save_and_readback(env: dict[str, str]) -> CaseResult:
         ],
         env,
     )
-    rc_sem, out_sem, _ = run_cmd(["python3", str(CONTEXT_CLI), "semantic", marker, "--limit", "3"], env)
+    rc_sem, out_sem, _ = run_cmd([sys.executable, str(CONTEXT_CLI), "semantic", marker, "--limit", "3"], env)
     ok = rc_save == 0 and rc_sem == 0 and marker in out_sem
     if ok:
         detail = f"save_rc={rc_save}, semantic_rc={rc_sem}, semantic_has_marker=True"
@@ -169,7 +177,7 @@ def case_save_and_readback(env: dict[str, str]) -> CaseResult:
 def case_session_index_sources(env: dict[str, str], storage_root: Path) -> CaseResult:
     """Verify all required session source types appear in the session index."""
     t0 = time.time()
-    run_cmd(["python3", str(CONTEXT_CLI), "health"], env, timeout=60)
+    run_cmd([sys.executable, str(CONTEXT_CLI), "health"], env, timeout=60)
     session_db = session_db_path(storage_root)
     if not session_db.exists():
         return CaseResult("session-index-sources", False, f"db missing: {session_db}", time.time() - t0)
@@ -190,7 +198,7 @@ def case_local_search(env: dict[str, str]) -> CaseResult:
     """Verify the search command returns results containing the fixture marker."""
     t0 = time.time()
     rc, out, err = run_cmd(
-        ["python3", str(CONTEXT_CLI), "search", "NotebookLM", "--limit", "3", "--literal"],
+        [sys.executable, str(CONTEXT_CLI), "search", "NotebookLM", "--limit", "3", "--literal"],
         env,
         timeout=60,
     )
@@ -212,7 +220,7 @@ def case_export_and_import(env: dict[str, str]) -> CaseResult:
     marker = f"gate-export-{int(time.time())}"
     rc_save, out_save, err_save = run_cmd(
         [
-            "python3",
+            sys.executable,
             str(CONTEXT_CLI),
             "save",
             "--title",
@@ -236,7 +244,7 @@ def case_export_and_import(env: dict[str, str]) -> CaseResult:
         export_file = Path(tmpdir) / "gate_export.json"
         rc_export, out_export, err_export = run_cmd(
             [
-                "python3",
+                sys.executable,
                 str(CONTEXT_CLI),
                 "export",
                 marker,
@@ -273,7 +281,7 @@ def case_export_and_import(env: dict[str, str]) -> CaseResult:
                 )
 
         rc_import, out_import, err_import = run_cmd(
-            ["python3", str(CONTEXT_CLI), "import", str(export_file), "--no-sync"],
+            [sys.executable, str(CONTEXT_CLI), "import", str(export_file), "--no-sync"],
             env,
         )
         ok = rc_import == 0 and "import done" in (out_import or "")
@@ -287,7 +295,7 @@ def case_maintain(env: dict[str, str]) -> CaseResult:
     """Run maintenance in dry-run mode and confirm a snapshot line is reported."""
     t0 = time.time()
     rc, out, err = run_cmd(
-        ["python3", str(CONTEXT_CLI), "maintain", "--dry-run"],
+        [sys.executable, str(CONTEXT_CLI), "maintain", "--dry-run"],
         env,
         timeout=60,
     )
@@ -313,6 +321,7 @@ def main() -> int:
         env.update(
             {
                 "HOME": str(fake_home),
+                "CONTEXTGO_HOME": str(fake_home),
                 "CONTEXTGO_STORAGE_ROOT": str(storage_root),
                 "CONTEXTGO_SESSION_SYNC_MIN_INTERVAL_SEC": "0",
                 "CONTEXTGO_SOURCE_CACHE_TTL_SEC": "0",

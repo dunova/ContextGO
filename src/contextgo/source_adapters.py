@@ -41,7 +41,11 @@ ADAPTER_SCHEMA_VERSION = "2026-04-15-adapter-v3"
 
 
 def _home() -> Path:
-    return Path.home()
+    try:
+        from context_runtime import user_home
+    except ImportError:  # pragma: no cover
+        from .context_runtime import user_home
+    return user_home()
 
 
 def _adapter_root(home: Path | None = None) -> Path:
@@ -226,6 +230,8 @@ def _opencode_db_candidates(home: Path) -> list[Path]:
     return [
         home / ".local" / "share" / "opencode" / "opencode.db",
         home / "Library" / "Application Support" / "ai.opencode.desktop" / "opencode.db",
+        home / "AppData" / "Roaming" / "ai.opencode.desktop" / "opencode.db",
+        home / "AppData" / "Local" / "ai.opencode.desktop" / "opencode.db",
     ]
 
 
@@ -233,6 +239,8 @@ def _kilo_storage_candidates(home: Path) -> list[Path]:
     return [
         home / ".local" / "share" / "kilo" / "storage",
         home / "Library" / "Application Support" / "ai.kilo.desktop" / "storage",
+        home / "AppData" / "Roaming" / "ai.kilo.desktop" / "storage",
+        home / "AppData" / "Local" / "ai.kilo.desktop" / "storage",
     ]
 
 
@@ -242,6 +250,8 @@ def _openclaw_session_candidates(home: Path) -> list[Path]:
         home / ".openclaw" / "agents",
         home / ".local" / "share" / "openclaw" / "agents",
         home / "Library" / "Application Support" / "openclaw" / "agents",
+        home / "AppData" / "Roaming" / "openclaw" / "agents",
+        home / "AppData" / "Local" / "openclaw" / "agents",
     ]
     for root in patterns:
         if not root.is_dir():
@@ -284,6 +294,7 @@ def _cline_family_task_roots(home: Path, extension_id: str) -> list[Path]:
         candidates.append(
             home / "Library" / "Application Support" / variant / "User" / "globalStorage" / extension_id / "tasks"
         )
+        candidates.append(home / "AppData" / "Roaming" / variant / "User" / "globalStorage" / extension_id / "tasks")
         candidates.append(home / ".config" / variant / "User" / "globalStorage" / extension_id / "tasks")
     candidates.append(home / ".vscode-server" / "data" / "User" / "globalStorage" / extension_id / "tasks")
     return [p for p in candidates if p.is_dir()]
@@ -303,6 +314,7 @@ def _zed_conversation_roots(home: Path) -> list[Path]:
         home / ".config" / "zed" / "conversations",
         home / ".local" / "share" / "zed" / "conversations",
         home / "Library" / "Application Support" / "Zed" / "conversations",
+        home / "AppData" / "Roaming" / "Zed" / "conversations",
     ]
     return [p for p in candidates if p.is_dir()]
 
@@ -373,6 +385,7 @@ def _vscdb_workspace_roots(home: Path, app_name: str) -> list[Path]:
         return []
     candidates = [
         home / "Library" / "Application Support" / app_name / "User" / "workspaceStorage",
+        home / "AppData" / "Roaming" / app_name / "User" / "workspaceStorage",
         home / ".config" / app_name / "User" / "workspaceStorage",
         home / ".config" / app_name.lower() / "User" / "workspaceStorage",
     ]

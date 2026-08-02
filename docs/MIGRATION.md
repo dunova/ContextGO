@@ -119,3 +119,13 @@ SQLite databases (`session_index.db`, `memory_index.db`, `vector_index.db`) are 
 If the adapter cache schema changes during an upgrade, ContextGO detects the version mismatch and refreshes the cache automatically on next startup.
 
 `session_index.db`、`memory_index.db`、`vector_index.db` 在 0.10–0.11 范围内向前兼容，无需手动迁移。Adapter 缓存 schema 变更时系统自动检测并刷新，无需手动干预。
+
+---
+
+## 0.12.x -> 0.13.0
+
+The runtime now supports Windows, macOS, and Linux without requiring Bash, `python3`, `pgrep`, `launchctl`, or systemd for core CLI operation. Child Python processes use the active interpreter. Existing `~/.contextgo` storage remains compatible; no manual database migration is required.
+
+Windows adapter discovery now includes AppData layouts. Service installation uses Task Scheduler on Windows, launchd on macOS, and systemd-user on Linux.
+
+Encrypted GitHub sync is opt-in. Install `contextgo[sync]`, run `contextgo sync init --repo OWNER/REPO`, and use the same passphrase on each machine. Only encrypted device shards are uploaded. The passphrase and key are never uploaded; `contextgo sync disable` disables automatic sync while preserving local data.

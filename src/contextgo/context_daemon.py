@@ -52,11 +52,13 @@ except ImportError:
 
 try:
     from context_config import env_bool, env_float, env_int, env_str, storage_root
+    from context_runtime import user_home
     from memory_index import strip_private_blocks, sync_index_from_storage
     from secret_redaction import _SECRET_REPLACEMENTS  # noqa: F401
     from secret_redaction import sanitize_text as _sanitize_text_impl
 except ImportError:  # pragma: no cover - alternate import path
     from .context_config import env_bool, env_float, env_int, env_str, storage_root  # type: ignore[import-not-found]
+    from .context_runtime import user_home
     from .memory_index import strip_private_blocks, sync_index_from_storage  # type: ignore[import-not-found]
     from .secret_redaction import _SECRET_REPLACEMENTS  # noqa: F401
     from .secret_redaction import sanitize_text as _sanitize_text_impl
@@ -216,7 +218,8 @@ CYCLE_BUDGET_SEC: int = _cfg_int("CYCLE_BUDGET_SEC", default=8, minimum=1)
 ERROR_BACKOFF_MAX_SEC: int = _cfg_int("ERROR_BACKOFF_MAX_SEC", default=30, minimum=2)
 LOOP_JITTER_SEC: float = _cfg_float("LOOP_JITTER_SEC", default=0.7, minimum=0.0)
 INDEX_SYNC_MIN_INTERVAL_SEC: int = _cfg_int("INDEX_SYNC_MIN_INTERVAL_SEC", default=20, minimum=5)
-# Adaptive-polling: sources are "active" if they had changes within this window.
+GITHUB_SYNC_INTERVAL_SEC: int = _cfg_int("GITHUB_SYNC_INTERVAL_SEC", default=900, minimum=60)
+# Adaptive-polling
 ACTIVE_SOURCE_WINDOW_SEC: int = _cfg_int("ACTIVE_SOURCE_WINDOW_SEC", default=300, minimum=30)
 
 # Capacity limits / HTTP timeouts
@@ -249,7 +252,8 @@ ENABLE_FILE_WATCHER: bool = _cfg_bool("ENABLE_FILE_WATCHER", default=_DEFAULT_FI
 
 # Antigravity (Gemini) configuration
 # ANTIGRAVITY_INGEST_MODE: "final_only" (wait for quiet) or "live" (export on every change).
-ANTIGRAVITY_BRAIN: Path = Path.home() / ".gemini" / "antigravity" / "brain"
+_HOME: Path = user_home()
+ANTIGRAVITY_BRAIN: Path = _HOME / ".gemini" / "antigravity" / "brain"
 _raw_ingest_mode = _cfg_str("ANTIGRAVITY_INGEST_MODE", default="final_only").strip().lower()
 ANTIGRAVITY_INGEST_MODE: str = _raw_ingest_mode if _raw_ingest_mode in {"final_only", "live"} else "final_only"
 ANTIGRAVITY_QUIET_SEC: int = max(30, _cfg_int("ANTIGRAVITY_QUIET_SEC", default=180))
@@ -262,10 +266,10 @@ ANTIGRAVITY_SCAN_INTERVAL_SEC: int = max(15, _cfg_int("ANTIGRAVITY_SCAN_INTERVAL
 MAX_ANTIGRAVITY_DIRS_PER_SCAN: int = max(50, _cfg_int("MAX_ANTIGRAVITY_DIRS_PER_SCAN", default=400))
 
 # Codex session / Claude transcript configuration
-CODEX_SESSIONS: Path = Path.home() / ".codex" / "sessions"
+CODEX_SESSIONS: Path = _HOME / ".codex" / "sessions"
 CODEX_SESSION_SCAN_INTERVAL_SEC: int = max(10, _cfg_int("CODEX_SESSION_SCAN_INTERVAL_SEC", default=90))
 MAX_CODEX_SESSION_FILES_PER_SCAN: int = max(100, _cfg_int("MAX_CODEX_SESSION_FILES_PER_SCAN", default=1200))
-CLAUDE_TRANSCRIPTS_DIR: Path = Path.home() / ".claude" / "transcripts"
+CLAUDE_TRANSCRIPTS_DIR: Path = _HOME / ".claude" / "transcripts"
 # Skip transcript files older than this many days on first startup (avoid history replay).
 CLAUDE_TRANSCRIPTS_LOOKBACK_DAYS: int = _cfg_int("TRANSCRIPTS_LOOKBACK_DAYS", default=7)
 CLAUDE_TRANSCRIPT_SCAN_INTERVAL_SEC: int = max(30, _cfg_int("CLAUDE_TRANSCRIPT_SCAN_INTERVAL_SEC", default=180))
@@ -281,7 +285,7 @@ _CODEX_SESSION_ACTIVE_WINDOW_SEC: int = _SECONDS_PER_HOUR
 # JSONL and shell source definitions
 # Each entry maps a logical source name to one or more candidate Path objects.
 # The first existing path wins; sources are re-evaluated every 120 seconds.
-_HOME = Path.home()
+_HOME = user_home()
 _IPT_KEYS = ["input", "prompt", "text"]  # common sid/text keys for generic tools
 _SID_IPT = ["session_id", "sessionId", "id"]
 
@@ -885,6 +889,8 @@ class SessionTracker:
         self._last_antigravity_scan: float = 0.0
         self._last_antigravity_busy_log: float = 0.0
         self._last_index_sync: float = 0.0
+        self._last_github_sync: float = 0.0
+        self._github_sync_failures: int = 0
         self._last_activity_ts: float | None = None
 
         self._export_count: int = 0
@@ -1584,6 +1590,33 @@ class SessionTracker:
             self._error_count += 1
             _logger.warning("sync_index_from_storage failed: %s", exc)
 
+    def maybe_github_sync(self, force: bool = False) -> None:
+        """Run configured encrypted GitHub sync without blocking local operation."""
+        try:
+            try:
+                import context_sync
+            except ImportError:  # pragma: no cover
+                from . import context_sync
+        except ImportError:
+            return
+        if not context_sync.auto_sync_enabled():
+            return
+        now = time.time()
+        backoff = min(GITHUB_SYNC_INTERVAL_SEC * (2 ** min(self._github_sync_failures, 4)), 6 * 3600)
+        if not force and now - self._last_github_sync < backoff:
+            return
+        self._last_github_sync = now
+        try:
+            result = context_sync.run_sync()
+            self._github_sync_failures = 0
+            _logger.info("Encrypted GitHub sync completed: %s", result.get("completed_at", "ok"))
+        except context_sync.SyncError as exc:
+            self._github_sync_failures += 1
+            _logger.warning("Encrypted GitHub sync deferred (local runtime unaffected): %s", exc)
+        except OSError as exc:
+            self._github_sync_failures += 1
+            _logger.warning("Encrypted GitHub sync I/O failure (local runtime unaffected): %s", exc)
+
     # Export — local write and optional remote push
 
     def _export(self, sid: str, data: dict[str, Any], title_prefix: str = "") -> bool:
@@ -2037,6 +2070,7 @@ def main() -> None:
 
             tracker.check_and_export_idle()
             tracker.maybe_sync_index()
+            tracker.maybe_github_sync()
             tracker.maybe_retry_pending()
             tracker.heartbeat()
 
@@ -2045,6 +2079,7 @@ def main() -> None:
             if cycle % 60 == 0:
                 tracker.cleanup_cursors()
                 tracker.maybe_sync_index(force=True)
+                tracker.maybe_github_sync()
                 tracker.maybe_retry_pending()
 
         except Exception as exc:
@@ -2086,6 +2121,9 @@ def main() -> None:
 
     # Graceful shutdown
     tracker.maybe_sync_index(force=True)
+    # Do not force network activity during shutdown; failed networks should
+    # never delay local daemon termination.
+    tracker.maybe_github_sync()
     if tracker._http_client is not None:
         with contextlib.suppress(Exception):
             tracker._http_client.close()

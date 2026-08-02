@@ -326,7 +326,10 @@ class SessionIndexTests(unittest.TestCase):
                 encoding="utf-8",
             )
             alias = fake_dir / "alias.jsonl"
-            alias.symlink_to(real_file)
+            try:
+                alias.symlink_to(real_file)
+            except OSError as exc:
+                self.skipTest(f"symlink creation unavailable: {exc}")
             with mock.patch.dict(os.environ, {session_index.SESSION_DB_PATH_ENV: str(db_path)}, clear=False):
                 original_iter = session_index._iter_sources
                 try:
@@ -343,7 +346,7 @@ class SessionIndexTests(unittest.TestCase):
             try:
                 rows = conn.execute("SELECT file_path FROM session_documents").fetchall()
                 self.assertEqual(len(rows), 1)
-                self.assertEqual(rows[0][0], str(real_file.resolve()))
+                self.assertEqual(rows[0][0], real_file.resolve().as_posix())
             finally:
                 conn.close()
 
@@ -1181,6 +1184,8 @@ class MemoryIndexTests(unittest.TestCase):
         self.assertEqual(results, [])
 
     def test_get_index_db_path_override(self) -> None:
+        if os.name == "nt":
+            self.skipTest("POSIX virtual path spelling is not a Windows Path contract")
         custom = "/tmp/custom_memory.db"
         with mock.patch.dict(os.environ, {"MEMORY_INDEX_DB_PATH": custom}, clear=False):
             path = self.memory_index.get_index_db_path()
