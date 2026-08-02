@@ -49,7 +49,7 @@ def platform_data_dir(home: Path | None = None) -> Path:
     elif sys.platform == "darwin":
         base = root / "Library" / "Application Support"
     else:
-        base = _first_env_path("XDG_DATA_HOME") or root / ".local" / "share"
+        base = (_first_env_path("XDG_DATA_HOME") if home is None else None) or root / ".local" / "share"
     return base / "contextgo"
 
 
@@ -61,7 +61,7 @@ def platform_config_dir(home: Path | None = None) -> Path:
     elif sys.platform == "darwin":
         base = root / "Library" / "Application Support"
     else:
-        base = _first_env_path("XDG_CONFIG_HOME") or root / ".config"
+        base = (_first_env_path("XDG_CONFIG_HOME") if home is None else None) or root / ".config"
     return base / "contextgo"
 
 
@@ -73,7 +73,7 @@ def platform_cache_dir(home: Path | None = None) -> Path:
     elif sys.platform == "darwin":
         base = root / "Library" / "Caches"
     else:
-        base = _first_env_path("XDG_CACHE_HOME") or root / ".cache"
+        base = (_first_env_path("XDG_CACHE_HOME") if home is None else None) or root / ".cache"
     return base / "contextgo"
 
 
@@ -178,7 +178,8 @@ def tool_data_roots(home: Path | None = None) -> list[Path]:
     elif sys.platform == "darwin":
         roots.append(root / "Library" / "Application Support")
     else:
-        roots.extend([_first_env_path("XDG_DATA_HOME") or root / ".local" / "share", root / ".config"])
+        data_home = _first_env_path("XDG_DATA_HOME") if home is None else None
+        roots.extend([data_home or root / ".local" / "share", root / ".config"])
     return _unique_paths(roots)
 
 
