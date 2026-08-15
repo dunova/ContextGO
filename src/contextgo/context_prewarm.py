@@ -1249,11 +1249,16 @@ def setup_reasonix() -> bool:
         Path.home() / ".reasonix" / "AGENTS.md",
         Path.home() / ".reasonix" / "SOUL.md",
         Path.home() / ".reasonix" / "rules.md",
+        Path.home() / ".reasonix" / "global-workspace" / "AGENTS.md",
+        Path.home() / "Desktop" / ".reasonix" / "AGENTS.md",
+        Path.home() / "Desktop" / "AGENTS.md",
     ]
     touched = False
     for target in targets:
-        if _inject_scf_policy(target):
-            touched = True
+        # If target or its parent directory exists, inject policy
+        if target.parent.is_dir() or target.is_file():
+            if _inject_scf_policy(target):
+                touched = True
     return touched
 
 
@@ -1263,10 +1268,13 @@ def teardown_reasonix() -> bool:
         Path.home() / ".reasonix" / "AGENTS.md",
         Path.home() / ".reasonix" / "SOUL.md",
         Path.home() / ".reasonix" / "rules.md",
+        Path.home() / ".reasonix" / "global-workspace" / "AGENTS.md",
+        Path.home() / "Desktop" / ".reasonix" / "AGENTS.md",
+        Path.home() / "Desktop" / "AGENTS.md",
     ]
     ok = True
     for target in targets:
-        if not _remove_scf_policy(target):
+        if target.is_file() and not _remove_scf_policy(target):
             ok = False
     return ok
 
@@ -1277,11 +1285,15 @@ def setup_deepseek() -> bool:
         Path.home() / ".dsh" / "AGENTS.md",
         Path.home() / ".dsh" / "SOUL.md",
         Path.home() / ".deepseek" / "AGENTS.md",
+        Path.home() / "Desktop" / ".dsh" / "AGENTS.md",
+        Path.home() / "Desktop" / ".dsh" / "SOUL.md",
+        Path.home() / "Desktop" / "AGENTS.md",
     ]
     touched = False
     for target in targets:
-        if _inject_scf_policy(target):
-            touched = True
+        if target.parent.is_dir() or target.is_file():
+            if _inject_scf_policy(target):
+                touched = True
     return touched
 
 
@@ -1291,10 +1303,13 @@ def teardown_deepseek() -> bool:
         Path.home() / ".dsh" / "AGENTS.md",
         Path.home() / ".dsh" / "SOUL.md",
         Path.home() / ".deepseek" / "AGENTS.md",
+        Path.home() / "Desktop" / ".dsh" / "AGENTS.md",
+        Path.home() / "Desktop" / ".dsh" / "SOUL.md",
+        Path.home() / "Desktop" / "AGENTS.md",
     ]
     ok = True
     for target in targets:
-        if not _remove_scf_policy(target):
+        if target.is_file() and not _remove_scf_policy(target):
             ok = False
     return ok
 
