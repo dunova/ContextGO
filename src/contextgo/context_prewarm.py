@@ -1243,6 +1243,62 @@ def teardown_factory() -> bool:
     return ok
 
 
+def setup_reasonix() -> bool:
+    """Inject smart-recall policy into Reasonix prompt/agent files."""
+    targets = [
+        Path.home() / ".reasonix" / "AGENTS.md",
+        Path.home() / ".reasonix" / "SOUL.md",
+        Path.home() / ".reasonix" / "rules.md",
+    ]
+    touched = False
+    for target in targets:
+        if _inject_scf_policy(target):
+            touched = True
+    return touched
+
+
+def teardown_reasonix() -> bool:
+    """Remove smart-recall policy from Reasonix files."""
+    targets = [
+        Path.home() / ".reasonix" / "AGENTS.md",
+        Path.home() / ".reasonix" / "SOUL.md",
+        Path.home() / ".reasonix" / "rules.md",
+    ]
+    ok = True
+    for target in targets:
+        if not _remove_scf_policy(target):
+            ok = False
+    return ok
+
+
+def setup_deepseek() -> bool:
+    """Inject smart-recall policy into DeepSeek / dsh prompt files."""
+    targets = [
+        Path.home() / ".dsh" / "AGENTS.md",
+        Path.home() / ".dsh" / "SOUL.md",
+        Path.home() / ".deepseek" / "AGENTS.md",
+    ]
+    touched = False
+    for target in targets:
+        if _inject_scf_policy(target):
+            touched = True
+    return touched
+
+
+def teardown_deepseek() -> bool:
+    """Remove smart-recall policy from DeepSeek / dsh prompt files."""
+    targets = [
+        Path.home() / ".dsh" / "AGENTS.md",
+        Path.home() / ".dsh" / "SOUL.md",
+        Path.home() / ".deepseek" / "AGENTS.md",
+    ]
+    ok = True
+    for target in targets:
+        if not _remove_scf_policy(target):
+            ok = False
+    return ok
+
+
 def setup_copilot() -> bool:
     """Inject SCF policy into GitHub Copilot project-level instructions.
 
@@ -1364,6 +1420,12 @@ def setup_all() -> dict[str, bool]:
     # GitHub Copilot — SCF policy into project-level .github/copilot-instructions.md.
     results["GitHub Copilot"] = setup_copilot()
 
+    # Reasonix — global AGENTS.md and SOUL.md.
+    results["Reasonix"] = setup_reasonix()
+
+    # DeepSeek — global .dsh and deepseek AGENTS.md.
+    results["DeepSeek"] = setup_deepseek()
+
     # Cursor IDE — SCF policy into project-level .cursorrules.
     results["Cursor"] = setup_cursor()
 
@@ -1387,6 +1449,8 @@ def teardown_all() -> dict[str, bool]:
     results["Hermes"] = teardown_hermes()
     results["Factory Droid"] = teardown_factory()
     results["GitHub Copilot"] = teardown_copilot()
+    results["Reasonix"] = teardown_reasonix()
+    results["DeepSeek"] = teardown_deepseek()
 
     results["Cursor"] = teardown_cursor()
 

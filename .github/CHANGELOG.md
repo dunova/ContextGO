@@ -9,6 +9,15 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.14.0] — 2026-08-15
+
+### Multi-Agent Adapters / 多 Agent 支持
+- **DeepSeek Agent (dsh) Full Native Support**: Added native `.zstd` streaming event parser for compressed event logs and multidimensional projection fusion with `session_projcache.json`. / 新增 DeepSeek Agent 原生 zstd 会话流解压与投影融合解析。
+- **Reasonix Agent Support**: Added `reasonix_session` adapter with high-SNR context extraction, multi-workspace directory traversal, and noise filtration for tool outputs. / 新增 Reasonix Agent 会话适配器与高信噪比提纯。
+- **Hermes Agent Enhancement**: Reinforced Hermes multi-root discovery, session synchronization, and SOUL.md / AGENTS.md policy injection. / 强化 Hermes Agent 跨目录同步与策略注入。
+- **Smart Recall (SCF) Prewarm**: `contextgo setup` and `contextgo unsetup` now support Reasonix and DeepSeek. / 智能召回规则注入支持 Reasonix 与 DeepSeek。
+- **Hybrid Ranking Tune**: Balanced time-decay scoring and multi-token retrieval for cross-agent hybrid recall. / 调优多 Agent 混合召回与时效加权。
+
 ## [0.13.0] — 2026-08-02
 
 ### Full overhaul / 全版本大修

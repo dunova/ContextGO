@@ -23,9 +23,9 @@
 
 ---
 
-ContextGO 让 AI 编码 Agent 拥有跨工具、跨项目、跨会话的本地持久记忆。它会把 Codex、Claude Code、Gemini/Antigravity、OpenCode、OpenClaw、Accio、GitHub Copilot、Cursor/Windsurf 类存储、Kilo/Cline/Roo、Hermes、Shell 历史以及其他本地来源统一索引到 SQLite 运行时里。默认路径是本地优先：不需要 Docker，不需要 MCP Broker，不需要外部向量数据库，也不会自动上传到云端。
+ContextGO 让 AI 编码 Agent 拥有跨工具、跨项目、跨会话的本地持久记忆。它会把 Codex、Claude Code、Gemini/Antigravity、OpenCode、OpenClaw、Accio、GitHub Copilot、Reasonix、DeepSeek Agent (dsh)、Cursor/Windsurf 类存储、Kilo/Cline/Roo、Hermes、Shell 历史以及其他本地来源统一索引到 SQLite 运行时里。默认路径是本地优先：不需要 Docker，不需要 MCP Broker，不需要外部向量数据库，也不会自动上传到云端。
 
-`0.13.0` 是一次全版本大修：新增 Windows/macOS/Linux 统一运行时、隐私优先的 GitHub 加密同步、daemon 服务管理、Windows AppData 自动发现、跨平台子进程处理、导出前脱敏、三系统 CI 运行矩阵，以及发布级覆盖率门禁。
+`0.14.0` 深度增强了多 Agent 协同：新增 DeepSeek Agent 原生 `.zstd` 流式会话解压解析、Reasonix 多工作区适配器与高信噪比事件抽取、Hermes 跨目录同步，以及面向多 Agent 会话的混合检索排序调优。
 
 ## 快速上手
 

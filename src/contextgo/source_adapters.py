@@ -270,9 +270,48 @@ def _factory_session_roots(home: Path) -> list[Path]:
     return roots
 
 
+def _hermes_session_roots(home: Path) -> list[Path]:
+    candidates = [
+        home / ".hermes" / "sessions",
+        home / ".hermes" / "hermes-agent" / "sessions",
+        home / "Desktop" / ".hermes" / "sessions",
+    ]
+    return [p for p in candidates if p.is_dir()]
+
+
 def _hermes_session_root(home: Path) -> Path | None:
-    candidate = home / ".hermes" / "sessions"
-    return candidate if candidate.is_dir() else None
+    roots = _hermes_session_roots(home)
+    return roots[0] if roots else None
+
+
+def _reasonix_session_roots(home: Path) -> list[Path]:
+    roots: list[Path] = []
+    projects_dir = home / ".reasonix" / "projects"
+    if projects_dir.is_dir():
+        for p in projects_dir.iterdir():
+            s = p / "sessions"
+            if s.is_dir():
+                roots.append(s)
+    for extra in (
+        home / ".reasonix" / "sessions",
+        home / "Desktop" / ".reasonix" / "sessions",
+        home / "Desktop" / ".reasonix" / "tasks",
+        home / "Library" / "Application Support" / "reasonix" / "sessions",
+    ):
+        if extra.is_dir() and extra not in roots:
+            roots.append(extra)
+    return roots
+
+
+def _deepseek_session_roots(home: Path) -> list[Path]:
+    candidates = [
+        home / ".dsh",
+        home / "Desktop" / ".dsh",
+        home / ".deepseek",
+        home / ".deepseek-cli",
+        home / "Library" / "Application Support" / "deepseek",
+    ]
+    return [p for p in candidates if p.is_dir()]
 
 
 _ALLOWED_EXTENSION_IDS = frozenset(
@@ -1343,6 +1382,363 @@ def _sync_copilot_sessions(home: Path) -> dict[str, object]:
     }
 
 
+def _sync_reasonix_sessions(home: Path) -> dict[str, object]:
+    """Sync Reasonix agent session files and events."""
+    roots = _reasonix_session_roots(home)
+    adapter_dir = _adapter_root(home) / "reasonix_session"
+    adapter_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    keep: set[Path] = set()
+    sessions_written = 0
+    changed = False
+    detected = bool(roots)
+
+    if not detected:
+        removed = _prune_stale(adapter_dir, keep)
+        return {"detected": False, "sessions": 0, "removed": removed, "path": None}
+
+    for root in roots:
+        candidate_items = sorted(root.iterdir()) if root.is_dir() else []
+        for item in candidate_items:
+            sid = item.name
+            if sid.startswith("."):
+                continue
+            title = sid
+            cwd = ""
+            texts: list[str] = []
+            mtime = 1
+
+            files_to_read: list[Path] = []
+            if item.is_file() and (item.name.endswith(".jsonl") or item.name.endswith(".json")):
+                files_to_read.append(item)
+                sid = item.stem
+                title = sid
+            elif item.is_dir():
+                for sub in sorted(item.rglob("*.json*")):
+                    if sub.is_file() and not sub.name.startswith("."):
+                        files_to_read.append(sub)
+
+            if not files_to_read:
+                continue
+
+            for f in files_to_read:
+                try:
+                    mtime = max(mtime, int(f.stat().st_mtime))
+                    if f.name.endswith(".jsonl"):
+                        for line in f.read_text(encoding="utf-8", errors="ignore").splitlines():
+                            raw = line.strip()
+                            if not raw:
+                                continue
+                            with contextlib.suppress(json.JSONDecodeError):
+                                data = json.loads(raw)
+                                if isinstance(data, dict):
+                                    if "messages" in data and isinstance(data["messages"], list):
+                                        for msg in data["messages"]:
+                                            if isinstance(msg, dict):
+                                                role = msg.get("role", "")
+                                                cnt = msg.get("content") or msg.get("raw_content") or ""
+                                                reasoning = msg.get("reasoning_content") or ""
+                                                if cnt:
+                                                    texts.append(f"[{role}] {cnt}")
+                                                if reasoning:
+                                                    texts.append(f"[thinking] {reasoning}")
+                                                if "tool_calls" in msg and isinstance(msg["tool_calls"], list):
+                                                    for tc in msg["tool_calls"]:
+                                                        if isinstance(tc, dict):
+                                                            tname = tc.get("name") or "tool"
+                                                            targs = tc.get("arguments") or ""
+                                                            texts.append(f"[tool:{tname}] {targs}")
+                                    else:
+                                        texts.extend(_extract_text_fragments(data))
+                    elif f.name.endswith(".json"):
+                        with contextlib.suppress(json.JSONDecodeError):
+                            data = json.loads(f.read_text(encoding="utf-8", errors="ignore"))
+                            if isinstance(data, dict):
+                                if "title" in data and isinstance(data["title"], str):
+                                    title = data["title"]
+                                if "cwd" in data and isinstance(data["cwd"], str):
+                                    cwd = data["cwd"]
+                                texts.extend(_extract_text_fragments(data))
+                except OSError:
+                    continue
+
+            if not texts:
+                continue
+
+            if title != sid and title:
+                texts.insert(0, f"[title] {title}")
+            if cwd:
+                texts.insert(1, f"[directory] {cwd}")
+
+            out_path = adapter_dir / f"{_safe_name(sid)}__{_safe_name(title, 'reasonix')}.jsonl"
+            out_changed = _write_adapter_file(
+                out_path,
+                texts,
+                mtime,
+                meta={
+                    "session_id": sid,
+                    "title": str(title),
+                    "cwd": str(cwd),
+                    "source_type": "reasonix_session",
+                },
+            )
+            if out_path.exists():
+                keep.add(out_path)
+                sessions_written += 1
+            if out_changed:
+                changed = True
+
+    removed = _prune_stale(adapter_dir, keep)
+    if changed or removed:
+        _mark_dirty(home)
+    return {
+        "detected": detected,
+        "sessions": sessions_written,
+        "removed": removed,
+        "path": str(adapter_dir),
+    }
+
+
+def _decompress_zstd_lines(file_path: Path) -> list[str]:
+    """Decompress a .zstd file into lines using python-zstandard or system zstd binary."""
+    lines: list[str] = []
+    # 1. Try python zstandard if installed
+    try:
+        import zstandard  # noqa: PLC0415
+
+        dctx = zstandard.ZstdDecompressor()
+        with open(file_path, "rb") as f:
+            decompressed = dctx.decompress(f.read(), max_output_size=64 * 1024 * 1024)
+            return decompressed.decode("utf-8", errors="ignore").splitlines()
+    except Exception:
+        pass
+
+    # 2. Try CLI zstd
+    import subprocess  # noqa: PLC0415
+
+    try:
+        proc = subprocess.run(
+            ["zstd", "-dc", str(file_path)],
+            capture_output=True,
+            timeout=15,
+            check=False,
+        )
+        if proc.returncode == 0 and proc.stdout:
+            return proc.stdout.decode("utf-8", errors="ignore").splitlines()
+    except Exception:
+        pass
+
+    return lines
+
+
+def _sync_deepseek_sessions(home: Path) -> dict[str, object]:
+    """Sync DeepSeek agent / dsh session files, zstd streams, and projcache records."""
+    roots = _deepseek_session_roots(home)
+    adapter_dir = _adapter_root(home) / "deepseek_session"
+    adapter_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    keep: set[Path] = set()
+    sessions_written = 0
+    changed = False
+    detected = bool(roots)
+
+    if not detected:
+        removed = _prune_stale(adapter_dir, keep)
+        return {"detected": False, "sessions": 0, "removed": removed, "path": None}
+
+    seen_sids: set[str] = set()
+
+    for root in roots:
+        # 1. Inspect session_projcache.json
+        projcache = root / "storages" / "session_projcache.json"
+        if projcache.is_file():
+            try:
+                mtime = max(1, int(projcache.stat().st_mtime))
+                data = json.loads(projcache.read_text(encoding="utf-8", errors="ignore"))
+                sessions_table = data.get("tables", {}).get("sessions", {})
+                if isinstance(sessions_table, dict):
+                    for sid, sdata in sessions_table.items():
+                        if not isinstance(sdata, dict) or sid in seen_sids:
+                            continue
+                        seen_sids.add(sid)
+                        ident = sdata.get("identity") or {}
+                        cwd = ident.get("cwd", "")
+                        rows = sdata.get("rows") or {}
+                        title_val = rows.get("title", {}).get("val") if isinstance(rows.get("title"), dict) else None
+                        title = str(title_val or sid)
+                        prompt_val = rows.get("lastPrompt", {}).get("val") if isinstance(rows.get("lastPrompt"), dict) else None
+                        summary_val = rows.get("lastSummary", {}).get("val") if isinstance(rows.get("lastSummary"), dict) else None
+                        stats_val = rows.get("sessionStats", {}).get("val") if isinstance(rows.get("sessionStats"), dict) else None
+
+                        texts: list[str] = []
+                        if title:
+                            texts.append(f"[title] {title}")
+                        if cwd:
+                            texts.append(f"[directory] {cwd}")
+                        if prompt_val:
+                            texts.append(f"[prompt] {prompt_val}")
+                        if summary_val:
+                            texts.append(f"[summary] {summary_val}")
+                        if stats_val and isinstance(stats_val, dict):
+                            texts.append(f"[stats] turns={stats_val.get('turns', 0)} steps={stats_val.get('steps', 0)}")
+
+                        # Deep check: if there is session.jsonl or session.jsonl.zstd under sessions/
+                        session_dir_matches = list(root.glob(f"sessions/**/{sid}"))
+                        for sdir in session_dir_matches:
+                            # Try .jsonl
+                            for jfile in sdir.glob("*.jsonl"):
+                                try:
+                                    mtime = max(mtime, int(jfile.stat().st_mtime))
+                                    for line in jfile.read_text(encoding="utf-8", errors="ignore").splitlines():
+                                        raw = line.strip()
+                                        if raw:
+                                            with contextlib.suppress(json.JSONDecodeError):
+                                                texts.extend(_extract_text_fragments(json.loads(raw)))
+                                except OSError:
+                                    pass
+                            # Try .zstd
+                            for zfile in sdir.glob("*.jsonl.zstd"):
+                                try:
+                                    mtime = max(mtime, int(zfile.stat().st_mtime))
+                                    zlines = _decompress_zstd_lines(zfile)
+                                    for zline in zlines:
+                                        raw = zline.strip()
+                                        if not raw:
+                                            continue
+                                        with contextlib.suppress(json.JSONDecodeError):
+                                            ev = json.loads(raw)
+                                            ev_type = ev.get("type", "")
+                                            ev_data = ev.get("data", {})
+                                            if ev_type == "user/message":
+                                                umsg = ev_data.get("message") or ev_data.get("content") or ""
+                                                if umsg:
+                                                    texts.append(f"[user] {umsg}")
+                                            elif ev_type == "assistant/message":
+                                                amsg = ev_data.get("message") or ev_data.get("content") or ""
+                                                if amsg:
+                                                    texts.append(f"[assistant] {amsg}")
+                                            elif ev_type == "tool/call":
+                                                tname = ev_data.get("name") or "tool"
+                                                targs = ev_data.get("arguments") or ""
+                                                texts.append(f"[tool:{tname}] {targs}")
+                                            elif ev_type == "session" and "cwd" in ev:
+                                                texts.append(f"[directory] {ev.get('cwd')}")
+                                except Exception:
+                                    pass
+
+                        if not texts:
+                            continue
+
+                        out_path = adapter_dir / f"{_safe_name(sid)}__{_safe_name(title, 'deepseek')}.jsonl"
+                        out_changed = _write_adapter_file(
+                            out_path,
+                            texts,
+                            mtime,
+                            meta={
+                                "session_id": sid,
+                                "title": str(title),
+                                "cwd": str(cwd),
+                                "source_type": "deepseek_session",
+                            },
+                        )
+                        if out_path.exists():
+                            keep.add(out_path)
+                            sessions_written += 1
+                        if out_changed:
+                            changed = True
+            except (OSError, json.JSONDecodeError) as exc:
+                _logger.warning("_sync_deepseek_sessions projcache error: %s", exc)
+
+        # 2. Standalone scan of all session dirs under sessions/
+        sessions_dir = root / "sessions"
+        if sessions_dir.is_dir():
+            for sdir in sessions_dir.iterdir():
+                if not sdir.is_dir() or sdir.name.startswith("."):
+                    continue
+                # Traverse deeper subdirectories if any
+                for leaf in (sdir.iterdir() if any(p.is_dir() for p in sdir.iterdir()) else [sdir]):
+                    if not leaf.is_dir():
+                        continue
+                    sid = leaf.name
+                    if sid in seen_sids:
+                        continue
+                    seen_sids.add(sid)
+                    title = sid
+                    cwd = ""
+                    texts = []
+                    mtime = 1
+
+                    for zfile in leaf.glob("*.jsonl.zstd"):
+                        try:
+                            mtime = max(mtime, int(zfile.stat().st_mtime))
+                            zlines = _decompress_zstd_lines(zfile)
+                            for zline in zlines:
+                                raw = zline.strip()
+                                if not raw:
+                                    continue
+                                with contextlib.suppress(json.JSONDecodeError):
+                                    ev = json.loads(raw)
+                                    ev_type = ev.get("type", "")
+                                    ev_data = ev.get("data", {})
+                                    if ev_type == "user/message":
+                                        umsg = ev_data.get("message") or ev_data.get("content") or ""
+                                        if umsg:
+                                            texts.append(f"[user] {umsg}")
+                                    elif ev_type == "assistant/message":
+                                        amsg = ev_data.get("message") or ev_data.get("content") or ""
+                                        if amsg:
+                                            texts.append(f"[assistant] {amsg}")
+                                    elif ev_type == "tool/call":
+                                        tname = ev_data.get("name") or "tool"
+                                        targs = ev_data.get("arguments") or ""
+                                        texts.append(f"[tool:{tname}] {targs}")
+                                    elif ev_type == "session" and "cwd" in ev:
+                                        cwd = str(ev.get("cwd", ""))
+                                        texts.append(f"[directory] {cwd}")
+                        except Exception:
+                            pass
+
+                    for jfile in leaf.glob("*.jsonl"):
+                        try:
+                            mtime = max(mtime, int(jfile.stat().st_mtime))
+                            for line in jfile.read_text(encoding="utf-8", errors="ignore").splitlines():
+                                raw = line.strip()
+                                if raw:
+                                    with contextlib.suppress(json.JSONDecodeError):
+                                        texts.extend(_extract_text_fragments(json.loads(raw)))
+                        except OSError:
+                            pass
+
+                    if not texts:
+                        continue
+
+                    out_path = adapter_dir / f"{_safe_name(sid)}__{_safe_name(title, 'deepseek')}.jsonl"
+                    out_changed = _write_adapter_file(
+                        out_path,
+                        texts,
+                        mtime,
+                        meta={
+                            "session_id": sid,
+                            "title": str(title),
+                            "cwd": str(cwd),
+                            "source_type": "deepseek_session",
+                        },
+                    )
+                    if out_path.exists():
+                        keep.add(out_path)
+                        sessions_written += 1
+                    if out_changed:
+                        changed = True
+
+    removed = _prune_stale(adapter_dir, keep)
+    if changed or removed:
+        _mark_dirty(home)
+    return {
+        "detected": detected,
+        "sessions": sessions_written,
+        "removed": removed,
+        "path": str(adapter_dir),
+    }
+
+
 def sync_all_adapters(home: Path | None = None) -> dict[str, dict[str, object]]:
     current_home = home or _home()
     _adapters: dict[str, Any] = {
@@ -1360,6 +1756,8 @@ def sync_all_adapters(home: Path | None = None) -> dict[str, dict[str, object]]:
         "windsurf_session": _sync_windsurf_sessions,
         "accio_session": _sync_accio_sessions,
         "copilot_session": _sync_copilot_sessions,
+        "reasonix_session": _sync_reasonix_sessions,
+        "deepseek_session": _sync_deepseek_sessions,
     }
     result: dict[str, dict[str, object]] = {}
     for name, fn in _adapters.items():
@@ -1386,6 +1784,8 @@ _ALL_ADAPTER_TYPES = (
     "windsurf_session",
     "accio_session",
     "copilot_session",
+    "reasonix_session",
+    "deepseek_session",
 )
 
 
@@ -1616,6 +2016,27 @@ def source_inventory(home: Path | None = None) -> dict[str, object]:
             "session_files": len(by_type.get("accio_session", [])),
             "history_files": 0,
             "adapter": adapter_stats.get("accio_session", {}),
+        },
+        {
+            "platform": "copilot",
+            "detected": bool(by_type.get("copilot_session")),
+            "session_files": len(by_type.get("copilot_session", [])),
+            "history_files": 0,
+            "adapter": adapter_stats.get("copilot_session", {}),
+        },
+        {
+            "platform": "reasonix",
+            "detected": bool(by_type.get("reasonix_session")),
+            "session_files": len(by_type.get("reasonix_session", [])),
+            "history_files": 0,
+            "adapter": adapter_stats.get("reasonix_session", {}),
+        },
+        {
+            "platform": "deepseek",
+            "detected": bool(by_type.get("deepseek_session")),
+            "session_files": len(by_type.get("deepseek_session", [])),
+            "history_files": 0,
+            "adapter": adapter_stats.get("deepseek_session", {}),
         },
         {
             "platform": "shell",

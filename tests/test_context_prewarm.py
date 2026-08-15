@@ -694,6 +694,8 @@ class TestSetupAllKeys(unittest.TestCase):
             "Hermes",
             "Factory Droid",
             "GitHub Copilot",
+            "Reasonix",
+            "DeepSeek",
             "Cursor",
         }
         self.assertEqual(set(results.keys()), expected_keys)
@@ -713,9 +715,35 @@ class TestSetupAllKeys(unittest.TestCase):
             "Hermes",
             "Factory Droid",
             "GitHub Copilot",
+            "Reasonix",
+            "DeepSeek",
             "Cursor",
         }
         self.assertEqual(set(results.keys()), expected_keys)
+
+
+class TestSetupReasonixAndDeepseek(unittest.TestCase):
+    """Reasonix and DeepSeek setup/teardown tests."""
+
+    def test_setup_reasonix(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            rx = Path(tmp) / ".reasonix"
+            rx.mkdir(parents=True)
+            (rx / "AGENTS.md").write_text("# Reasonix\n")
+            with patch.object(Path, "home", return_value=Path(tmp)):
+                result = pw.setup_reasonix()
+            self.assertTrue(result)
+            self.assertIn("SCF:CONTEXT-FIRST:START", (rx / "AGENTS.md").read_text())
+
+    def test_setup_deepseek(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ds = Path(tmp) / ".dsh"
+            ds.mkdir(parents=True)
+            (ds / "AGENTS.md").write_text("# DeepSeek\n")
+            with patch.object(Path, "home", return_value=Path(tmp)):
+                result = pw.setup_deepseek()
+            self.assertTrue(result)
+            self.assertIn("SCF:CONTEXT-FIRST:START", (ds / "AGENTS.md").read_text())
 
 
 class TestSetupOpenclaw(unittest.TestCase):

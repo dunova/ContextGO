@@ -335,6 +335,9 @@ SOURCE_WEIGHT: dict[str, int] = {
     "cursor_session": 32,
     "windsurf_session": 32,
     "accio_session": 32,
+    "copilot_session": 34,
+    "reasonix_session": 36,
+    "deepseek_session": 36,
     "aider_session": 30,
     # Native backend fallback
     "native_session": 35,
@@ -935,6 +938,9 @@ def _parse_source(source_type: str, path: Path, file_stat: os.stat_result | None
         "cursor_session",
         "windsurf_session",
         "accio_session",
+        "copilot_session",
+        "reasonix_session",
+        "deepseek_session",
     }:
         if path.suffix != ".jsonl":
             _logger.warning(

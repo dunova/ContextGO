@@ -810,7 +810,7 @@ def cmd_health(args: argparse.Namespace) -> int:
     from concurrent.futures import TimeoutError as FuturesTimeoutError
     from datetime import datetime  # deferred: only needed for health timestamp
 
-    _HEALTH_TIMEOUT = 10.0  # seconds per health sub-check
+    _HEALTH_TIMEOUT = 30.0  # seconds per health sub-check
 
     pool = _get_thread_pool()  # type: ignore[attr-defined]
     if not hasattr(pool, "submit"):

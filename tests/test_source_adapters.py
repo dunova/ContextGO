@@ -142,12 +142,61 @@ class SourceAdaptersTests(unittest.TestCase):
         )
         return session_path
 
+    def _create_reasonix_session(self) -> Path:
+        sessions_dir = self.home / ".reasonix" / "projects" / "test-proj" / "sessions"
+        sessions_dir.mkdir(parents=True, exist_ok=True)
+        session_path = sessions_dir / "ses_reasonix_1.events.jsonl"
+        session_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "messages": [
+                        {"role": "user", "content": "Reasonix solve bug", "reasoning_content": "think"},
+                        {"role": "assistant", "content": "Reasonix fixed it"},
+                    ],
+                },
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        return session_path
+
+    def _create_deepseek_session(self) -> Path:
+        dsh_dir = self.home / ".dsh" / "storages"
+        dsh_dir.mkdir(parents=True, exist_ok=True)
+        projcache = dsh_dir / "session_projcache.json"
+        projcache.write_text(
+            json.dumps(
+                {
+                    "tables": {
+                        "sessions": {
+                            "session-deepseek-1": {
+                                "identity": {"createdAt": 1786627214456, "cwd": "/work/deepseek"},
+                                "rows": {
+                                    "title": {"val": "DeepSeek Test Session"},
+                                    "lastPrompt": {"val": "How to optimize router?"},
+                                    "lastSummary": {"val": "Analyzed performance bottleneck"},
+                                    "sessionStats": {"val": {"turns": 5, "steps": 10}},
+                                },
+                            }
+                        }
+                    }
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        return projcache
+
     def test_sync_all_adapters_writes_all_supported_outputs(self) -> None:
         self._create_opencode_db()
         self._create_kilo_storage()
         self._create_openclaw_session()
         self._create_factory_session()
         self._create_hermes_session()
+        self._create_reasonix_session()
+        self._create_deepseek_session()
 
         with mock.patch.object(source_adapters, "_home", return_value=self.home):
             result = source_adapters.sync_all_adapters()
@@ -157,6 +206,8 @@ class SourceAdaptersTests(unittest.TestCase):
         self.assertTrue(result["openclaw_session"]["detected"])
         self.assertTrue(result["factory_session"]["detected"])
         self.assertTrue(result["hermes_session"]["detected"])
+        self.assertTrue(result["reasonix_session"]["detected"])
+        self.assertTrue(result["deepseek_session"]["detected"])
 
         adapter_root = source_adapters._adapter_root(self.home)
         self.assertTrue(any((adapter_root / "opencode_session").glob("*.jsonl")))
@@ -164,6 +215,8 @@ class SourceAdaptersTests(unittest.TestCase):
         self.assertTrue(any((adapter_root / "openclaw_session").glob("*.jsonl")))
         self.assertTrue(any((adapter_root / "factory_session").glob("*.jsonl")))
         self.assertTrue(any((adapter_root / "hermes_session").glob("*.jsonl")))
+        self.assertTrue(any((adapter_root / "reasonix_session").glob("*.jsonl")))
+        self.assertTrue(any((adapter_root / "deepseek_session").glob("*.jsonl")))
 
     def test_discover_index_sources_includes_adapter_sessions_and_histories(self) -> None:
         self._create_opencode_db()
@@ -171,6 +224,8 @@ class SourceAdaptersTests(unittest.TestCase):
         self._create_openclaw_session()
         self._create_factory_session()
         self._create_hermes_session()
+        self._create_reasonix_session()
+        self._create_deepseek_session()
         codex_history = self.home / ".codex" / "history.jsonl"
         codex_history.parent.mkdir(parents=True, exist_ok=True)
         codex_history.write_text(json.dumps({"text": "codex history"}), encoding="utf-8")
@@ -185,6 +240,8 @@ class SourceAdaptersTests(unittest.TestCase):
         self.assertIn("openclaw_session", discovered_types)
         self.assertIn("factory_session", discovered_types)
         self.assertIn("hermes_session", discovered_types)
+        self.assertIn("reasonix_session", discovered_types)
+        self.assertIn("deepseek_session", discovered_types)
 
     def test_source_inventory_reports_detected_platforms(self) -> None:
         self._create_opencode_db()
@@ -192,6 +249,8 @@ class SourceAdaptersTests(unittest.TestCase):
         self._create_openclaw_session()
         self._create_factory_session()
         self._create_hermes_session()
+        self._create_reasonix_session()
+        self._create_deepseek_session()
 
         with mock.patch.object(source_adapters, "_home", return_value=self.home):
             inventory = source_adapters.source_inventory()
@@ -202,6 +261,8 @@ class SourceAdaptersTests(unittest.TestCase):
         self.assertTrue(platforms["openclaw"]["detected"])
         self.assertTrue(platforms["factory"]["detected"])
         self.assertTrue(platforms["hermes"]["detected"])
+        self.assertTrue(platforms["reasonix"]["detected"])
+        self.assertTrue(platforms["deepseek"]["detected"])
 
     def test_source_freshness_snapshot_includes_adapter_and_new_platforms(self) -> None:
         opencode_db = self._create_opencode_db()

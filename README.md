@@ -23,9 +23,9 @@
 
 ---
 
-ContextGO gives AI coding agents durable local memory across tools, projects, and sessions. It indexes local histories from Codex, Claude Code, Gemini/Antigravity, OpenCode, OpenClaw, Accio, GitHub Copilot, Cursor/Windsurf-style stores, Kilo/Cline/Roo, Hermes, shell history, and other supported local sources into a searchable SQLite runtime. The default path is local-first: no Docker, no MCP broker, no remote database, and no cloud upload.
+ContextGO gives AI coding agents durable local memory across tools, projects, and sessions. It indexes local histories from Codex, Claude Code, Gemini/Antigravity, OpenCode, OpenClaw, Accio, GitHub Copilot, Reasonix, DeepSeek Agent (dsh), Cursor/Windsurf-style stores, Kilo/Cline/Roo, Hermes, shell history, and other supported local sources into a searchable SQLite runtime. The default path is local-first: no Docker, no MCP broker, no remote database, and no cloud upload.
 
-Version `0.13.0` is a cross-platform overhaul. It adds a shared Windows/macOS/Linux runtime layer, privacy-first encrypted GitHub synchronization, daemon service management, Windows AppData discovery, portable subprocess handling, stronger export redaction, CI runtime matrices, and release-grade coverage gates.
+Version `0.14.0` introduces native `.zstd` streaming event decoding for DeepSeek Agent, full multi-workspace session adapters for Reasonix, enhanced Hermes synchronization, and hybrid ranking optimization across all AI coding agents.
 
 ## Quick Start
 
