@@ -1,0 +1,51 @@
+{
+  "name": "dsh-plugin-contextgo",
+  "version": "0.14.0",
+  "description": "DeepSeek Agent (dsh) plugin for ContextGO — Local-first context and cross-agent memory runtime",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek",
+    "deepseek-harness",
+    "cordis",
+    "cordis-plugin",
+    "contextgo",
+    "memory",
+    "context",
+    "mcp"
+  ],
+  "dsh": {
+    "profile": {
+      "bundles": []
+    },
+    "client": {
+      "platform": "web"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "tsc"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-tools": "^0.1.0-rc.6"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dunova/ContextGO.git",
+    "directory": "packages/dsh-plugin-contextgo"
+  },
+  "license": "AGPL-3.0-only",
+  "publishConfig": {
+    "access": "public"
+  }
+}

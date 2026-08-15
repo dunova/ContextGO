@@ -1339,6 +1339,14 @@ def cmd_unsetup(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_mcp(args: argparse.Namespace) -> int:
+    """Run ContextGO as a Model Context Protocol (MCP) stdio server."""
+    from contextgo import mcp_server  # noqa: PLC0415
+
+    return mcp_server.run_mcp_stdio_server()
+
+
+
 # ───────────────────────────────────────────────
 # Command dispatch table
 # ───────────────────────────────────────────────
@@ -1365,6 +1373,7 @@ COMMANDS: dict[str, object] = {
     "prewarm": cmd_prewarm,
     "setup": cmd_setup,
     "unsetup": cmd_unsetup,
+    "mcp": cmd_mcp,
 }
 
 
@@ -1812,6 +1821,18 @@ def _add_utility_subcommands(sub: object) -> None:
         formatter_class=_ap.RawDescriptionHelpFormatter,
     )
     p.add_argument("shell", choices=["bash", "zsh", "fish"], help="Target shell")
+
+    sub.add_parser(  # type: ignore[union-attr]
+        "mcp",
+        help="Start the Model Context Protocol (MCP) stdio server",
+        description=(
+            "Run ContextGO as a Model Context Protocol (MCP) stdio server.\n"
+            "Compatible with DeepSeek Agent (dsh), Claude Code, Cursor, Windsurf, OpenCode, and any MCP client.\n\n"
+            "Examples:\n"
+            "  contextgo mcp\n"
+        ),
+        formatter_class=_ap.RawDescriptionHelpFormatter,
+    )
 
 
 def build_parser() -> object:

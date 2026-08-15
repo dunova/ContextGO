@@ -67,7 +67,8 @@ No cloud lock-in, no remote database dependencies, and no silent telemetry uploa
 
 ## Key Features
 
-- 🧠 **Universal Multi-Agent Memory**: Natively discovers, parses, and harmonizes sessions from **DeepSeek Agent (dsh)** (with `.zstd` streaming decoding), **Reasonix**, **Hermes**, **Claude Code**, **Factory Droid**, **Antigravity (Gemini)**, **GitHub Copilot**, **Cursor**, **Windsurf**, **Kilo**, **Cline**, **Roo Code**, **OpenCode**, and shell histories.
+- 🧠 **Universal Multi-Agent Memory**: Natively discovers, parses, and harmonizes sessions from **DeepSeek Agent (dsh)** (with `.zstd` streaming event decoding), **Reasonix**, **Hermes**, **Claude Code**, **Factory Droid**, **Antigravity (Gemini)**, **GitHub Copilot**, **Cursor**, **Windsurf**, **Kilo**, **Cline**, **Roo Code**, **OpenCode**, and shell histories.
+- 🔌 **Native Model Context Protocol (MCP) Server**: Built-in zero-dependency MCP stdio server (`contextgo mcp`) supporting standard `tools/list` and `tools/call`, enabling out-of-the-box Function Calling in DeepSeek Agent, Claude Code, Cursor, Windsurf, and any MCP client.
 - ⚡ **Sub-Second Hybrid Recall**: Combines SQLite FTS5 full-text indexing, BM25 lexical ranking, and optional lightweight Model2Vec embeddings with Reciprocal Rank Fusion (RRF) and time-decay prioritization.
 - 🛡️ **Zero-Knowledge Encrypted Sync**: Synchronize context across Windows, macOS, and Linux using a private GitHub repository with client-side scrypt key derivation and AES-256-GCM encryption.
 - 🎯 **Smart Context-First (SCF) Policy**: Automatically configures prompt files across all AI tools (`contextgo setup`) to enforce proactive context retrieval before answering complex architectural or refactoring questions.

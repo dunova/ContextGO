@@ -68,6 +68,7 @@
 ## 核心特性
 
 - 🧠 **全能多 Agent 记忆中枢**：原生支持并统一聚合 **DeepSeek Agent (`dsh`)**（支持 `.zstd` 压缩会话流实时解压解码）、**Reasonix**、**Hermes**、**Claude Code**、**Factory Droid**、**Antigravity (Gemini)**、**GitHub Copilot**、**Cursor**、**Windsurf**、**Kilo**、**Cline**、**Roo Code**、**OpenCode** 以及终端 Shell 历史。
+- 🔌 **原生 Model Context Protocol (MCP) 服务**：内置零依赖标准 MCP Stdio Server（`contextgo mcp`），原生暴露 `tools/list` 与 `tools/call`，无缝支持 DeepSeek Agent、Claude Code、Cursor、Windsurf 及任意 MCP 客户端的原生 Function Calling 工具调用。
 - ⚡ **亚秒级混合召回（Hybrid Recall）**：深度结合 SQLite FTS5 全文检索、BM25 词法排序与可选轻量级 Model2Vec 向量语义检索，配合倒数排序融合（RRF）与时效衰减机制，精准定位历史技术结论与会话细节。
 - 🛡️ **零知识端到端加密同步**：借助用户私有 GitHub 仓库实现跨 Windows、macOS 与 Linux 的多机器同步；基于客户端 scrypt 口令派生与 AES-256-GCM 加密，云端绝不留存明文与密钥。
 - 🎯 **智能上下文预热（Smart Context-First / SCF）**：提供一键配置命令（`contextgo setup`），自动在各 AI 工具的指令文件中注入前置召回规则，驱动 Agent 在回答历史架构或重构问题前先主动读取真实上下文。
