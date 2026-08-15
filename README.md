@@ -1,12 +1,13 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/media/logo-dark.svg">
-    <img src="docs/media/logo.svg" alt="ContextGO" width="360">
+    <img src="docs/media/logo.svg" alt="ContextGO" width="380">
   </picture>
 </p>
 
 <p align="center">
-  <strong>Local-first context and memory runtime for AI coding agents.</strong>
+  <strong>Local-First Context & Memory Runtime for Multi-Agent AI Coding Teams</strong><br>
+  <em>Unified cross-agent memory, hybrid BM25/vector recall, and end-to-end encrypted multi-machine sync.</em>
 </p>
 
 <p align="center">
@@ -18,255 +19,255 @@
 </p>
 
 <p align="center">
-  <a href="#quick-start">Quick Start</a> | <a href="#what-it-indexes">Sources</a> | <a href="#privacy-first-github-sync">Encrypted Sync</a> | <a href="#operations">Operations</a> | <a href="README.zh.md">中文</a>
+  <a href="#key-features">Key Features</a> •
+  <a href="#quick-start">Quick Start</a> •
+  <a href="#supported-ai-agents--tools">Supported Agents</a> •
+  <a href="#core-cli-reference">CLI Reference</a> •
+  <a href="#encrypted-multi-machine-sync">Encrypted Sync</a> •
+  <a href="#ai-agent-smart-recall-scf">Smart Recall</a> •
+  <a href="README.zh.md">简体中文</a>
 </p>
 
 ---
 
-ContextGO gives AI coding agents durable local memory across tools, projects, and sessions. It indexes local histories from Codex, Claude Code, Gemini/Antigravity, OpenCode, OpenClaw, Accio, GitHub Copilot, Reasonix, DeepSeek Agent (dsh), Cursor/Windsurf-style stores, Kilo/Cline/Roo, Hermes, shell history, and other supported local sources into a searchable SQLite runtime. The default path is local-first: no Docker, no MCP broker, no remote database, and no cloud upload.
+## What is ContextGO?
 
-Version `0.14.0` introduces native `.zstd` streaming event decoding for DeepSeek Agent, full multi-workspace session adapters for Reasonix, enhanced Hermes synchronization, and hybrid ranking optimization across all AI coding agents.
+**ContextGO** is a high-performance, local-first context and memory runtime engineered for modern AI coding workflows. It breaks down memory silos across tools, editors, and machines by indexing conversations, technical decisions, and execution sessions from **15+ AI coding agents** into an ultra-fast, local SQLite runtime.
+
+No cloud lock-in, no remote database dependencies, and no silent telemetry uploads. Your project history and architecture memories remain private, durable, and instantly searchable on your machines.
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                            AI Coding Environments                            │
+│  DeepSeek (dsh) │ Reasonix │ Hermes │ Claude Code │ Antigravity │ Copilot ...│
+└───────┬─────────────┬───────────┬───────────┬─────────────┬───────────┬──────┘
+        │             │           │           │             │           │
+        ▼             ▼           ▼           ▼             ▼           ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                       ContextGO Source Adapters Layer                        │
+│  (Streaming zstd decompression, high-SNR event filtering, projection cache)  │
+└──────────────────────────────────────┬───────────────────────────────────────┘
+                                       │
+                                       ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                         ContextGO Local SQLite Engine                        │
+│   • FTS5 Full-Text Search        • BM25S Lexical Ranking                     │
+│   • Durable Memory Store         • Optional Model2Vec Embeddings + RRF       │
+│   • Time-Decay Scoring           • Low-Latency Local Web Viewer UI           │
+└──────────────────────────────────────┬───────────────────────────────────────┘
+                                       │
+                                       ▼ (Optional Opt-In)
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                Privacy-First Encrypted GitHub Sync (AES-256-GCM)              │
+│       Windows 11 (Task Scheduler) ◄───► macOS (launchd) ◄───► Linux (systemd) │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Key Features
+
+- 🧠 **Universal Multi-Agent Memory**: Natively discovers, parses, and harmonizes sessions from **DeepSeek Agent (dsh)** (with `.zstd` streaming decoding), **Reasonix**, **Hermes**, **Claude Code**, **Factory Droid**, **Antigravity (Gemini)**, **GitHub Copilot**, **Cursor**, **Windsurf**, **Kilo**, **Cline**, **Roo Code**, **OpenCode**, and shell histories.
+- ⚡ **Sub-Second Hybrid Recall**: Combines SQLite FTS5 full-text indexing, BM25 lexical ranking, and optional lightweight Model2Vec embeddings with Reciprocal Rank Fusion (RRF) and time-decay prioritization.
+- 🛡️ **Zero-Knowledge Encrypted Sync**: Synchronize context across Windows, macOS, and Linux using a private GitHub repository with client-side scrypt key derivation and AES-256-GCM encryption.
+- 🎯 **Smart Context-First (SCF) Policy**: Automatically configures prompt files across all AI tools (`contextgo setup`) to enforce proactive context retrieval before answering complex architectural or refactoring questions.
+- 💻 **Cross-Platform Daemon & Native Services**: Native user daemon with automatic restart on Windows (Task Scheduler), macOS (launchd), and Linux (systemd user unit).
+- 🔍 **Interactive Memory Viewer**: Built-in, zero-dependency local web dashboard (`127.0.0.1:37677`) for browsing memories, session timelines, and technical decisions.
+
+---
 
 ## Quick Start
 
-Install with `pipx` so ContextGO is isolated from your system Python.
+### 1. Installation
+
+Install ContextGO globally using `pipx` to keep your environment isolated:
 
 ```bash
+# Standard installation with lexical hybrid recall
 pipx install "contextgo[vector]"
+
+# Include encrypted multi-machine sync dependencies
+pipx install "contextgo[sync,vector]"
+```
+
+### 2. Shell Integration
+
+Add instant aliases (`cg` for quick recall, `cgs` for full-text search, `cgse` for semantic recall):
+
+```bash
 eval "$(contextgo shell-init)"
+```
+
+Add the line above to your `~/.zshrc`, `~/.bashrc`, or config file.
+
+### 3. Verify Health & Detected Sources
+
+```bash
+# Check runtime health and active index statistics
 contextgo health
-contextgo sources
-contextgo search "database migration" --limit 5
-```
 
-For encrypted GitHub synchronization, install the sync extra as well:
-
-```bash
-pipx install "contextgo[sync,vector]"
-```
-
-For local development from source:
-
-```bash
-git clone https://github.com/dunova/ContextGO.git
-cd ContextGO
-uv sync --extra dev --extra sync --extra vector
-uv run python -m contextgo health
-uv run pytest
-```
-
-## Platform Support
-
-| Area | Windows | macOS | Linux |
-|---|---:|---:|---:|
-| CLI, health, search, export/import | Yes | Yes | Yes |
-| SQLite indexes and WAL runtime | Yes | Yes | Yes |
-| Encrypted GitHub sync | Yes | Yes | Yes |
-| Daemon status/start/stop | Yes | Yes | Yes |
-| User service definition | Task Scheduler | launchd | systemd user |
-| Native app data discovery | `%APPDATA%`, `%LOCALAPPDATA%` | `~/Library/...` | XDG and home paths |
-| Shell integration | Git Bash / POSIX shells | bash/zsh/fish | bash/zsh/fish |
-
-ContextGO keeps historical `~/.contextgo` storage readable for upgrades. Set `CONTEXTGO_PLATFORM_STORAGE=1` only when you explicitly want OS-native platform directories such as `%LOCALAPPDATA%/ContextGO`, `~/Library/Application Support/ContextGO`, or `~/.local/share/contextgo`.
-
-## What It Indexes
-
-ContextGO discovers supported local sources automatically. No API key is required for local indexing.
-
-| Source family | Examples |
-|---|---|
-| Coding agents | Codex, Claude Code, OpenCode, OpenClaw, Accio, GitHub Copilot, Gemini/Antigravity |
-| Editors and IDEs | Cursor, Windsurf-style stores, Continue-style stores, Kilo, Cline, Roo, Zed |
-| Local agent runtimes | Hermes, Factory/Droid, other JSONL session stores |
-| Shell history | bash and zsh histories |
-| Saved memories | `contextgo save`, portable exports, imported observation payloads |
-
-Run this to see what is detected on your machine:
-
-```bash
+# View all detected AI coding tools on your machine
 contextgo sources
 ```
 
-## Core Commands
-
-| Command | Purpose |
-|---|---|
-| `contextgo q "query"` | Quick recall. Routes to session ID lookup or search. |
-| `contextgo search "query" --limit 10` | Full-text search over indexed sessions. |
-| `contextgo semantic "query" --limit 5` | Memory-first search with session fallback. |
-| `contextgo save --title "Decision" --content "..."` | Save durable local memory. |
-| `contextgo export "" snapshot.json --limit 1000` | Export sanitized observations. |
-| `contextgo import snapshot.json` | Import a portable observation snapshot. |
-| `contextgo vector-sync` | Build or refresh optional vector embeddings. |
-| `contextgo vector-status` | Show vector index state. |
-| `contextgo health` | Verify runtime health as JSON. |
-| `contextgo smoke --sandbox` | Run the local smoke gate without touching real storage. |
-| `contextgo maintain --enqueue-missing` | Queue missing local sessions for indexing. |
-| `contextgo serve` | Start the local viewer API on `127.0.0.1`. |
-
-## Privacy-First GitHub Sync
-
-Synchronization is disabled until you explicitly initialize it. ContextGO never silently uploads local history during installation or normal search.
+### 4. Search & Recall Context
 
 ```bash
-contextgo sync init --repo OWNER/REPO --device-id work-laptop
-contextgo sync status
-contextgo sync run
+# Instant hybrid recall (auto-routes to keyword search or session ID)
+contextgo q "how did we resolve the router DNS latency?"
+
+# Full-text exact search across all tool histories
+contextgo search "AdGuard Home" --limit 5
+
+# Memory-first semantic recall
+contextgo semantic "architecture decisions for sync engine" --limit 3
 ```
 
-On another machine:
+---
 
-```bash
-pipx install "contextgo[sync,vector]"
-contextgo sync init --repo OWNER/REPO --device-id home-desktop
-contextgo sync pull
-contextgo sync status --remote
-```
+## Supported AI Agents & Tools
 
-The sync protocol is intentionally conservative.
+ContextGO automatically indexes and standardizes sessions across your environment without manual configuration:
 
-| Rule | Behavior |
-|---|---|
-| Explicit opt-in | No remote read or write occurs before `sync init`. |
-| End-to-end encryption | Payloads are compressed and encrypted with AES-256-GCM. |
-| Password-derived key | The passphrase stays local and derives the key with scrypt. |
-| Public manifest only | The remote manifest stores format metadata and KDF salt, not secrets. |
-| Per-device shards | Each device writes its own encrypted shard to reduce write conflicts. |
-| Redaction before upload | Tokens and absolute local paths are removed before encryption. |
-| Fail-closed conflicts | A remote manifest salt mismatch stops the push instead of overwriting data. |
-| Local-first daemon | Network failures back off and do not block local indexing or search. |
-
-Disable automatic sync without deleting local data:
-
-```bash
-contextgo sync disable
-```
-
-## Daemon and Services
-
-Use the daemon for background indexing and optional periodic encrypted sync.
-
-```bash
-contextgo daemon status
-contextgo daemon start
-contextgo daemon stop
-```
-
-Install or remove the per-user service definition:
-
-```bash
-contextgo daemon install
-contextgo daemon uninstall
-```
-
-Service installation maps to Task Scheduler on Windows, launchd on macOS, and systemd user services on Linux. The command writes the service definition only for the current user and preserves all ContextGO data on uninstall.
-
-## Hybrid Search
-
-ContextGO works without vector dependencies. Installing the `vector` extra enables hybrid semantic search with model2vec embeddings, BM25 scoring, and Reciprocal Rank Fusion.
-
-```bash
-pipx inject contextgo "contextgo[vector]"
-export CONTEXTGO_EXPERIMENTAL_SEARCH_BACKEND=vector
-contextgo vector-sync
-contextgo q "why did the auth migration change?"
-```
-
-When vector dependencies are missing, ContextGO falls back to SQLite FTS and literal matching. Tests also force fake vector models where needed, so CI does not download remote embedding models unexpectedly.
-
-## Configuration
-
-Most users do not need configuration. Environment variables are available for deployment and testing.
-
-| Variable | Default | Purpose |
+| Category | Supported Tools & Platforms | Discovery Mechanism |
 |---|---|---|
-| `CONTEXTGO_STORAGE_ROOT` | `~/.contextgo` | Legacy-compatible root for indexes and logs. |
-| `CONTEXTGO_PLATFORM_STORAGE` | unset | Set to `1` to use native OS data/config/cache directories. |
-| `CONTEXTGO_HOME` | user home | Test and sandbox override for home directory resolution. |
-| `CONTEXTGO_SESSION_INDEX_DB_PATH` | `$ROOT/index/session_index.db` | Session index database. |
-| `MEMORY_INDEX_DB_PATH` | `$ROOT/index/memory_index.db` | Memory index database. |
-| `CONTEXTGO_EXPERIMENTAL_SEARCH_BACKEND` | unset | Set to `vector` for hybrid search. |
-| `CONTEXTGO_VIEWER_HOST` | `127.0.0.1` | Viewer bind host. |
-| `CONTEXTGO_VIEWER_PORT` | `37677` | Viewer port. |
-| `CONTEXTGO_GITHUB_TOKEN` / `GITHUB_TOKEN` | unset | Optional token override for sync; `gh auth token` is also supported. |
+| **Autonomous Agents** | **DeepSeek Agent (`dsh`)** | `.dsh/storages/session_projcache.json`, `sessions/**/*.zstd` |
+| | **Reasonix Agent** | `.reasonix/projects/*/sessions`, `events.jsonl`, `turns` |
+| | **Hermes Agent** | `~/.hermes/sessions/*.jsonl`, sidecar metadata |
+| | **Claude Code** | `~/.claude/projects/`, `~/.claude/transcripts/` |
+| | **Factory Droid** | `~/.factory/sessions/*.jsonl` |
+| | **OpenClaw & Accio** | `~/.openclaw/agents/`, `~/.accio/agents/` |
+| **IDEs & Coding Assistants** | **Antigravity (Gemini)** | `~/.gemini/antigravity/brain/*/walkthrough.md`, `logs` |
+| | **GitHub Copilot** | `~/.copilot/session-state/*/events.jsonl` |
+| | **Cursor & Windsurf** | Global storage workspaces & vscdb SQLite stores |
+| | **Kilo, Cline & Roo Code**| VS Code globalStorage task state & transcripts |
+| | **OpenCode & Zed** | `opencode.db`, `.config/zed/conversations/` |
+| **Shell & Manual** | **Terminal Shells** | `~/.zsh_history`, `~/.bash_history` |
+| | **Durable Memories** | `contextgo save`, exported JSON observation snapshots |
 
-Full reference: [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
+---
 
-## AI Agent Setup
+## Core CLI Reference
 
-ContextGO is designed to be called by agents before they answer questions about old work.
+```
+usage: contextgo [-h] [--version] <command> ...
+```
+
+| Command | Usage Example | Description |
+|---|---|---|
+| `q` | `contextgo q "query"` | **Fast hybrid recall**: Auto-routes query to BM25S/FTS or session ID lookup. |
+| `search` | `contextgo search "keyword" --limit 10` | **Full-text search**: Query indexed session logs and tool calls. |
+| `semantic` | `contextgo semantic "topic" --limit 5` | **Semantic search**: Memory-first retrieval with session fallback. |
+| `save` | `contextgo save --title "..." --content "..."` | **Save durable memory**: Persist key architectural conclusions to local storage. |
+| `sources` | `contextgo sources` | **Inspect adapters**: Print detected platforms, session counts, and paths. |
+| `health` | `contextgo health` | **Health check**: Output JSON status report of DBs and subsystems. |
+| `serve` | `contextgo serve --port 37677` | **Web UI**: Launch local zero-dependency memory viewer dashboard. |
+| `sync` | `contextgo sync {init,push,pull,status,run}` | **Encrypted sync**: Manage cross-machine GitHub repository synchronization. |
+| `setup` | `contextgo setup` | **One-command setup**: Inject Smart Recall (SCF) rules into all AI tools. |
+| `unsetup` | `contextgo unsetup` | **Teardown**: Safely remove all injected ContextGO prompt rules. |
+| `daemon` | `contextgo daemon {start,stop,status,install}` | **Daemon management**: Control background capture and OS service unit. |
+| `export` | `contextgo export "" backup.json` | **Sanitized export**: Export observations with automatic secret redaction. |
+| `import` | `contextgo import backup.json` | **Import**: Restore observation payloads into local memory store. |
+| `smoke` | `contextgo smoke --sandbox` | **Quality gate**: Run end-to-end verification in an isolated sandbox. |
+
+---
+
+## Encrypted Multi-Machine Sync
+
+ContextGO provides private, zero-knowledge multi-machine synchronization backed by any private GitHub repository:
+
+```bash
+# 1. Initialize sync on your primary machine (e.g. Windows 11)
+contextgo sync init --repo your-user/my-contextgo-sync --device-id desktop-win11
+
+# 2. Push encrypted shards
+contextgo sync push
+
+# 3. Pull and merge on your secondary machine (e.g. macOS)
+pipx install "contextgo[sync,vector]"
+contextgo sync init --repo your-user/my-contextgo-sync --device-id macbook-m4
+contextgo sync pull
+```
+
+### Security Architecture
+
+- **Client-Side AES-256-GCM**: Payloads are compressed and encrypted locally before leaving your machine.
+- **Passphrase-Derived Key**: Key derived with `scrypt` using per-repository salt. Your password never leaves your device.
+- **Independent Device Shards**: Each machine commits to its own encrypted partition (`shards/<device-id>.enc.json`) to eliminate merge conflicts.
+- **Pre-Upload Sanitization**: Absolute paths, API keys, tokens, and secret patterns are automatically redacted before encryption.
+
+---
+
+## AI Agent Smart Recall (SCF)
+
+Configure all your AI assistants to read project context automatically:
 
 ```bash
 contextgo setup
-contextgo health
-contextgo semantic "what did we decide about sync encryption?" --limit 3
 ```
 
-Recommended behavior for agents:
+This injects the **Smart Context-First (SCF)** policy into active agent instruction files (e.g., `~/.gemini/GEMINI.md`, `~/.reasonix/AGENTS.md`, `~/.dsh/AGENTS.md`, `~/.hermes/SOUL.md`, `~/.claude/CLAUDE.md`, `.github/copilot-instructions.md`, `.cursorrules`).
 
-| Situation | Action |
+### Proactive Recall Policy Table
+
+| Trigger | Agent Action |
 |---|---|
-| Continuing an old task | Run `contextgo semantic "topic" --limit 3`, then summarize briefly. |
-| Unsure about project history | Run `contextgo search "keyword" --limit 5`. |
-| Making an architecture decision | Search previous decisions before changing the design. |
-| Solving a durable root cause | Suggest saving a short memory with `contextgo save`. |
+| Continuation task (`接着做` / `continue`) | Run `contextgo semantic "<topic>" --limit 3` |
+| Uncertainty regarding past decisions | Run `contextgo search "<keyword>" --limit 5` |
+| Before major architectural refactoring | Query previous design decisions before altering code |
+| Root cause confirmed | Save durable memory via `contextgo save --title "..."` |
 
-The full agent onboarding file is [AGENTS.md](AGENTS.md).
+---
 
-## Development and Verification
+## Daemon & Background Services
 
-The release gate used for `0.13.0` on Windows passed with `1483 passed`, `8 skipped`, and `86.28%` coverage. The repository also includes CI jobs for Ubuntu, macOS, Windows, Python 3.10 through 3.13, Go, Rust, linting, formatting, Bandit, E2E, smoke, and wheel install validation.
-
-Useful local commands:
+Run ContextGO as a native, background-indexed service:
 
 ```bash
-uv sync --extra dev --extra sync --extra vector
-uv run ruff check src/contextgo scripts tests
-uv run ruff format --check src/contextgo scripts tests
-uv run mypy src/contextgo --ignore-missing-imports --no-error-summary
-uv run bandit -r src/contextgo -c pyproject.toml --quiet
-uv run pytest
-uv run python scripts/e2e_quality_gate.py
-uv run python -m contextgo smoke --sandbox
-uv run python -m build --wheel
+# Manage daemon state
+contextgo daemon start
+contextgo daemon status
+contextgo daemon stop
+
+# Install native OS service unit
+contextgo daemon install
 ```
 
-## Repository Map
-
-| Path | Role |
+| Operating System | Service Backend |
 |---|---|
-| `src/contextgo/context_cli.py` | CLI entry point and subcommands. |
-| `src/contextgo/context_runtime.py` | Cross-platform paths, atomic writes, PID files, and service definitions. |
-| `src/contextgo/context_sync.py` | Encrypted GitHub sync protocol and client. |
-| `src/contextgo/context_daemon.py` | Background capture, local-first sync scheduling, and daemon loop. |
-| `src/contextgo/source_adapters.py` | Tool-specific local storage discovery and extraction. |
-| `src/contextgo/session_index.py` | Session SQLite index, search, ranking, and FTS fallback. |
-| `src/contextgo/memory_index.py` | Durable memory index, export/import, redaction, and path sanitization. |
-| `src/contextgo/vector_index.py` | Optional vector index and hybrid search. |
-| `native/session_scan/` | Rust hot-path scanner. |
-| `native/session_scan_go/` | Go parallel scanner. |
-| `.github/workflows/verify.yml` | Full CI verification pipeline. |
+| **macOS** | Native user `launchd` service (`~/Library/LaunchAgents/`) |
+| **Linux** | Native `systemd` user service (`~/.config/systemd/user/`) |
+| **Windows** | Native Windows Task Scheduler user task |
 
-## Security Model
+---
 
-ContextGO is local-first by default. The highest-risk operations, including remote sync and viewer exposure beyond loopback, are explicit. Export and sync paths sanitize known secret patterns and absolute user paths before data leaves the local runtime. GitHub sync stores encrypted payloads only; GitHub tokens and sync passphrases are never written into exported snapshots or remote shards.
+## Development & Verification
 
-Report vulnerabilities through [.github/SECURITY.md](.github/SECURITY.md).
+ContextGO maintains rigorous release gates with **86%+ test coverage** and extensive platform matrices:
 
-## Documentation
+```bash
+# Clone repository
+git clone https://github.com/dunova/ContextGO.git
+cd ContextGO
 
-| Topic | Link |
-|---|---|
-| Configuration | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) |
-| Architecture | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
-| API | [docs/API.md](docs/API.md) |
-| Migration | [docs/MIGRATION.md](docs/MIGRATION.md) |
-| Troubleshooting | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) |
-| Shell completion | [docs/SHELL_COMPLETION.md](docs/SHELL_COMPLETION.md) |
-| Changelog | [.github/CHANGELOG.md](.github/CHANGELOG.md) |
+# Sync dependencies with uv
+uv sync --extra dev --extra sync --extra vector
+
+# Run code style & security gates
+uv run ruff check src/contextgo tests
+uv run ruff format --check src/contextgo tests
+uv run mypy src/contextgo --ignore-missing-imports
+uv run bandit -r src/contextgo -c pyproject.toml --quiet
+
+# Run test suite
+uv run pytest
+uv run python -m contextgo smoke --sandbox
+```
+
+---
 
 ## License
 
-ContextGO is licensed under [AGPL-3.0-only](LICENSE).
+ContextGO is licensed under the [AGPL-3.0-only](LICENSE) license.
 
-Copyright 2025-2026 [Dunova](https://github.com/dunova).
+Copyright © 2025-2026 [Dunova](https://github.com/dunova).

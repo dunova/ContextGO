@@ -1,12 +1,13 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/media/logo-dark.svg">
-    <img src="docs/media/logo.svg" alt="ContextGO" width="360">
+    <img src="docs/media/logo.svg" alt="ContextGO" width="380">
   </picture>
 </p>
 
 <p align="center">
-  <strong>面向 AI 编码 Agent 的本地优先上下文与记忆运行时。</strong>
+  <strong>面向多 Agent 协同的本地优先 AI 编码上下文与持久记忆运行时</strong><br>
+  <em>跨 Agent 会话融合、BM25/向量混合召回、端到端加密跨机器同步</em>
 </p>
 
 <p align="center">
@@ -18,255 +19,255 @@
 </p>
 
 <p align="center">
-  <a href="README.md">English</a> | <a href="#快速上手">快速上手</a> | <a href="#索引哪些来源">来源</a> | <a href="#隐私优先的-github-加密同步">加密同步</a> | <a href="#运维与验证">运维</a>
+  <a href="#核心特性">核心特性</a> •
+  <a href="#快速上手">快速上手</a> •
+  <a href="#支持的-ai-agent--ide-矩阵">支持的 Agent</a> •
+  <a href="#cli-核心命令参考">命令参考</a> •
+  <a href="#隐私优先的跨机器加密同步">加密同步</a> •
+  <a href="#ai-agent-智能上下文预热-scf">智能预热</a> •
+  <a href="README.md">English</a>
 </p>
 
 ---
 
-ContextGO 让 AI 编码 Agent 拥有跨工具、跨项目、跨会话的本地持久记忆。它会把 Codex、Claude Code、Gemini/Antigravity、OpenCode、OpenClaw、Accio、GitHub Copilot、Reasonix、DeepSeek Agent (dsh)、Cursor/Windsurf 类存储、Kilo/Cline/Roo、Hermes、Shell 历史以及其他本地来源统一索引到 SQLite 运行时里。默认路径是本地优先：不需要 Docker，不需要 MCP Broker，不需要外部向量数据库，也不会自动上传到云端。
+## 什么是 ContextGO？
 
-`0.14.0` 深度增强了多 Agent 协同：新增 DeepSeek Agent 原生 `.zstd` 流式会话解压解析、Reasonix 多工作区适配器与高信噪比事件抽取、Hermes 跨目录同步，以及面向多 Agent 会话的混合检索排序调优。
+**ContextGO** 是专为现代 AI 编码工作流设计的高性能、本地优先（Local-First）上下文与长效记忆运行时。它打破了不同开发工具、编辑器与工作机器之间的记忆孤岛，自动发现并聚合来自 **15+ 种主流 AI Coding Agent** 的对话记录、架构决策与执行会话，统一建立毫秒级可检索的本地 SQLite 运行时。
+
+无需云端绑定，无需外部中心化数据库，绝不静默上传遥测数据。您在所有开发环境中的技术资产与历史沉淀完全私有、长效保留且随处可查。
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                            AI 编码环境与工具生态                             │
+│  DeepSeek (dsh) │ Reasonix │ Hermes │ Claude Code │ Antigravity │ Copilot ...│
+└───────┬─────────────┬───────────┬───────────┬─────────────┬───────────┬──────┘
+        │             │           │           │             │           │
+        ▼             ▼           ▼           ▼             ▼           ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                        ContextGO 多源适配器层 (Adapters)                     │
+│  (原生 zstd 流式解压、高信噪比事件清洗过滤、会话投影缓存融合)                  │
+└──────────────────────────────────────┬───────────────────────────────────────┘
+                                       │
+                                       ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                         ContextGO 本地 SQLite 高性能引擎                     │
+│   • FTS5 全文索引                 • BM25S 词法评分排序                       │
+│   • 结构化持久记忆库 (Memory Store) • 可选 Model2Vec 向量嵌入 + RRF 融合     │
+│   • 动态时效衰减加权 (Time-Decay) • 零依赖本地 Web 可视化仪表盘 (Viewer UI)  │
+└──────────────────────────────────────┬───────────────────────────────────────┘
+                                       │
+                                       ▼ (用户显式开启)
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                  隐私优先的 GitHub 端到端加密同步 (AES-256-GCM)              │
+│     Windows 11 (任务计划程序) ◄───► macOS (launchd) ◄───► Linux (systemd)    │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 核心特性
+
+- 🧠 **全能多 Agent 记忆中枢**：原生支持并统一聚合 **DeepSeek Agent (`dsh`)**（支持 `.zstd` 压缩会话流实时解压解码）、**Reasonix**、**Hermes**、**Claude Code**、**Factory Droid**、**Antigravity (Gemini)**、**GitHub Copilot**、**Cursor**、**Windsurf**、**Kilo**、**Cline**、**Roo Code**、**OpenCode** 以及终端 Shell 历史。
+- ⚡ **亚秒级混合召回（Hybrid Recall）**：深度结合 SQLite FTS5 全文检索、BM25 词法排序与可选轻量级 Model2Vec 向量语义检索，配合倒数排序融合（RRF）与时效衰减机制，精准定位历史技术结论与会话细节。
+- 🛡️ **零知识端到端加密同步**：借助用户私有 GitHub 仓库实现跨 Windows、macOS 与 Linux 的多机器同步；基于客户端 scrypt 口令派生与 AES-256-GCM 加密，云端绝不留存明文与密钥。
+- 🎯 **智能上下文预热（Smart Context-First / SCF）**：提供一键配置命令（`contextgo setup`），自动在各 AI 工具的指令文件中注入前置召回规则，驱动 Agent 在回答历史架构或重构问题前先主动读取真实上下文。
+- 💻 **跨平台守护进程与系统服务**：提供原生轻量级 Daemon 服务，无缝适配 Windows（Task Scheduler）、macOS（launchd）与 Linux（systemd user unit）自启。
+- 🔍 **可视化持久记忆浏览器**：内置零依赖本地 Web 面板（`127.0.0.1:37677`），一览全平台技术决策、会话时间线与记忆沉淀。
+
+---
 
 ## 快速上手
 
-建议使用 `pipx` 安装，让 ContextGO 与系统 Python 隔离。
+### 1. 安装
+
+推荐使用 `pipx` 安装，使 ContextGO 运行在隔离的 Python 环境中：
 
 ```bash
+# 标准安装（包含词法混合检索与核心引擎）
 pipx install "contextgo[vector]"
+
+# 包含跨机器加密同步功能
+pipx install "contextgo[sync,vector]"
+```
+
+### 2. 终端集成
+
+一键添加常用快捷别名（`cg` 快速召回、`cgs` 全文搜索、`cgse` 语义检索）：
+
+```bash
 eval "$(contextgo shell-init)"
+```
+
+可将上述命令添加到您的 `~/.zshrc`、`~/.bashrc` 或对应 Shell 配置文件中。
+
+### 3. 校验健康状态与检测来源
+
+```bash
+# 检查运行时健康状态与索引统计
 contextgo health
-contextgo sources
-contextgo search "database migration" --limit 5
-```
 
-如果要启用 GitHub 加密同步，安装 sync extra：
-
-```bash
-pipx install "contextgo[sync,vector]"
-```
-
-本地源码开发：
-
-```bash
-git clone https://github.com/dunova/ContextGO.git
-cd ContextGO
-uv sync --extra dev --extra sync --extra vector
-uv run python -m contextgo health
-uv run pytest
-```
-
-## 平台支持
-
-| 能力 | Windows | macOS | Linux |
-|---|---:|---:|---:|
-| CLI、health、search、export/import | 支持 | 支持 | 支持 |
-| SQLite 索引与 WAL 运行时 | 支持 | 支持 | 支持 |
-| GitHub 加密同步 | 支持 | 支持 | 支持 |
-| daemon status/start/stop | 支持 | 支持 | 支持 |
-| 用户级服务定义 | Task Scheduler | launchd | systemd user |
-| 原生应用数据发现 | `%APPDATA%`、`%LOCALAPPDATA%` | `~/Library/...` | XDG 与 home 路径 |
-| Shell 集成 | Git Bash / POSIX shell | bash/zsh/fish | bash/zsh/fish |
-
-升级时，ContextGO 继续兼容历史 `~/.contextgo` 数据目录。只有在你明确设置 `CONTEXTGO_PLATFORM_STORAGE=1` 时，才会切换到系统原生目录，例如 `%LOCALAPPDATA%/ContextGO`、`~/Library/Application Support/ContextGO` 或 `~/.local/share/contextgo`。
-
-## 索引哪些来源
-
-ContextGO 会自动发现受支持的本地来源。仅做本地索引不需要任何 API key。
-
-| 来源类型 | 示例 |
-|---|---|
-| 编码 Agent | Codex、Claude Code、OpenCode、OpenClaw、Accio、GitHub Copilot、Gemini/Antigravity |
-| 编辑器与 IDE | Cursor、Windsurf 类存储、Continue 类存储、Kilo、Cline、Roo、Zed |
-| 本地 Agent 运行时 | Hermes、Factory/Droid、其他 JSONL 会话目录 |
-| 终端历史 | bash 与 zsh 历史 |
-| 手动保存记忆 | `contextgo save`、便携导出、导入的 observation payload |
-
-查看当前机器探测到的来源：
-
-```bash
+# 查看当前机器上已识别的 AI 编码工具与会话数量
 contextgo sources
 ```
 
-## 核心命令
-
-| 命令 | 用途 |
-|---|---|
-| `contextgo q "query"` | 快速召回，自动路由到会话 ID 查找或搜索。 |
-| `contextgo search "query" --limit 10` | 对已索引会话做全文搜索。 |
-| `contextgo semantic "query" --limit 5` | 先查本地记忆，再回退到会话历史。 |
-| `contextgo save --title "Decision" --content "..."` | 保存一条持久本地记忆。 |
-| `contextgo export "" snapshot.json --limit 1000` | 导出已脱敏的 observation。 |
-| `contextgo import snapshot.json` | 导入便携 observation 快照。 |
-| `contextgo vector-sync` | 构建或刷新可选向量索引。 |
-| `contextgo vector-status` | 查看向量索引状态。 |
-| `contextgo health` | 以 JSON 输出运行时健康状态。 |
-| `contextgo smoke --sandbox` | 在沙箱中运行本地 smoke gate。 |
-| `contextgo maintain --enqueue-missing` | 将缺失会话加入索引队列。 |
-| `contextgo serve` | 在 `127.0.0.1` 启动本地 Viewer API。 |
-
-## 隐私优先的 GitHub 加密同步
-
-同步默认关闭。安装 ContextGO 或执行普通搜索时，不会静默上传本地历史。
+### 4. 检索与调阅历史上下文
 
 ```bash
-contextgo sync init --repo OWNER/REPO --device-id work-laptop
-contextgo sync status
-contextgo sync run
+# 快速混合召回（自动路由短查询或精准命中 Session ID）
+contextgo q "当时是怎么解决路由器 DNS 延迟问题的？"
+
+# 跨所有工具会话的全文检索
+contextgo search "AdGuard Home" --limit 5
+
+# 优先查阅长效记忆库的语义召回
+contextgo semantic "关于同步引擎加密的架构决策" --limit 3
 ```
 
-另一台机器上：
+---
 
-```bash
-pipx install "contextgo[sync,vector]"
-contextgo sync init --repo OWNER/REPO --device-id home-desktop
-contextgo sync pull
-contextgo sync status --remote
-```
+## 支持的 AI Agent 与 IDE 矩阵
 
-同步协议遵循保守的隐私边界。
+ContextGO 能够自动扫描并持续同步以下本地开发环境，无需繁琐的人工配置：
 
-| 规则 | 行为 |
-|---|---|
-| 显式开启 | 执行 `sync init` 前不会远程读取或写入。 |
-| 端到端加密 | payload 先压缩，再用 AES-256-GCM 加密。 |
-| 口令派生密钥 | 同步口令只留在本机，通过 scrypt 派生密钥。 |
-| 公开 manifest | 远端 manifest 只保存格式元数据和 KDF salt，不含密钥。 |
-| 每设备分片 | 每台设备写自己的加密 shard，降低写冲突。 |
-| 上传前脱敏 | token 和本机绝对路径在加密前被移除。 |
-| 冲突 fail-closed | 远端 manifest salt 不一致时拒绝覆盖。 |
-| 本地优先 daemon | 网络失败只退避，不阻塞本地索引和搜索。 |
-
-关闭自动同步但保留本地数据：
-
-```bash
-contextgo sync disable
-```
-
-## Daemon 与系统服务
-
-daemon 用于后台索引和可选周期加密同步。
-
-```bash
-contextgo daemon status
-contextgo daemon start
-contextgo daemon stop
-```
-
-安装或移除当前用户的服务定义：
-
-```bash
-contextgo daemon install
-contextgo daemon uninstall
-```
-
-服务安装会映射到 Windows Task Scheduler、macOS launchd 或 Linux systemd user service。卸载服务只移除服务定义，不删除 ContextGO 数据。
-
-## 混合搜索
-
-没有向量依赖时，ContextGO 依然可以工作。安装 `vector` extra 后，会启用 model2vec 嵌入、BM25 关键词评分和 RRF 融合。
-
-```bash
-pipx inject contextgo "contextgo[vector]"
-export CONTEXTGO_EXPERIMENTAL_SEARCH_BACKEND=vector
-contextgo vector-sync
-contextgo q "why did the auth migration change?"
-```
-
-缺少向量依赖时，会自动降级为 SQLite FTS 和 literal matching。测试里也会强制使用 fake vector model，避免 CI 意外下载远程模型。
-
-## 配置
-
-大多数用户不需要配置。环境变量主要用于部署、测试和隔离。
-
-| 变量 | 默认值 | 用途 |
+| 平台类别 | 支持的工具与平台 | 自动探测与解析机制 |
 |---|---|---|
-| `CONTEXTGO_STORAGE_ROOT` | `~/.contextgo` | 兼容旧版本的索引与日志根目录。 |
-| `CONTEXTGO_PLATFORM_STORAGE` | 未设置 | 设为 `1` 后使用系统原生 data/config/cache 目录。 |
-| `CONTEXTGO_HOME` | 当前用户 home | 测试和沙箱中覆盖 home 目录解析。 |
-| `CONTEXTGO_SESSION_INDEX_DB_PATH` | `$ROOT/index/session_index.db` | 会话索引数据库。 |
-| `MEMORY_INDEX_DB_PATH` | `$ROOT/index/memory_index.db` | 记忆索引数据库。 |
-| `CONTEXTGO_EXPERIMENTAL_SEARCH_BACKEND` | 未设置 | 设为 `vector` 启用混合搜索。 |
-| `CONTEXTGO_VIEWER_HOST` | `127.0.0.1` | Viewer 绑定地址。 |
-| `CONTEXTGO_VIEWER_PORT` | `37677` | Viewer 端口。 |
-| `CONTEXTGO_GITHUB_TOKEN` / `GITHUB_TOKEN` | 未设置 | 同步使用的可选 token；也支持 `gh auth token`。 |
+| **自主编码 Agent** | **DeepSeek Agent (`dsh`)** | 原生解析 `.dsh/storages/session_projcache.json`、流式解码 `sessions/**/*.zstd` |
+| | **Reasonix Agent** | 自动发现 `.reasonix/projects/*/sessions`、`events.jsonl`、`turns` 与高信噪比提纯 |
+| | **Hermes Agent** | 解析 `~/.hermes/sessions/*.jsonl` 及 sidecar 元数据 |
+| | **Claude Code** | 扫描 `~/.claude/projects/`、`~/.claude/transcripts/` |
+| | **Factory Droid** | 扫描 `~/.factory/sessions/*.jsonl` |
+| | **OpenClaw 与 Accio** | 扫描 `~/.openclaw/agents/`、`~/.accio/agents/` |
+| **IDE 与辅助插件** | **Antigravity (Gemini)** | 索引 `~/.gemini/antigravity/brain/*/walkthrough.md` 及交互日志 |
+| | **GitHub Copilot** | 索引 `~/.copilot/session-state/*/events.jsonl` |
+| | **Cursor 与 Windsurf** | 提取 globalStorage 工作区与 vscdb SQLite 状态 |
+| | **Kilo, Cline 与 Roo** | 解析 VS Code 全局存储的任务记录与会话流 |
+| | **OpenCode 与 Zed** | 解析 `opencode.db`、`.config/zed/conversations/` |
+| **终端与手工记忆** | **终端 Shell 历史** | 读取 `~/.zsh_history`、`~/.bash_history` |
+| | **持久化记忆库** | `contextgo save` 手动记录、导出的 JSON observation 快照 |
 
-完整配置见 [docs/CONFIGURATION.md](docs/CONFIGURATION.md)。
+---
 
-## 面向 AI Agent
+## CLI 核心命令参考
 
-ContextGO 的目标是让 Agent 在回答历史相关问题前，先读取真实项目记忆，而不是凭印象猜测。
+```
+usage: contextgo [-h] [--version] <command> ...
+```
+
+| 子命令 | 典型调用示例 | 说明 |
+|---|---|---|
+| `q` | `contextgo q "查询词"` | **快速智能召回**：自动路由 BM25S/FTS 检索或会话 ID 快速提取。 |
+| `search` | `contextgo search "关键词" --limit 10` | **全文搜索**：在已索引的会话日志与工具调用中执行检索。 |
+| `semantic` | `contextgo semantic "主题" --limit 5` | **语义检索**：优先检索持久记忆库，未命中时回退到会话历史。 |
+| `save` | `contextgo save --title "..." --content "..."` | **保存持久记忆**：将关键技术结论或根因沉淀到本地存储。 |
+| `sources` | `contextgo sources` | **适配器探测**：列出已识别的 AI 平台、会话文件数与适配路径。 |
+| `health` | `contextgo health` | **健康检查**：以 JSON 格式输出数据库完整性与运行时状态。 |
+| `serve` | `contextgo serve --port 37677` | **可视化面板**：在本地启动零依赖的 Memory Viewer Web UI。 |
+| `sync` | `contextgo sync {init,push,pull,status,run}` | **加密同步**：管理基于 GitHub 私有仓库的多机器端到端加密同步。 |
+| `setup` | `contextgo setup` | **一键规则注入**：为所有已安装的 AI 工具注入智能预热（SCF）规则。 |
+| `unsetup` | `contextgo unsetup` | **卸载规则**：安全移除 ContextGO 注入的所有提示词规则。 |
+| `daemon` | `contextgo daemon {start,stop,status,install}` | **守护服务管理**：控制后台自动索引与系统级自启服务。 |
+| `export` | `contextgo export "" backup.json` | **安全导出**：自动脱敏 API Key 与敏感路径后导出记忆快照。 |
+| `import` | `contextgo import backup.json` | **记忆导入**：将便携记忆快照导入到本地记忆库中。 |
+| `smoke` | `contextgo smoke --sandbox` | **质量门禁**：在隔离沙箱环境中执行全链路冒烟测试。 |
+
+---
+
+## 隐私优先的跨机器加密同步
+
+ContextGO 支持基于任意私有 GitHub 仓库的多机器零知识同步：
+
+```bash
+# 1. 在主开发机上初始化同步（例如 Windows 11）
+contextgo sync init --repo 用户名/我的同步仓库 --device-id desktop-win11
+
+# 2. 推送本地加密分片
+contextgo sync push
+
+# 3. 在另一台机器上拉取并合并（例如 macOS）
+pipx install "contextgo[sync,vector]"
+contextgo sync init --repo 用户名/我的同步仓库 --device-id macbook-m4
+contextgo sync pull
+```
+
+### 安全机制
+
+- **客户端 AES-256-GCM**：所有会话与记忆数据均在本地压缩后加密，云端仅存储密文分片。
+- **本地口令派生（scrypt）**：加密密钥仅由本地口令和仓库 Salt 派生，口令绝不离开设备。
+- **独立设备分片**：每台机器写入独立的加密分片文件（`shards/<device-id>.enc.json`），杜绝 Git 合并冲突。
+- **脱敏前置**：在加密前自动剔除环境变量 Token、私密凭证与本地绝对文件路径。
+
+---
+
+## AI Agent 智能上下文预热 (SCF)
+
+执行一键配置，让所有 AI 编码助手在回答前主动调阅历史记忆：
 
 ```bash
 contextgo setup
-contextgo health
-contextgo semantic "what did we decide about sync encryption?" --limit 3
 ```
 
-建议 Agent 行为：
+该命令会自动向各工具的全局策略文件注入 **Smart Context-First (SCF)** 规则（例如 `~/.gemini/GEMINI.md`、`~/.reasonix/AGENTS.md`、`~/.dsh/AGENTS.md`、`~/.hermes/SOUL.md`、`~/.claude/CLAUDE.md`、`.github/copilot-instructions.md`、`.cursorrules`）。
 
-| 场景 | 动作 |
+### 触发与调用准则
+
+| 场景 | Agent 动作 |
 |---|---|
-| 继续旧任务 | 执行 `contextgo semantic "topic" --limit 3`，再简要总结。 |
-| 不确定项目历史 | 执行 `contextgo search "keyword" --limit 5`。 |
-| 做架构决策 | 改设计前先搜索历史决策。 |
-| 解决了持久根因 | 建议用 `contextgo save` 保存短记忆。 |
+| 续做任务 / 状态恢复 (`接着做` / `continue`) | 执行 `contextgo semantic "<主题>" --limit 3` 快速对齐历史 |
+| 不确定项目历史或过往设计决策 | 执行 `contextgo search "<关键词>" --limit 5` |
+| 进行重大架构改动或底层重构前 | 先检索过往根因与架构决策，避免反复试错 |
+| 确认重要技术根因或敲定架构方案 | 建议调用 `contextgo save --title "..."` 保存为永久记忆 |
 
-完整 Agent 入门文件见 [AGENTS.md](AGENTS.md)。
+---
 
-## 运维与验证
+## Daemon 与后台系统守护
 
-`0.13.0` 发布前在 Windows 本机通过的门禁为：`1483 passed`、`8 skipped`、覆盖率 `86.28%`。仓库 CI 覆盖 Ubuntu、macOS、Windows、Python 3.10 到 3.13、Go、Rust、lint、format、Bandit、E2E、smoke 和 wheel 安装验证。
-
-常用本地命令：
+支持将 ContextGO 作为系统原生服务运行，实现后台静默索引：
 
 ```bash
-uv sync --extra dev --extra sync --extra vector
-uv run ruff check src/contextgo scripts tests
-uv run ruff format --check src/contextgo scripts tests
-uv run mypy src/contextgo --ignore-missing-imports --no-error-summary
-uv run bandit -r src/contextgo -c pyproject.toml --quiet
-uv run pytest
-uv run python scripts/e2e_quality_gate.py
-uv run python -m contextgo smoke --sandbox
-uv run python -m build --wheel
+# 管理守护进程
+contextgo daemon start
+contextgo daemon status
+contextgo daemon stop
+
+# 安装系统级自启服务
+contextgo daemon install
 ```
 
-## 仓库结构
-
-| 路径 | 作用 |
+| 操作系统 | 对应的系统服务后端 |
 |---|---|
-| `src/contextgo/context_cli.py` | CLI 入口和子命令。 |
-| `src/contextgo/context_runtime.py` | 跨平台路径、原子写入、PID 文件和服务定义。 |
-| `src/contextgo/context_sync.py` | GitHub 加密同步协议和客户端。 |
-| `src/contextgo/context_daemon.py` | 后台采集、本地优先同步调度和 daemon 主循环。 |
-| `src/contextgo/source_adapters.py` | 各工具本地存储发现与文本抽取。 |
-| `src/contextgo/session_index.py` | 会话 SQLite 索引、搜索、排序和 FTS fallback。 |
-| `src/contextgo/memory_index.py` | 持久记忆索引、导出/导入、脱敏和路径清理。 |
-| `src/contextgo/vector_index.py` | 可选向量索引和混合搜索。 |
-| `native/session_scan/` | Rust 热路径扫描器。 |
-| `native/session_scan_go/` | Go 并行扫描器。 |
-| `.github/workflows/verify.yml` | 完整 CI 验证流水线。 |
+| **macOS** | 原生用户级 `launchd` 服务（位于 `~/Library/LaunchAgents/`） |
+| **Linux** | 原生 `systemd` 用户服务（位于 `~/.config/systemd/user/`） |
+| **Windows** | 原生 Windows 任务计划程序（Task Scheduler）用户任务 |
 
-## 安全模型
+---
 
-ContextGO 默认本地优先。远程同步、Viewer 非回环暴露等高风险能力都必须显式启用。导出和同步会在数据离开本机运行时前清理已知 secret 模式和绝对用户路径。GitHub 同步只存加密 payload；GitHub token 和同步口令不会写入导出快照或远端 shard。
+## 开发者与测试验证
 
-安全问题请按 [.github/SECURITY.md](.github/SECURITY.md) 披露。
+ContextGO 遵循严格的工程质量标准，核心测试覆盖率保持在 **86% 以上**：
 
-## 文档
+```bash
+# 克隆仓库
+git clone https://github.com/dunova/ContextGO.git
+cd ContextGO
 
-| 主题 | 链接 |
-|---|---|
-| 配置 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) |
-| 架构 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
-| API | [docs/API.md](docs/API.md) |
-| 迁移 | [docs/MIGRATION.md](docs/MIGRATION.md) |
-| 故障排查 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) |
-| Shell 补全 | [docs/SHELL_COMPLETION.md](docs/SHELL_COMPLETION.md) |
-| 变更日志 | [.github/CHANGELOG.md](.github/CHANGELOG.md) |
+# 使用 uv 同步依赖
+uv sync --extra dev --extra sync --extra vector
 
-## 许可证
+# 运行代码规范与安全扫描
+uv run ruff check src/contextgo tests
+uv run ruff format --check src/contextgo tests
+uv run mypy src/contextgo --ignore-missing-imports
+uv run bandit -r src/contextgo -c pyproject.toml --quiet
 
-ContextGO 使用 [AGPL-3.0-only](LICENSE) 许可证。
+# 运行完整单元测试与沙箱冒烟门禁
+uv run pytest
+uv run python -m contextgo smoke --sandbox
+```
 
-Copyright 2025-2026 [Dunova](https://github.com/dunova).
+---
+
+## 开源许可证
+
+ContextGO 基于 [AGPL-3.0-only](LICENSE) 协议开源。
+
+版权所有 © 2025-2026 [Dunova](https://github.com/dunova)。
