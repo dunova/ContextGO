@@ -7,7 +7,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
 所有重要变更均记录于此，最新版本在前。
 格式遵循 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)，版本号遵循[语义化版本规范](https://semver.org/)。
 
----
+## [0.14.1] — 2026-09-12
+
+### Features & Runtime / 核心特性与运行时
+- **Native Model Context Protocol (MCP) Server**: Added native `contextgo mcp` stdio server with tools `contextgo_search`, `contextgo_semantic`, and `contextgo_save`, enabling zero-config Function Calling across Claude Code, Cursor, DeepSeek Agent, and MCP-compatible clients. / 新增原生 MCP 服务端与标准工具调用支持。
+- **Pre-Response Delivery & ContextGO Save Gate**: Upgraded Smart Context-First (SCF) policy injection with pre-response delivery gates and durable memory verification before task completion. / 升级 SCF 智能召回策略与交付阻断门禁。
+- **Dynamic Project Root Discovery**: Genericized Copilot and Cursor SCF policy setup with dynamic directory inspection, eliminating static environment paths. / 优化 Copilot 与 Cursor 项目规则动态注入。
+- **Visual Architecture Showcase**: Added 2x Retina architectural overview and GitHub Star/Watch release badges to documentation. / 升级 2x 高清全景架构图与 Star 订阅徽章。
 
 ## [0.14.0] — 2026-08-15
 

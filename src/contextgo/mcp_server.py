@@ -18,7 +18,7 @@ _logger = logging.getLogger(__name__)
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "contextgo"
-SERVER_VERSION = "0.14.0"
+SERVER_VERSION = "0.14.1"
 
 _TOOLS: list[dict[str, Any]] = [
     {

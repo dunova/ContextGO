@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-contextgo",
-  "version": "0.14.0",
+  "version": "0.14.1",
   "description": "DeepSeek Agent (dsh) plugin for ContextGO — Local-first context and cross-agent memory runtime",
   "type": "module",
   "main": "lib/index.js",

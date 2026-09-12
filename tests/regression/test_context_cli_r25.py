@@ -199,6 +199,7 @@ class TestBuildParser(unittest.TestCase):
             "q",
             "shell-init",
             "completion",
+            "mcp",
             "prewarm",
             "setup",
             "unsetup",

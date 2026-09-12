@@ -19,6 +19,25 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/dunova/ContextGO/stargazers">
+    <img src="https://img.shields.io/badge/⭐_Star_on_GitHub-Support_Open_Memory-ffd700?style=for-the-badge&logo=github&logoColor=black" alt="Star on GitHub">
+  </a>
+  <a href="https://github.com/dunova/ContextGO/subscription">
+    <img src="https://img.shields.io/badge/🔔_Watch_Releases-Get_Instant_Updates-2563eb?style=for-the-badge&logo=github&logoColor=white" alt="Watch Releases">
+  </a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/dunova/ContextGO"><img src="https://img.shields.io/github/stars/dunova/ContextGO?style=social" alt="GitHub stars"></a>
+  <a href="https://github.com/dunova/ContextGO/fork"><img src="https://img.shields.io/github/forks/dunova/ContextGO?style=social" alt="GitHub forks"></a>
+  <a href="https://github.com/dunova/ContextGO/watchers"><img src="https://img.shields.io/github/watchers/dunova/ContextGO?style=social" alt="GitHub watchers"></a>
+</p>
+
+<p align="center">
+  <img src="docs/media/contextgo-architecture-showcase.png" alt="ContextGO Multi-Agent Context & Memory Architecture" width="960">
+</p>
+
+<p align="center">
   <a href="#key-features">Key Features</a> •
   <a href="#quick-start">Quick Start</a> •
   <a href="#supported-ai-agents--tools">Supported Agents</a> •

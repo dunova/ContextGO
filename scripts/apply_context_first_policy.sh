@@ -97,7 +97,7 @@ read -r -d '' POLICY_BLOCK <<'EOF' || true
 
 ### 检索启发
 - 用户说“昨天 / 今天 / 上次 / 前天”时，先转成绝对日期再检索
-- 若当前工作区明确，给查询补一个工作区锚点（如 `ContextGO`、`QuantX` 或当前目录名）
+- 若当前工作区明确，给查询补一个工作区锚点（如 `ContextGO` 或当前工作区/目录名）
 - 先试 2-3 条紧凑查询，不要一上来堆很多词：
   - `contextgo search "2026-04-14 ContextGO codex" --limit 5 --literal`
   - `contextgo search "2026-04-14 127.0.0.1:5050 monitoring codex" --limit 5 --literal`

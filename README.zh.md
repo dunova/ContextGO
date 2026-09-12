@@ -19,6 +19,25 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/dunova/ContextGO/stargazers">
+    <img src="https://img.shields.io/badge/⭐_Star_支持开源-守护本地多智能体记忆-ffd700?style=for-the-badge&logo=github&logoColor=black" alt="Star on GitHub">
+  </a>
+  <a href="https://github.com/dunova/ContextGO/subscription">
+    <img src="https://img.shields.io/badge/🔔_订阅版本更新-第一时间获取最新适配器-2563eb?style=for-the-badge&logo=github&logoColor=white" alt="订阅 Releases">
+  </a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/dunova/ContextGO"><img src="https://img.shields.io/github/stars/dunova/ContextGO?style=social" alt="GitHub stars"></a>
+  <a href="https://github.com/dunova/ContextGO/fork"><img src="https://img.shields.io/github/forks/dunova/ContextGO?style=social" alt="GitHub forks"></a>
+  <a href="https://github.com/dunova/ContextGO/watchers"><img src="https://img.shields.io/github/watchers/dunova/ContextGO?style=social" alt="GitHub watchers"></a>
+</p>
+
+<p align="center">
+  <img src="docs/media/contextgo-architecture-showcase.png" alt="ContextGO 多智能体记忆与上下文全景架构" width="960">
+</p>
+
+<p align="center">
   <a href="#核心特性">核心特性</a> •
   <a href="#快速上手">快速上手</a> •
   <a href="#支持的-ai-agent--ide-矩阵">支持的 Agent</a> •

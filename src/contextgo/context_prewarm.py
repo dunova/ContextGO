@@ -887,7 +887,7 @@ _SCF_POLICY_BLOCK = f"""{_SCF_MARKER_START}
 
 ### 检索启发
 - 用户说“昨天 / 今天 / 上次 / 前天”时，先转成绝对日期再检索
-- 若当前工作区明确，给查询补一个工作区锚点（如 `ContextGO`、`QuantX` 或当前目录名）
+- 若当前工作区明确，给查询补一个工作区锚点（如 `ContextGO` 或当前工作区/目录名）
 - 先试 2-3 条紧凑查询，不要一上来堆很多词：
   - `contextgo search "2026-04-14 ContextGO codex" --limit 5 --literal`
   - `contextgo search "2026-04-14 127.0.0.1:5050 monitoring codex" --limit 5 --literal`
@@ -1350,8 +1350,15 @@ def setup_copilot() -> bool:
     We inject into the most common project roots the user works with.
     """
     injected = False
-    # Inject into common project roots
-    for project_root in [Path.home() / "ContextGO", Path.home() / "QuantX", Path.home() / "happycapy" / "QuantX"]:
+    roots = [Path.cwd(), Path.home() / "ContextGO"]
+    try:
+        for p in Path.home().iterdir():
+            if p.is_dir() and not p.name.startswith("."):
+                if (p / ".github").exists():
+                    roots.append(p)
+    except OSError:
+        pass
+    for project_root in roots:
         instructions_file = project_root / ".github" / "copilot-instructions.md"
         if project_root.exists():
             instructions_file.parent.mkdir(parents=True, exist_ok=True)
@@ -1363,7 +1370,14 @@ def setup_copilot() -> bool:
 def teardown_copilot() -> bool:
     """Remove SCF policy from GitHub Copilot project-level instructions."""
     removed = True
-    for project_root in [Path.home() / "ContextGO", Path.home() / "QuantX", Path.home() / "happycapy" / "QuantX"]:
+    roots = [Path.cwd(), Path.home() / "ContextGO"]
+    try:
+        for p in Path.home().iterdir():
+            if p.is_dir() and not p.name.startswith("."):
+                roots.append(p)
+    except OSError:
+        pass
+    for project_root in roots:
         instructions_file = project_root / ".github" / "copilot-instructions.md"
         if instructions_file.exists() and not _remove_scf_policy(instructions_file):
             removed = False
@@ -1377,17 +1391,15 @@ def setup_cursor() -> bool:
     ContextGO context-first policy block.
     """
     injected = False
-    # Common project roots - inject into each project's .cursorrules
     project_roots = [
+        Path.cwd(),
         Path.home() / "ContextGO",
-        Path.home() / "QuantX",
     ]
-    # Add any other projects under ~/ that have .cursorrules
     try:
         for p in Path.home().iterdir():
             if p.is_dir() and not p.name.startswith("."):
                 cursor_rules = p / ".cursorrules"
-                if cursor_rules.exists() or p.name in ["happycapy", "workspace"]:
+                if cursor_rules.exists() or p.name in ["workspace", "projects", "dev"]:
                     project_roots.append(p)
     except OSError:
         pass
@@ -1407,8 +1419,8 @@ def teardown_cursor() -> bool:
     """Remove SCF policy from Cursor .cursorrules files."""
     removed = True
     project_roots = [
+        Path.cwd(),
         Path.home() / "ContextGO",
-        Path.home() / "QuantX",
     ]
     try:
         for p in Path.home().iterdir():
