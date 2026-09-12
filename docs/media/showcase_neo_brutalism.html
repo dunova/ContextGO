@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ContextGO · Neo-Brutalism Architecture Showcase</title>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@600;700;800&family=Space+Grotesk:wght@700;800;900&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            background-color: #F4F0EA;
+            color: #000000;
+            font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, sans-serif;
+            width: 1200px;
+            height: 640px;
+            overflow: hidden;
+            box-sizing: border-box;
+            padding: 24px;
+            margin: 0 auto;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+        .neo-box {
+            border: 3px solid #000000;
+            box-shadow: 4px 4px 0px 0px #000000;
+            background-color: #FFFFFF;
+        }
+        .neo-box-sm {
+            border: 2px solid #000000;
+            box-shadow: 2px 2px 0px 0px #000000;
+            background-color: #FFFFFF;
+        }
+        .neo-box-xs {
+            border: 1.5px solid #000000;
+            box-shadow: 1.5px 1.5px 0px 0px #000000;
+        }
+        .tabular-nums {
+            font-variant-numeric: tabular-nums;
+            font-family: 'JetBrains Mono', monospace;
+        }
+    </style>
+</head>
+<body class="space-y-3.5 select-none">
+
+    <!-- 1. MASTER HEADER -->
+    <header class="neo-box p-3.5 bg-[#FFDE59]">
+        <div class="flex justify-between items-center gap-4">
+            <!-- Left Brand & Titles -->
+            <div class="space-y-1">
+                <div class="flex flex-wrap items-center gap-1.5">
+                    <span class="px-2 py-0.5 bg-black text-[#FFDE59] font-mono text-[11px] font-black rounded uppercase">ContextGO v0.14.1</span>
+                    <span class="px-2 py-0.5 bg-[#5CE1E6] text-black font-mono text-[11px] font-black border-2 border-black rounded shadow-[1px_1px_0px_0px_#000]">LOCAL-FIRST RUNTIME</span>
+                    <span class="px-2 py-0.5 bg-[#FF66C4] text-black font-mono text-[11px] font-black border-2 border-black rounded shadow-[1px_1px_0px_0px_#000]">ZERO TELEMETRY</span>
+                    <span class="px-2 py-0.5 bg-[#23C55E] text-black font-mono text-[11px] font-black border-2 border-black rounded shadow-[1px_1px_0px_0px_#000]">AES-256-GCM SYNC</span>
+                    <span class="px-2 py-0.5 bg-white text-black font-mono text-[11px] font-black border-2 border-black rounded shadow-[1px_1px_0px_0px_#000]">NATIVE MCP PROTOCOL</span>
+                </div>
+                <h1 class="text-2xl font-black tracking-tight text-black flex items-center gap-2">
+                    ContextGO · 面向多 Agent 协同的本地优先上下文与长效记忆运行时
+                </h1>
+                <p class="text-[11px] font-mono text-black font-bold tracking-tight">
+                    跨智能体记忆无缝打通 • SQLite FTS5 / BM25S 词法向量混合召回 • 客户端 scrypt + AES-256-GCM 零知识多端加密同步
+                </p>
+            </div>
+
+            <!-- Right Hero KPI 4 Cards -->
+            <div class="grid grid-cols-4 gap-2 shrink-0">
+                <div class="bg-black text-white px-3 py-1.5 rounded neo-box-sm text-center min-w-[95px]">
+                    <div class="text-[9px] font-mono text-gray-300 leading-tight">支持智能体</div>
+                    <div class="text-lg font-black tabular-nums text-[#FFDE59] mt-0.5">15+ <span class="text-[10px] text-white font-normal">款</span></div>
+                </div>
+                <div class="bg-white text-black px-3 py-1.5 rounded neo-box-sm text-center min-w-[95px]">
+                    <div class="text-[9px] font-mono text-gray-700 leading-tight">混合检索延迟</div>
+                    <div class="text-lg font-black tabular-nums text-[#008080] mt-0.5">&lt;50 <span class="text-[10px] text-black font-normal">ms</span></div>
+                </div>
+                <div class="bg-[#5CE1E6] text-black px-3 py-1.5 rounded neo-box-sm text-center min-w-[95px]">
+                    <div class="text-[9px] font-mono text-gray-900 leading-tight">本地云端依赖</div>
+                    <div class="text-lg font-black tabular-nums text-black mt-0.5">0 <span class="text-[10px] text-black font-normal">遥测</span></div>
+                </div>
+                <div class="bg-[#FF66C4] text-black px-3 py-1.5 rounded neo-box-sm text-center min-w-[95px]">
+                    <div class="text-[9px] font-mono text-gray-900 leading-tight">跨机安全同步</div>
+                    <div class="text-lg font-black tabular-nums text-black mt-0.5">AES <span class="text-[10px] text-black font-normal">256</span></div>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- 2. THREE-PILLAR NEO-BRUTALISM ARCHITECTURE MATRIX -->
+    <div class="grid grid-cols-3 gap-3.5 flex-1">
+        
+        <!-- Pillar 1: Source Adapters -->
+        <div class="neo-box rounded flex flex-col justify-between overflow-hidden">
+            <div>
+                <div class="bg-[#FFDE59] border-b-[3px] border-black px-3 py-2 flex items-center justify-between">
+                    <div class="flex items-center gap-1.5">
+                        <span class="w-4 h-4 bg-black text-[#FFDE59] rounded-full flex items-center justify-center font-mono text-[10px] font-black">1</span>
+                        <span class="font-black text-sm tracking-tight text-black">15+ 智能体多维适配层</span>
+                    </div>
+                    <span class="text-[10px] font-mono font-bold bg-white px-1.5 py-0.5 border border-black rounded">ADAPTERS</span>
+                </div>
+                <div class="p-3 space-y-2.5">
+                    <p class="text-[11px] leading-relaxed text-gray-800 font-medium">
+                        原生监听、高信噪比提纯与敏感脱敏，自动捕获各环境对话、代码执行与技术决策。
+                    </p>
+                    
+                    <!-- Agent Tags Matrix -->
+                    <div class="flex flex-wrap gap-1.5 pt-0.5">
+                        <span class="px-2 py-1 bg-black text-[#FFDE59] font-mono text-[10px] font-black rounded neo-box-xs">DeepSeek (dsh)</span>
+                        <span class="px-2 py-1 bg-[#5CE1E6] text-black font-mono text-[10px] font-black rounded neo-box-xs">Claude Code</span>
+                        <span class="px-2 py-1 bg-[#FF66C4] text-black font-mono text-[10px] font-black rounded neo-box-xs">Cursor</span>
+                        <span class="px-2 py-1 bg-white text-black font-mono text-[10px] font-bold rounded neo-box-xs">Antigravity</span>
+                        <span class="px-2 py-1 bg-white text-black font-mono text-[10px] font-bold rounded neo-box-xs">OpenAI Codex</span>
+                        <span class="px-2 py-1 bg-white text-black font-mono text-[10px] font-bold rounded neo-box-xs">Factory Droid</span>
+                        <span class="px-2 py-1 bg-white text-black font-mono text-[10px] font-bold rounded neo-box-xs">Windsurf</span>
+                        <span class="px-2 py-1 bg-white text-black font-mono text-[10px] font-bold rounded neo-box-xs">GitHub Copilot</span>
+                        <span class="px-2 py-1 bg-white text-black font-mono text-[10px] font-bold rounded neo-box-xs">Reasonix</span>
+                        <span class="px-2 py-1 bg-white text-black font-mono text-[10px] font-bold rounded neo-box-xs">Hermes</span>
+                        <span class="px-2 py-1 bg-white text-black font-mono text-[10px] font-bold rounded neo-box-xs">OpenCode</span>
+                        <span class="px-2 py-1 bg-gray-100 text-black font-mono text-[10px] font-bold rounded neo-box-xs">Bash/Zsh History</span>
+                    </div>
+                </div>
+            </div>
+            <div class="bg-gray-50 border-t-2 border-black p-2 font-mono text-[10px] text-gray-700 space-y-0.5">
+                <div>⚡ <strong class="text-black">原生特性:</strong> 流式 .zstd 解压 • 高信噪比事件蒸馏</div>
+                <div>🔒 <strong class="text-black">隐私安全:</strong> 密码/密钥自动正则脱敏 (Redaction)</div>
+            </div>
+        </div>
+
+        <!-- Pillar 2: Hybrid Engine & MCP -->
+        <div class="neo-box rounded flex flex-col justify-between overflow-hidden">
+            <div>
+                <div class="bg-[#5CE1E6] border-b-[3px] border-black px-3 py-2 flex items-center justify-between">
+                    <div class="flex items-center gap-1.5">
+                        <span class="w-4 h-4 bg-black text-[#5CE1E6] rounded-full flex items-center justify-center font-mono text-[10px] font-black">2</span>
+                        <span class="font-black text-sm tracking-tight text-black">混合检索双擎与原生 MCP</span>
+                    </div>
+                    <span class="text-[10px] font-mono font-bold bg-white px-1.5 py-0.5 border border-black rounded">ENGINE</span>
+                </div>
+                <div class="p-3 space-y-2.5">
+                    <p class="text-[11px] leading-relaxed text-gray-800 font-medium">
+                        SQLite FTS5 + BM25S 词法与轻量向量双路重排，搭载开箱即用的原生 MCP 标准服务端。
+                    </p>
+
+                    <!-- Features -->
+                    <div class="space-y-1.5">
+                        <div class="bg-white border-2 border-black p-1.5 rounded neo-box-xs flex items-center justify-between">
+                            <span class="font-mono text-[11px] font-black text-black">contextgo mcp</span>
+                            <span class="bg-[#FFDE59] text-[9px] font-mono font-bold px-1.5 py-0.2 border border-black rounded">STDIO 协议</span>
+                        </div>
+                        <div class="grid grid-cols-2 gap-1.5 font-mono text-[10px]">
+                            <div class="bg-gray-50 border border-black p-1 rounded font-bold">FTS5 全文倒排</div>
+                            <div class="bg-gray-50 border border-black p-1 rounded font-bold">BM25S 词法重排</div>
+                            <div class="bg-gray-50 border border-black p-1 rounded font-bold">RRF 倒数融合</div>
+                            <div class="bg-gray-50 border border-black p-1 rounded font-bold">时效衰减评分</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="bg-gray-50 border-t-2 border-black p-2 font-mono text-[10px] text-gray-700 space-y-0.5">
+                <div>🛠️ <strong class="text-black">暴露工具:</strong> search • semantic • save</div>
+                <div>🚀 <strong class="text-black">极速调用:</strong> 免配置开箱即用 Function Calling</div>
+            </div>
+        </div>
+
+        <!-- Pillar 3: Encrypted Sync & Delivery Gate -->
+        <div class="neo-box rounded flex flex-col justify-between overflow-hidden">
+            <div>
+                <div class="bg-[#FF66C4] border-b-[3px] border-black px-3 py-2 flex items-center justify-between">
+                    <div class="flex items-center gap-1.5">
+                        <span class="w-4 h-4 bg-black text-[#FF66C4] rounded-full flex items-center justify-center font-mono text-[10px] font-black">3</span>
+                        <span class="font-black text-sm tracking-tight text-black">加密跨机同步与交付门禁</span>
+                    </div>
+                    <span class="text-[10px] font-mono font-bold bg-white px-1.5 py-0.5 border border-black rounded">SECURITY</span>
+                </div>
+                <div class="p-3 space-y-2.5">
+                    <p class="text-[11px] leading-relaxed text-gray-800 font-medium">
+                        零知识客户端加密同步，结合 SCF 智能召回与交付阻断门禁，保障知识资产永久沉淀。
+                    </p>
+
+                    <!-- Modules -->
+                    <div class="space-y-1.5 font-mono text-[10px]">
+                        <div class="bg-white border-2 border-black p-1.5 rounded neo-box-xs flex items-center justify-between">
+                            <span class="font-bold text-black">AES-256-GCM + Scrypt KDF</span>
+                            <span class="bg-[#23C55E] text-[9px] font-black px-1.5 py-0.2 border border-black rounded">端到端加密</span>
+                        </div>
+                        <div class="bg-white border-2 border-black p-1.5 rounded neo-box-xs flex items-center justify-between">
+                            <span class="font-bold text-black">非落盘不交付（Exit Gate）</span>
+                            <span class="bg-[#FFDE59] text-[9px] font-black px-1.5 py-0.2 border border-black rounded">交付五要素</span>
+                        </div>
+                        <div class="grid grid-cols-3 gap-1 text-center">
+                            <div class="bg-gray-50 border border-black p-1 rounded font-bold">macOS<br><span class="text-[9px] font-normal text-gray-600">launchd</span></div>
+                            <div class="bg-gray-50 border border-black p-1 rounded font-bold">Linux<br><span class="text-[9px] font-normal text-gray-600">systemd</span></div>
+                            <div class="bg-gray-50 border border-black p-1 rounded font-bold">Windows<br><span class="text-[9px] font-normal text-gray-600">Scheduler</span></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="bg-gray-50 border-t-2 border-black p-2 font-mono text-[10px] text-gray-700 space-y-0.5">
+                <div>🌐 <strong class="text-black">本地控制台:</strong> 127.0.0.1:37677 原生 Web 界面</div>
+                <div>🛡️ <strong class="text-black">门禁策略:</strong> 硬 Bug / 架构决策强制 contextgo save</div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- 3. BOTTOM CLI CHEATSHEET (TABLE-FIRST COMPACT BAR) -->
+    <footer class="neo-box p-2.5 bg-white flex items-center justify-between text-xs font-mono">
+        <div class="flex items-center gap-2">
+            <span class="px-2 py-0.5 bg-black text-[#FFDE59] font-black rounded text-[11px]">CLI 核心命令</span>
+            <span class="text-gray-500 font-bold">|</span>
+            <span class="text-black font-bold"><strong class="bg-[#FFDE59] px-1 py-0.5 border border-black rounded">cg &lt;query&gt;</strong> 闪电秒查</span>
+            <span class="text-gray-400">/</span>
+            <span class="text-black font-bold"><strong class="bg-[#5CE1E6] px-1 py-0.5 border border-black rounded">cgs &lt;text&gt;</strong> 词法检索</span>
+            <span class="text-gray-400">/</span>
+            <span class="text-black font-bold"><strong class="bg-[#FF66C4] px-1 py-0.5 border border-black rounded">cgse &lt;topic&gt;</strong> 语义召回</span>
+            <span class="text-gray-400">/</span>
+            <span class="text-black font-bold"><strong class="bg-gray-200 px-1 py-0.5 border border-black rounded">contextgo mcp</strong> 原生协议</span>
+            <span class="text-gray-400">/</span>
+            <span class="text-black font-bold"><strong class="bg-[#23C55E] px-1 py-0.5 border border-black rounded">contextgo sync run</strong> 多机加密同步</span>
+        </div>
+        <div class="flex items-center gap-1.5 shrink-0">
+            <span class="px-2 py-0.5 bg-black text-white font-black rounded text-[10px]">AGPL-3.0</span>
+            <span class="px-2 py-0.5 bg-[#FFDE59] text-black font-black border border-black rounded text-[10px]">GITHUB.COM/DUNOVA/CONTEXTGO</span>
+        </div>
+    </footer>
+
+</body>
+</html>

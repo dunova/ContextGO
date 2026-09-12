@@ -34,7 +34,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/media/contextgo-architecture-showcase.png" alt="ContextGO Multi-Agent Context & Memory Architecture" width="960">
+  <img src="docs/media/contextgo-architecture-showcase-en.png" alt="ContextGO Multi-Agent Context & Memory Architecture" width="960">
 </p>
 
 <p align="center">
