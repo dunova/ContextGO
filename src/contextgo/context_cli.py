@@ -1346,7 +1346,6 @@ def cmd_mcp(args: argparse.Namespace) -> int:
     return mcp_server.run_mcp_stdio_server()
 
 
-
 # ───────────────────────────────────────────────
 # Command dispatch table
 # ───────────────────────────────────────────────

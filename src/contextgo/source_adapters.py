@@ -1501,21 +1501,19 @@ def _sync_reasonix_sessions(home: Path) -> dict[str, object]:
 def _decompress_zstd_lines(file_path: Path) -> list[str]:
     """Decompress a .zstd file into lines using python-zstandard or system zstd binary."""
     lines: list[str] = []
-    # 1. Try python zstandard if installed
-    try:
+    # 1. Try python zstandard library
+    with contextlib.suppress(Exception):
         import zstandard  # noqa: PLC0415
 
         dctx = zstandard.ZstdDecompressor()
         with open(file_path, "rb") as f:
             decompressed = dctx.decompress(f.read(), max_output_size=64 * 1024 * 1024)
             return decompressed.decode("utf-8", errors="ignore").splitlines()
-    except Exception:
-        pass
 
     # 2. Try CLI zstd
     import subprocess  # noqa: PLC0415
 
-    try:
+    with contextlib.suppress(Exception):
         proc = subprocess.run(
             ["zstd", "-dc", str(file_path)],
             capture_output=True,
@@ -1524,8 +1522,6 @@ def _decompress_zstd_lines(file_path: Path) -> list[str]:
         )
         if proc.returncode == 0 and proc.stdout:
             return proc.stdout.decode("utf-8", errors="ignore").splitlines()
-    except Exception:
-        pass
 
     return lines
 
@@ -1564,9 +1560,19 @@ def _sync_deepseek_sessions(home: Path) -> dict[str, object]:
                         rows = sdata.get("rows") or {}
                         title_val = rows.get("title", {}).get("val") if isinstance(rows.get("title"), dict) else None
                         title = str(title_val or sid)
-                        prompt_val = rows.get("lastPrompt", {}).get("val") if isinstance(rows.get("lastPrompt"), dict) else None
-                        summary_val = rows.get("lastSummary", {}).get("val") if isinstance(rows.get("lastSummary"), dict) else None
-                        stats_val = rows.get("sessionStats", {}).get("val") if isinstance(rows.get("sessionStats"), dict) else None
+                        prompt_val = (
+                            rows.get("lastPrompt", {}).get("val") if isinstance(rows.get("lastPrompt"), dict) else None
+                        )
+                        summary_val = (
+                            rows.get("lastSummary", {}).get("val")
+                            if isinstance(rows.get("lastSummary"), dict)
+                            else None
+                        )
+                        stats_val = (
+                            rows.get("sessionStats", {}).get("val")
+                            if isinstance(rows.get("sessionStats"), dict)
+                            else None
+                        )
 
                         texts: list[str] = []
                         if title:
@@ -1596,7 +1602,7 @@ def _sync_deepseek_sessions(home: Path) -> dict[str, object]:
                                     pass
                             # Try .zstd
                             for zfile in sdir.glob("*.jsonl.zstd"):
-                                try:
+                                with contextlib.suppress(Exception):
                                     mtime = max(mtime, int(zfile.stat().st_mtime))
                                     zlines = _decompress_zstd_lines(zfile)
                                     for zline in zlines:
@@ -1621,8 +1627,6 @@ def _sync_deepseek_sessions(home: Path) -> dict[str, object]:
                                                 texts.append(f"[tool:{tname}] {targs}")
                                             elif ev_type == "session" and "cwd" in ev:
                                                 texts.append(f"[directory] {ev.get('cwd')}")
-                                except Exception:
-                                    pass
 
                         if not texts:
                             continue
@@ -1654,7 +1658,7 @@ def _sync_deepseek_sessions(home: Path) -> dict[str, object]:
                 if not sdir.is_dir() or sdir.name.startswith("."):
                     continue
                 # Traverse deeper subdirectories if any
-                for leaf in (sdir.iterdir() if any(p.is_dir() for p in sdir.iterdir()) else [sdir]):
+                for leaf in sdir.iterdir() if any(p.is_dir() for p in sdir.iterdir()) else [sdir]:
                     if not leaf.is_dir():
                         continue
                     sid = leaf.name
@@ -1667,7 +1671,7 @@ def _sync_deepseek_sessions(home: Path) -> dict[str, object]:
                     mtime = 1
 
                     for zfile in leaf.glob("*.jsonl.zstd"):
-                        try:
+                        with contextlib.suppress(Exception):
                             mtime = max(mtime, int(zfile.stat().st_mtime))
                             zlines = _decompress_zstd_lines(zfile)
                             for zline in zlines:
@@ -1693,8 +1697,6 @@ def _sync_deepseek_sessions(home: Path) -> dict[str, object]:
                                     elif ev_type == "session" and "cwd" in ev:
                                         cwd = str(ev.get("cwd", ""))
                                         texts.append(f"[directory] {cwd}")
-                        except Exception:
-                            pass
 
                     for jfile in leaf.glob("*.jsonl"):
                         try:

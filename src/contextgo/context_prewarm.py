@@ -1285,9 +1285,8 @@ def setup_reasonix() -> bool:
     touched = False
     for target in targets:
         # If target or its parent directory exists, inject policy
-        if target.parent.is_dir() or target.is_file():
-            if _inject_scf_policy(target):
-                touched = True
+        if (target.parent.is_dir() or target.is_file()) and _inject_scf_policy(target):
+            touched = True
     return touched
 
 
@@ -1320,9 +1319,8 @@ def setup_deepseek() -> bool:
     ]
     touched = False
     for target in targets:
-        if target.parent.is_dir() or target.is_file():
-            if _inject_scf_policy(target):
-                touched = True
+        if (target.parent.is_dir() or target.is_file()) and _inject_scf_policy(target):
+            touched = True
     return touched
 
 
@@ -1353,9 +1351,8 @@ def setup_copilot() -> bool:
     roots = [Path.cwd(), Path.home() / "ContextGO"]
     try:
         for p in Path.home().iterdir():
-            if p.is_dir() and not p.name.startswith("."):
-                if (p / ".github").exists():
-                    roots.append(p)
+            if p.is_dir() and not p.name.startswith(".") and (p / ".github").exists():
+                roots.append(p)
     except OSError:
         pass
     for project_root in roots:

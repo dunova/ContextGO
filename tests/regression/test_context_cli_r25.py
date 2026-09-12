@@ -436,24 +436,25 @@ class TestCmdHealthConcurrency(unittest.TestCase):
         results: list[int] = []
         errors: list[Exception] = []
 
-        def run_health() -> None:
-            try:
-                with (
-                    mock.patch.object(context_cli, "_get_session_index", return_value=si_mock),
-                    mock.patch.object(context_cli, "_get_context_native", return_value=native_mock),
-                    mock.patch.object(context_cli, "_source_freshness", return_value={}),
-                    mock.patch.object(context_cli, "_remote_process_count", return_value=0),
-                    contextlib.redirect_stdout(io.StringIO()),
-                ):
-                    rc = context_cli.cmd_health(args)
-                results.append(rc)
-            except Exception as exc:
-                errors.append(exc)
+        with (
+            mock.patch.object(context_cli, "_get_session_index", return_value=si_mock),
+            mock.patch.object(context_cli, "_get_context_native", return_value=native_mock),
+            mock.patch.object(context_cli, "_source_freshness", return_value={}),
+            mock.patch.object(context_cli, "_remote_process_count", return_value=0),
+        ):
 
-        with ThreadPoolExecutor(max_workers=4) as pool:
-            futures = [pool.submit(run_health) for _ in range(4)]
-            for f in futures:
-                f.result(timeout=10)
+            def run_health() -> None:
+                try:
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        rc = context_cli.cmd_health(args)
+                    results.append(rc)
+                except Exception as exc:
+                    errors.append(exc)
+
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                futures = [pool.submit(run_health) for _ in range(4)]
+                for f in futures:
+                    f.result(timeout=10)
 
         self.assertEqual(errors, [])
         self.assertEqual(results, [0, 0, 0, 0])

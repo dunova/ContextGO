@@ -7,6 +7,7 @@ Claude Code, Cursor, Windsurf, OpenCode, and any MCP-compliant client.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import sys
@@ -154,15 +155,11 @@ def run_mcp_stdio_server() -> int:
     """Run standard JSON-RPC 2.0 loop on stdin / stdout."""
     # Ensure stdout writes are unbuffered and utf-8 where supported
     if hasattr(sys.stdout, "reconfigure"):
-        try:
+        with contextlib.suppress(Exception):
             sys.stdout.reconfigure(line_buffering=True, encoding="utf-8")  # type: ignore[attr-defined]
-        except Exception:
-            pass
     if hasattr(sys.stdin, "reconfigure"):
-        try:
+        with contextlib.suppress(Exception):
             sys.stdin.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]
-        except Exception:
-            pass
 
     while True:
         try:

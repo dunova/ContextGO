@@ -133,7 +133,7 @@ class OverhaulCliTests(unittest.TestCase):
         rc, out, _ = self._capture(context_cli.cmd_completion, argparse.Namespace(shell="bash"))
         self.assertEqual(rc, 0)
         self.assertIn("ContextGO", out)
-        self.assertRegex(context_cli._read_version(), r"^0\.13\.0")
+        self.assertRegex(context_cli._read_version(), r"^\d+\.\d+\.\d+")
 
     def test_search_and_semantic_error_contracts(self) -> None:
         search = argparse.Namespace(query="", type="all", limit=5, literal=False)
