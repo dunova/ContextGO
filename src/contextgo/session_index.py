@@ -18,17 +18,26 @@ Public API (stable):
 from __future__ import annotations
 
 __all__ = [
+    "MEMORY_PACK_FORMAT",
+    "MEMORY_PACK_SCHEMA_VERSION",
     "SessionDocument",
     "build_query_terms",
+    "compute_doc_id",
     "ensure_session_db",
+    "export_memory_package",
     "format_search_results",
     "get_session_db_path",
     "health_payload",
+    "import_memory_package",
     "lookup_session_by_id",
+    "origin_breakdown",
+    "read_memory_package",
     "sync_session_index",
+    "write_memory_package",
 ]
 
 import contextlib
+import hashlib
 import json
 import logging
 import math
@@ -47,12 +56,18 @@ from typing import Any
 
 try:
     from context_config import env_int, storage_root
+    from node_identity import describe_node as _describe_node
+    from node_identity import node_id as _node_id
+    from node_identity import origin_fields as _origin_fields
     from source_adapters import adapter_dirty_epoch, discover_index_sources, sync_all_adapters
     from sqlite_retry import retry_commit as _rc
     from sqlite_retry import retry_sqlite as _rs
     from sqlite_retry import retry_sqlite_many as _rsm
 except ImportError:  # pragma: no cover
     from .context_config import env_int, storage_root
+    from .node_identity import describe_node as _describe_node  # type: ignore[import-not-found]
+    from .node_identity import node_id as _node_id  # type: ignore[import-not-found]
+    from .node_identity import origin_fields as _origin_fields
     from .source_adapters import (  # type: ignore[import-not-found]
         adapter_dirty_epoch,
         discover_index_sources,
@@ -79,12 +94,45 @@ SESSION_DB_PATH_ENV = "CONTEXTGO_SESSION_INDEX_DB_PATH"
 
 MAX_CONTENT_CHARS: int = env_int("CONTEXTGO_SESSION_MAX_CONTENT_CHARS", default=24000, minimum=4000)
 SYNC_MIN_INTERVAL_SEC: int = env_int("CONTEXTGO_SESSION_SYNC_MIN_INTERVAL_SEC", default=15, minimum=0)
+
+#: Whether a scan may delete memories whose source file disappeared locally.
+#:
+#: Default is **off**.  In a memory-first system a row is a memory, not a
+#: pointer to a file: the content was already captured at index time, so the
+#: disappearance of the originating file (a cleaned-up log directory, a
+#: relocated home, a transient mount, a snapshot restored without its raw
+#: mirror) must not silently destroy recall.  Operators who want the old
+#: "index mirrors the filesystem" behaviour can opt in with
+#: ``CONTEXTGO_SESSION_PRUNE_ENABLED=1``.
+PRUNE_LOCAL_MISSING: bool = (
+    os.environ.get("CONTEXTGO_SESSION_PRUNE_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
+)
 SOURCE_CACHE_TTL_SEC: int = env_int("CONTEXTGO_SOURCE_CACHE_TTL_SEC", default=10, minimum=0)
 EXPERIMENTAL_SEARCH_BACKEND: str = os.environ.get("CONTEXTGO_EXPERIMENTAL_SEARCH_BACKEND", "").strip().lower()
 EXPERIMENTAL_SYNC_BACKEND: str = os.environ.get("CONTEXTGO_EXPERIMENTAL_SYNC_BACKEND", "").strip().lower()
 
 #: Bump this string to force a full re-index on next sync.
-SESSION_INDEX_SCHEMA_VERSION = "2026-03-26-search-noise-v5"
+#:
+#: v6 ("memory-first") changed the row identity of ``session_documents`` from a
+#: machine-local absolute ``file_path`` to a content-addressed ``doc_id`` and
+#: added ``origin_*`` provenance columns.  Existing v5 databases are migrated
+#: in place by :func:`_migrate_session_documents_schema`; the version bump also
+#: guarantees a reconciliation pass so migrated rows get a ``doc_id`` even if
+#: the migration could not compute one (for example, a row whose source file is
+#: long gone).
+SESSION_INDEX_SCHEMA_VERSION = "2026-09-17-memory-first-v6"
+
+#: Schema versions that predate the memory-first identity model.  Rows in such
+#: databases are keyed by ``file_path`` and have no provenance information; the
+#: migration treats them as locally owned, which preserves the historical
+#: behaviour for a single-machine install.
+_LEGACY_SCHEMA_VERSIONS = frozenset(
+    {
+        "2026-03-26-search-noise-v5",
+        "2026-03-26-search-noise-v4",
+        "2026-03-26-search-noise-v3",
+    }
+)
 
 #: Set to True once FTS5 availability has been confirmed in the current process.
 #: None = not yet checked; True = available; False = unavailable.
@@ -118,16 +166,21 @@ _logger = logging.getLogger(__name__)
 
 _DDL_SESSION_DOCUMENTS = """
 CREATE TABLE IF NOT EXISTS session_documents (
-    file_path        TEXT PRIMARY KEY,
+    doc_id           TEXT PRIMARY KEY,
+    file_path        TEXT NOT NULL DEFAULT '',
     source_type      TEXT NOT NULL,
     session_id       TEXT NOT NULL,
     title            TEXT NOT NULL,
     content          TEXT NOT NULL,
     created_at       TEXT NOT NULL,
     created_at_epoch INTEGER NOT NULL,
-    file_mtime       INTEGER NOT NULL,
-    file_size        INTEGER NOT NULL,
-    updated_at_epoch INTEGER NOT NULL
+    file_mtime       INTEGER NOT NULL DEFAULT 0,
+    file_size        INTEGER NOT NULL DEFAULT 0,
+    updated_at_epoch INTEGER NOT NULL,
+    origin_host      TEXT NOT NULL DEFAULT '',
+    origin_os        TEXT NOT NULL DEFAULT '',
+    origin_label     TEXT NOT NULL DEFAULT '',
+    origin_path      TEXT NOT NULL DEFAULT ''
 )
 """
 
@@ -145,6 +198,11 @@ _DDL_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_session_session_id ON session_documents(session_id)",
     # Accelerates updated_at_epoch sorts used in health/stats queries.
     "CREATE INDEX IF NOT EXISTS idx_session_updated    ON session_documents(updated_at_epoch DESC)",
+    # file_path is no longer the row identity, so it needs its own index for
+    # the local reconciliation path (changed-file detection) to stay O(log n).
+    "CREATE INDEX IF NOT EXISTS idx_session_path       ON session_documents(file_path)",
+    # Pruning is origin-scoped; without this index every sync full-scans.
+    "CREATE INDEX IF NOT EXISTS idx_session_origin     ON session_documents(origin_host)",
 ]
 
 _DDL_SESSION_DOCUMENTS_FTS = """
@@ -185,26 +243,37 @@ _SQL_META_SET = """
     ON CONFLICT(key) DO UPDATE SET value = excluded.value
 """
 _SQL_CHECK_CHANGED = "SELECT file_mtime, file_size FROM session_documents WHERE file_path = ?"
+# A doc_id is derived from document content, so a conflict means "the same
+# memory".  Identity and provenance are frozen on first write; only the local
+# file bookkeeping is refreshed, and only when the incoming writer is the same
+# node that first recorded the row.
 _SQL_UPSERT_DOC = """
     INSERT INTO session_documents(
-        file_path, source_type, session_id, title, content,
-        created_at, created_at_epoch, file_mtime, file_size, updated_at_epoch
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(file_path) DO UPDATE SET
-        source_type      = excluded.source_type,
-        session_id       = excluded.session_id,
-        title            = excluded.title,
-        content          = excluded.content,
-        created_at       = excluded.created_at,
-        created_at_epoch = excluded.created_at_epoch,
-        file_mtime       = excluded.file_mtime,
-        file_size        = excluded.file_size,
-        updated_at_epoch = excluded.updated_at_epoch
+        doc_id, file_path, source_type, session_id, title, content,
+        created_at, created_at_epoch, file_mtime, file_size, updated_at_epoch,
+        origin_host, origin_os, origin_label, origin_path
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(doc_id) DO UPDATE SET
+        file_path        = CASE WHEN session_documents.origin_host = excluded.origin_host
+                                THEN excluded.file_path
+                                ELSE session_documents.file_path END,
+        file_mtime       = CASE WHEN session_documents.origin_host = excluded.origin_host
+                                THEN excluded.file_mtime
+                                ELSE session_documents.file_mtime END,
+        file_size        = CASE WHEN session_documents.origin_host = excluded.origin_host
+                                THEN excluded.file_size
+                                ELSE session_documents.file_size END,
+        updated_at_epoch = MAX(session_documents.updated_at_epoch, excluded.updated_at_epoch)
 """
-_SQL_DELETE_DOC = "DELETE FROM session_documents WHERE file_path = ?"
-_SQL_ALL_PATHS = "SELECT file_path FROM session_documents"
+_SQL_DELETE_DOC = "DELETE FROM session_documents WHERE doc_id = ?"
+_SQL_ALL_PATHS = "SELECT file_path FROM session_documents WHERE file_path != ''"
 _SQL_COUNT_DOCS = "SELECT COUNT(*) FROM session_documents"
 _SQL_MAX_EPOCH = "SELECT MAX(created_at_epoch) FROM session_documents"
+# Local reconciliation only ever looks at rows this node owns.  Rows that
+# arrived from another machine are intentionally excluded: their file_path
+# points at a filesystem that does not exist here.
+_SQL_LOCAL_META = "SELECT file_path, file_mtime, file_size, doc_id FROM session_documents WHERE origin_host = ?"
+_SQL_COUNT_BY_ORIGIN = "SELECT origin_host, COUNT(*) FROM session_documents GROUP BY origin_host"
 
 
 # Noise configuration
@@ -422,6 +491,64 @@ def _normalize_file_path(path: Path) -> str:
         return path.resolve().as_posix()
     except OSError:
         return str(path)
+
+
+# ---------------------------------------------------------------------------
+# Document identity (content-addressed)
+# ---------------------------------------------------------------------------
+#
+# ``doc_id`` is the row identity of ``session_documents``.  It is derived from
+# the *content* of a document rather than from the path of the file that
+# happened to produce it, for three reasons:
+#
+#   1. Portability — the same session indexed on two machines must collapse to
+#      one memory, not two rows that are mutually invisible.
+#   2. Rename-safety — moving or re-rooting a log file (``/Users/x`` vs
+#      ``/home/x``) must not create a duplicate memory.
+#   3. Prune-safety — deletion decisions can then be scoped to the machine that
+#      actually owns the file, instead of "every row whose path is missing".
+#
+# ``session_id`` and ``created_at_epoch`` participate so that two genuinely
+# different sessions which happen to share a title (very common: "New Session")
+# do not collide when their bodies are short and similar.
+
+
+def compute_doc_id(
+    source_type: str,
+    session_id: str,
+    title: str,
+    content: str,
+    created_at_epoch: int,
+) -> str:
+    """Return the stable, machine-independent identity of a session document."""
+    payload = "\x1f".join(
+        (
+            str(source_type or ""),
+            str(session_id or ""),
+            str(title or ""),
+            str(content or ""),
+            str(int(created_at_epoch or 0)),
+        )
+    )
+    return hashlib.sha256(payload.encode("utf-8", errors="replace")).hexdigest()
+
+
+def _legacy_doc_id(source_type: str, session_id: str, created_at_epoch: int, content: str) -> str:
+    """Return a degraded identity for rows whose original file is unavailable.
+
+    Used by the v5→v6 migration when a stored row cannot yield a full identity
+    (for example a row that was already truncated).  It stays deterministic so
+    that re-running the migration is idempotent.
+    """
+    payload = "\x1e".join(
+        (
+            str(source_type or ""),
+            str(session_id or ""),
+            str(int(created_at_epoch or 0)),
+            str(len(content or "")),
+        )
+    )
+    return hashlib.sha256(payload.encode("utf-8", errors="replace")).hexdigest()
 
 
 def _iso_to_epoch(value: str | None, fallback: int) -> int:
@@ -1014,6 +1141,122 @@ def get_session_db_path() -> Path:
     return storage_root() / "index" / "session_index.db"
 
 
+def _session_document_columns(conn: sqlite3.Connection) -> set[str]:
+    """Return the column names of ``session_documents`` (empty when absent)."""
+    try:
+        rows = _rs(conn, "PRAGMA table_info(session_documents)").fetchall()
+    except sqlite3.Error:
+        return set()
+    return {str(row[1]) for row in rows}
+
+
+def _migrate_session_documents_schema(conn: sqlite3.Connection) -> dict[str, int]:
+    """Upgrade a legacy path-keyed ``session_documents`` table to memory-first.
+
+    Legacy schema (v5 and earlier)::
+
+        file_path TEXT PRIMARY KEY   -- identity == machine-local absolute path
+
+    Memory-first schema (v6)::
+
+        doc_id TEXT PRIMARY KEY      -- identity == content fingerprint
+        origin_host/origin_os/origin_label/origin_path   -- provenance
+
+    The migration is in place and idempotent.  Every migrated row is stamped
+    with the *current* node id, which is the correct answer for a database that
+    was produced on this machine (the only way a legacy database can exist).
+    Rows are never dropped: if a row cannot yield a full content identity, a
+    deterministic length-based fallback id is used instead.
+
+    Returns:
+        Dict with ``migrated`` (rows rewritten) and ``legacy`` (rows seen).
+    """
+    columns = _session_document_columns(conn)
+    if not columns:
+        # Fresh install: the v6 DDL will create the table.
+        return {"migrated": 0, "legacy": 0}
+    if "doc_id" in columns:
+        return {"migrated": 0, "legacy": 0}
+    if "file_path" not in columns:
+        # Unrecognised table shape; leave it alone rather than guessing.
+        return {"migrated": 0, "legacy": 0}
+
+    origin = _origin_fields()
+    legacy_rows = _rs(conn, "SELECT COUNT(*) FROM session_documents").fetchone()[0]
+
+    # Triggers reference the old table by name, so retire them first.
+    for trigger in ("session_documents_fts_ai", "session_documents_fts_ad", "session_documents_fts_au"):
+        conn.execute(f"DROP TRIGGER IF EXISTS {trigger}")
+
+    conn.execute("ALTER TABLE session_documents RENAME TO session_documents_v5")
+    conn.execute(_DDL_SESSION_DOCUMENTS)
+
+    select_sql = (
+        "SELECT file_path, source_type, session_id, title, content, "
+        "created_at, created_at_epoch, file_mtime, file_size, updated_at_epoch "
+        "FROM session_documents_v5"
+    )
+    migrated = 0
+    batch: list[tuple[Any, ...]] = []
+    now_epoch = int(datetime.now(timezone.utc).timestamp())
+
+    cursor = conn.execute(select_sql)
+    while True:
+        rows = cursor.fetchmany(_BATCH_COMMIT_SIZE)
+        if not rows:
+            break
+        for row in rows:
+            (
+                file_path,
+                source_type,
+                session_id,
+                title,
+                content,
+                created_at,
+                created_at_epoch,
+                file_mtime,
+                file_size,
+                updated_at_epoch,
+            ) = row
+            doc_id = compute_doc_id(source_type, session_id, title, content, created_at_epoch)
+            if not doc_id:  # pragma: no cover - compute_doc_id never returns falsy
+                doc_id = _legacy_doc_id(source_type, session_id, created_at_epoch, content)
+            batch.append(
+                (
+                    doc_id,
+                    file_path or "",
+                    source_type,
+                    session_id,
+                    title,
+                    content,
+                    created_at,
+                    created_at_epoch,
+                    file_mtime or 0,
+                    file_size or 0,
+                    updated_at_epoch or now_epoch,
+                    origin["origin_host"],
+                    origin["origin_os"],
+                    origin["origin_label"],
+                    file_path or "",
+                )
+            )
+            if len(batch) >= _BATCH_COMMIT_SIZE:
+                _rsm(conn, _SQL_UPSERT_DOC, batch)
+                migrated += len(batch)
+                batch.clear()
+    if batch:
+        _rsm(conn, _SQL_UPSERT_DOC, batch)
+        migrated += len(batch)
+
+    conn.execute("DROP TABLE IF EXISTS session_documents_v5")
+    _rc(conn)
+    _logger.info(
+        "session_index: migrated %d legacy rows to memory-first identity (doc_id + provenance)",
+        migrated,
+    )
+    return {"migrated": migrated, "legacy": int(legacy_rows or 0)}
+
+
 def ensure_session_db() -> Path:
     """Create the session index database and schema if absent; return the path."""
     db_path = get_session_db_path()
@@ -1026,6 +1269,9 @@ def ensure_session_db() -> Path:
             # world-readable on shared machines.
             with contextlib.suppress(OSError):
                 os.chmod(db_path, 0o600)
+        # Upgrade legacy path-keyed databases before applying the current DDL.
+        with contextlib.suppress(sqlite3.Error):
+            _migrate_session_documents_schema(conn)
         _retry_sqlite(conn, _DDL_SESSION_DOCUMENTS)
         for ddl in _DDL_INDEXES:
             _retry_sqlite(conn, ddl)
@@ -1170,10 +1416,27 @@ def _sync_session_index_locked(force: bool = False) -> dict[str, int]:
     now_epoch = int(datetime.now(timezone.utc).timestamp())
     seen_paths: set[str] = set()
 
+    origin = _origin_fields()
+    self_origin = origin["origin_host"]
+
     with _open_db(db_path) as conn:
         current_version = _meta_get(conn, "schema_version")
         if current_version != SESSION_INDEX_SCHEMA_VERSION:
-            _retry_sqlite(conn, "DELETE FROM session_documents")
+            # A schema bump used to wipe the entire index here.  That made any
+            # version skew an unconditional memory loss, and it destroyed
+            # documents imported from other machines that this node could never
+            # re-derive (their source files do not exist locally).
+            #
+            # Content-addressed identity removes the reason for the wipe:
+            # _migrate_session_documents_schema() has already stamped identity
+            # and provenance in place, and the reconciliation pass below
+            # refreshes local rows by content.  We only record the new version
+            # and force a scan so any rows still missing a doc_id are repaired.
+            _logger.info(
+                "session_index: schema %s -> %s; reconciling in place (no destructive reset)",
+                current_version or "unknown",
+                SESSION_INDEX_SCHEMA_VERSION,
+            )
             _meta_set(conn, "schema_version", SESSION_INDEX_SCHEMA_VERSION)
             _retry_commit(conn)
             force = True
@@ -1221,18 +1484,44 @@ def _sync_session_index_locked(force: bool = False) -> dict[str, int]:
         queued_paths: set[str] = set()
 
         # --- P0 Fix 1: bulk-load all existing mtime/size into memory to avoid N+1 SELECTs ---
-        existing_meta: dict[str, tuple[int, int]] = {
-            row[0]: (int(row[1]), int(row[2]))
-            for row in _retry_sqlite(conn, "SELECT file_path, file_mtime, file_size FROM session_documents").fetchall()
+        # Scoped to rows this node owns.  Rows imported from another machine
+        # carry a file_path that does not exist here; including them would make
+        # every foreign document look like a changed file and re-parse forever.
+        # Deliberately keyed by file_path (not doc_id): the local scan produces
+        # paths, and this map is the "has this file changed?" fast path.
+        existing_meta: dict[str, tuple[int, int, str]] = {
+            row[0]: (int(row[1]), int(row[2]), str(row[3] or ""))
+            for row in _retry_sqlite(conn, _SQL_LOCAL_META, (self_origin,)).fetchall()
         }
+
+        # Documents this node already owns, keyed by content identity, used to
+        # avoid re-inserting an identical document that arrived from a peer.
+        local_doc_ids: set[str] = {doc for _p, (_m, _s, doc) in existing_meta.items() if doc}
+
+        # Previous row identities that a changed local file has superseded.
+        # Content-addressed identity means an edited file yields a *new*
+        # doc_id; without this bookkeeping the previous revision would linger
+        # forever as a duplicate memory of the same file.
+        superseded_ids: set[str] = set()
 
         def _flush_upsert_batch() -> None:
             """Flush the current upsert batch to the database and commit."""
+            if superseded_ids:
+                _retry_sqlite_many(
+                    conn,
+                    _SQL_DELETE_DOC,
+                    ((doc_id,) for doc_id in superseded_ids),
+                )
+                _logger.debug(
+                    "sync_session_index: superseded %d previous revision(s) of changed local files",
+                    len(superseded_ids),
+                )
+                superseded_ids.clear()
             if upsert_batch:
                 _retry_sqlite_many(conn, _SQL_UPSERT_DOC, upsert_batch)
-                _retry_commit(conn)
                 _logger.debug("sync_session_index: flushed %d upsert rows", len(upsert_batch))
                 upsert_batch.clear()
+            _retry_commit(conn)
 
         for source_type, path in _iter_sources():
             scanned += 1
@@ -1250,7 +1539,6 @@ def _sync_session_index_locked(force: bool = False) -> dict[str, int]:
 
             # O(1) in-memory lookup instead of per-file SELECT query.
             cached = existing_meta.get(canonical_path)
-            row = cached  # truthy when the record already exists
             if cached and cached[0] == int(stat.st_mtime) and cached[1] == int(stat.st_size):
                 continue
 
@@ -1260,8 +1548,16 @@ def _sync_session_index_locked(force: bool = False) -> dict[str, int]:
             if not doc:
                 continue
 
+            doc_id = compute_doc_id(
+                doc.source_type,
+                doc.session_id,
+                doc.title,
+                doc.content,
+                doc.created_at_epoch,
+            )
             upsert_batch.append(
                 (
+                    doc_id,
                     canonical_path,
                     doc.source_type,
                     doc.session_id,
@@ -1272,11 +1568,25 @@ def _sync_session_index_locked(force: bool = False) -> dict[str, int]:
                     doc.file_mtime,
                     doc.file_size,
                     now_epoch,
+                    origin["origin_host"],
+                    origin["origin_os"],
+                    origin["origin_label"],
+                    canonical_path,
                 )
             )
             queued_paths.add(canonical_path)
-            updated += 1 if row else 0
-            added += 0 if row else 1
+            if cached:
+                # Same local file, new content: the row for the previous
+                # revision is superseded rather than left behind as a second
+                # memory describing the same file.
+                previous_id = cached[2]
+                if previous_id and previous_id != doc_id:
+                    superseded_ids.add(previous_id)
+                    local_doc_ids.discard(previous_id)
+                updated += 1
+            else:
+                added += 1
+            local_doc_ids.add(doc_id)
 
             # Flush to DB when the batch reaches the configured threshold.
             if len(upsert_batch) >= _BATCH_COMMIT_SIZE:
@@ -1294,7 +1604,15 @@ def _sync_session_index_locked(force: bool = False) -> dict[str, int]:
             updated,
         )
 
-        # Remove index entries whose source files no longer exist.
+        # Remove index entries whose source files no longer exist **on this
+        # machine**, for rows this machine owns.
+        #
+        # Origin scoping is the load-bearing safety property: a document that
+        # arrived from another machine carries an absolute path from that
+        # machine, which by definition does not exist here.  An unscoped prune
+        # therefore deletes every imported memory on the first scan — the exact
+        # failure this schema exists to prevent.
+        #
         # --- P0 Fix 2: use a temporary table + single DELETE to avoid full-scan + Python set-diff ---
         _t_remove_start = time.monotonic()
         conn.execute("CREATE TEMP TABLE IF NOT EXISTS _temp_seen_paths (path TEXT PRIMARY KEY)")
@@ -1309,14 +1627,40 @@ def _sync_session_index_locked(force: bool = False) -> dict[str, int]:
             )
         # Count stale rows before deletion for the return value.
         stale_count_row = conn.execute(
-            "SELECT COUNT(*) FROM session_documents WHERE file_path NOT IN (SELECT path FROM _temp_seen_paths)"
+            "SELECT COUNT(*) FROM session_documents "
+            "WHERE origin_host = ? AND file_path != '' "
+            "AND file_path NOT IN (SELECT path FROM _temp_seen_paths)",
+            (self_origin,),
         ).fetchone()
-        removed = int(stale_count_row[0]) if stale_count_row else 0
-        if removed:
-            conn.execute("DELETE FROM session_documents WHERE file_path NOT IN (SELECT path FROM _temp_seen_paths)")
-            _logger.debug("sync_session_index: deleted %d stale rows via temp table", removed)
+        stale_total = int(stale_count_row[0]) if stale_count_row else 0
+        removed = 0
+        if stale_total and PRUNE_LOCAL_MISSING:
+            conn.execute(
+                "DELETE FROM session_documents "
+                "WHERE origin_host = ? AND file_path != '' "
+                "AND file_path NOT IN (SELECT path FROM _temp_seen_paths)",
+                (self_origin,),
+            )
+            removed = stale_total
+            _logger.debug("sync_session_index: deleted %d stale local rows via temp table", removed)
+        elif stale_total:
+            _logger.debug(
+                "sync_session_index: %d local row(s) reference missing files but were retained "
+                "(memory-first default; set CONTEXTGO_SESSION_PRUNE_ENABLED=1 to delete)",
+                stale_total,
+            )
         conn.execute("DROP TABLE IF EXISTS _temp_seen_paths")
         _retry_commit(conn)
+
+        foreign_kept = conn.execute(
+            "SELECT COUNT(*) FROM session_documents WHERE origin_host != ?", (self_origin,)
+        ).fetchone()
+        foreign_count = int(foreign_kept[0]) if foreign_kept else 0
+        if foreign_count:
+            _logger.debug(
+                "sync_session_index: %d imported row(s) from other nodes retained (never pruned)",
+                foreign_count,
+            )
 
         _meta_set(conn, "last_sync_epoch", str(now_epoch))
 
@@ -2126,10 +2470,316 @@ def health_payload() -> dict[str, Any]:
     with _open_db(db_path) as conn:
         total = _retry_sqlite(conn, _SQL_COUNT_DOCS).fetchone()[0]
         latest = _retry_sqlite(conn, _SQL_MAX_EPOCH).fetchone()[0]
+        rows = _retry_sqlite(conn, _SQL_COUNT_BY_ORIGIN).fetchall()
+    self_origin = _origin_fields()["origin_host"]
+    by_origin = {str(row[0] or ""): int(row[1]) for row in rows}
     return {
         "session_index_db_exists": db_path.exists(),
         "session_index_db": str(db_path),
         "total_sessions": int(total or 0),
         "latest_epoch": int(latest or 0),
+        "node_id": self_origin,
+        "local_sessions": int(by_origin.get(self_origin, 0)),
+        "imported_sessions": sum(
+            count for origin, count in by_origin.items() if origin and origin != self_origin
+        ),
+        "sessions_by_origin": by_origin,
         "sync": sync_info,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Memory pack: portable, machine-independent memory exchange
+# ---------------------------------------------------------------------------
+#
+# A "memory pack" is the supported way to move memory between machines.
+#
+# Why not ship the index database itself (tarball / rsync / NAS snapshot)?
+# Because the database is a *local* artefact: rows carry absolute paths from
+# the machine that produced them, plus mtime/size metadata that only means
+# something on that machine.  Copying it wholesale forces the receiving node to
+# reconcile foreign paths against its own filesystem, which is precisely the
+# operation that used to delete imported memory.
+#
+# A memory pack instead carries only what is portable — identity, content,
+# time, and provenance — and import merges it by content identity.  Importing
+# is therefore additive and idempotent: running it twice changes nothing, and
+# it never depends on the receiver having the sender's files.
+
+MEMORY_PACK_FORMAT = "contextgo-memory-pack"
+MEMORY_PACK_SCHEMA_VERSION = 1
+MEMORY_PACK_SUFFIX = ".memories.json"
+
+_PACK_DOC_FIELDS = (
+    "doc_id",
+    "source_type",
+    "session_id",
+    "title",
+    "content",
+    "created_at",
+    "created_at_epoch",
+    "origin_host",
+    "origin_os",
+    "origin_label",
+    "origin_path",
+)
+
+
+def export_memory_package(
+    *,
+    limit: int = 200_000,
+    include_foreign: bool = True,
+    source_type: str = "all",
+) -> dict[str, Any]:
+    """Build a portable memory pack describing this node's session memories.
+
+    Args:
+        limit: Maximum number of documents to include (clamped to 1–500 000).
+        include_foreign: When ``True`` (default) documents previously imported
+            from other machines are re-exported too, so packs stay transitive
+            across a mesh of machines.  Set ``False`` to export only memories
+            that originated here.
+        source_type: Optional ``source_type`` filter, or ``"all"``.
+
+    Returns:
+        A JSON-serialisable dict with ``format``, ``schema_version``,
+        ``node``, ``counts`` and ``documents``.
+    """
+    db_path = ensure_session_db()
+    target = max(1, min(int(limit), 500_000))
+    self_origin = _origin_fields()["origin_host"]
+
+    where: list[str] = []
+    params: list[Any] = []
+    if not include_foreign:
+        where.append("origin_host = ?")
+        params.append(self_origin)
+    if source_type and source_type != "all":
+        where.append("source_type = ?")
+        params.append(source_type)
+    where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+
+    documents: list[dict[str, Any]] = []
+    with _open_db(db_path) as conn:
+        cursor = conn.execute(
+            f"SELECT doc_id, source_type, session_id, title, content, created_at, "
+            f"created_at_epoch, origin_host, origin_os, origin_label, origin_path "
+            f"FROM session_documents {where_sql} "
+            f"ORDER BY created_at_epoch DESC LIMIT ?",
+            (*params, target),
+        )
+        for row in cursor.fetchall():
+            documents.append(dict(zip(_PACK_DOC_FIELDS, row, strict=True)))
+
+    node = _describe_node()
+    return {
+        "format": MEMORY_PACK_FORMAT,
+        "schema_version": MEMORY_PACK_SCHEMA_VERSION,
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "node": {
+            "node_id": node["node_id"],
+            "label": node.get("label", ""),
+            "platform": node.get("platform", ""),
+        },
+        "counts": {"documents": len(documents)},
+        "documents": documents,
+    }
+
+
+def import_memory_package(payload: dict[str, Any]) -> dict[str, Any]:
+    """Merge a memory pack into this node's session index.
+
+    Behaviour:
+        * Identity is **recomputed** from content, so a pack cannot inject a row
+          whose ``doc_id`` disagrees with its body.
+        * A document already present under the same ``doc_id`` is skipped, which
+          makes import idempotent and safe to re-run.
+        * Provenance from the pack is preserved.  Imported rows are therefore
+          never pruned by the receiving machine, even though their
+          ``origin_path`` points at a filesystem that does not exist here.
+
+    Args:
+        payload: A dict as produced by :func:`export_memory_package`.
+
+    Returns:
+        Dict with ``inserted``, ``skipped``, ``invalid`` and ``total``.
+
+    Raises:
+        ValueError: When the payload is not a recognised memory pack.
+    """
+    if not isinstance(payload, dict):
+        raise ValueError("invalid memory pack: expected an object")
+    if str(payload.get("format", "")) != MEMORY_PACK_FORMAT:
+        raise ValueError(
+            f"invalid memory pack: expected format {MEMORY_PACK_FORMAT!r}, "
+            f"got {payload.get('format')!r}"
+        )
+    try:
+        pack_version = int(payload.get("schema_version", 0))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("invalid memory pack: schema_version must be an integer") from exc
+    if pack_version > MEMORY_PACK_SCHEMA_VERSION:
+        raise ValueError(
+            f"memory pack schema v{pack_version} is newer than this build supports "
+            f"(v{MEMORY_PACK_SCHEMA_VERSION}); upgrade ContextGO first"
+        )
+    documents = payload.get("documents")
+    if not isinstance(documents, list):
+        raise ValueError("invalid memory pack: documents must be a list")
+
+    now_epoch = int(datetime.now(timezone.utc).timestamp())
+    candidates: list[tuple[Any, ...]] = []
+    invalid = 0
+
+    for raw in documents:
+        if not isinstance(raw, dict):
+            invalid += 1
+            continue
+        content = str(raw.get("content") or "")
+        if not content.strip():
+            invalid += 1
+            continue
+        source_type = str(raw.get("source_type") or "")
+        session_id = str(raw.get("session_id") or "")
+        title = str(raw.get("title") or "")
+        try:
+            created_at_epoch = int(raw.get("created_at_epoch") or 0)
+        except (TypeError, ValueError):
+            created_at_epoch = 0
+        created_at = str(raw.get("created_at") or "")
+        if not created_at:
+            created_at = datetime.fromtimestamp(max(created_at_epoch, 0), tz=timezone.utc).isoformat()
+
+        # Recompute identity from content: the pack's own doc_id is advisory.
+        doc_id = compute_doc_id(source_type, session_id, title, content, created_at_epoch)
+
+        origin_host = str(raw.get("origin_host") or "")
+        if not origin_host:
+            # A pack entry without provenance is safest treated as foreign and
+            # attributed to the exporting node, never to the receiver.
+            origin_host = str((payload.get("node") or {}).get("node_id") or "imported")
+
+        origin_path = str(raw.get("origin_path") or raw.get("file_path") or "")
+        candidates.append(
+            (
+                doc_id,
+                "",  # file_path stays empty: no local file backs an imported doc
+                source_type,
+                session_id,
+                title,
+                content,
+                created_at,
+                created_at_epoch,
+                0,  # file_mtime
+                0,  # file_size
+                now_epoch,
+                origin_host,
+                str(raw.get("origin_os") or ""),
+                str(raw.get("origin_label") or ""),
+                origin_path,
+            )
+        )
+
+    inserted = 0
+    skipped = 0
+    if candidates:
+        db_path = ensure_session_db()
+        with _open_db(db_path) as conn:
+            incoming = [c[0] for c in candidates]
+            existing: set[str] = set()
+            page = 500
+            for start in range(0, len(incoming), page):
+                chunk = incoming[start : start + page]
+                placeholders = ",".join("?" for _ in chunk)
+                existing.update(
+                    str(row[0])
+                    for row in conn.execute(
+                        f"SELECT doc_id FROM session_documents WHERE doc_id IN ({placeholders})",
+                        chunk,
+                    ).fetchall()
+                )
+            fresh = [c for c in candidates if c[0] not in existing]
+            skipped = len(candidates) - len(fresh)
+            for start in range(0, len(fresh), _BATCH_COMMIT_SIZE):
+                batch = fresh[start : start + _BATCH_COMMIT_SIZE]
+                _rsm(conn, _SQL_UPSERT_DOC, batch)
+            _rc(conn)
+            inserted = len(fresh)
+
+    return {
+        "inserted": inserted,
+        "skipped": skipped,
+        "invalid": invalid,
+        "total": len(candidates),
+    }
+
+
+def write_memory_package(path: str | Path, payload: dict[str, Any]) -> Path:
+    """Write a memory pack to *path* (gzip-compressed when the name ends in .gz)."""
+    target = Path(path).expanduser()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    blob = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    if str(target).endswith(".gz"):
+        import gzip
+
+        with gzip.open(target, "wb") as handle:
+            handle.write(blob)
+    else:
+        target.write_bytes(blob)
+    return target
+
+
+def read_memory_package(path: str | Path) -> dict[str, Any]:
+    """Read a memory pack written by :func:`write_memory_package`."""
+    source = Path(path).expanduser()
+    if not source.is_file():
+        raise FileNotFoundError(f"memory pack not found: {source}")
+    if str(source).endswith(".gz"):
+        import gzip
+
+        with gzip.open(source, "rb") as handle:
+            raw = handle.read()
+    else:
+        raw = source.read_bytes()
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise ValueError(f"memory pack is not valid JSON: {source}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"memory pack must be a JSON object: {source}")
+    return payload
+
+
+def origin_breakdown() -> dict[str, Any]:
+    """Return per-origin document counts plus a human-readable label map.
+
+    Exposed for diagnostics: it answers "how much of what I can recall actually
+    originated on this machine?" without opening the database by hand.
+    """
+    db_path = ensure_session_db()
+    self_origin = _origin_fields()["origin_host"]
+    with _open_db(db_path) as conn:
+        rows = _retry_sqlite(conn, _SQL_COUNT_BY_ORIGIN).fetchall()
+        labels = {
+            str(row[0]): str(row[1])
+            for row in conn.execute(
+                "SELECT origin_host, MAX(origin_label) FROM session_documents GROUP BY origin_host"
+            ).fetchall()
+        }
+    origins = []
+    for row in rows:
+        origin = str(row[0] or "")
+        origins.append(
+            {
+                "origin_host": origin,
+                "label": labels.get(origin, ""),
+                "documents": int(row[1]),
+                "is_self": origin == self_origin,
+            }
+        )
+    origins.sort(key=lambda item: item["documents"], reverse=True)
+    return {
+        "node_id": self_origin,
+        "total": sum(item["documents"] for item in origins),
+        "origins": origins,
     }

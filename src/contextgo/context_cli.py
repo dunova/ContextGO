@@ -21,7 +21,9 @@ __all__ = [
     "cmd_health",
     "cmd_import",
     "cmd_maintain",
+    "cmd_memory_pack",
     "cmd_native_scan",
+    "cmd_node",
     "cmd_prewarm",
     "cmd_q",
     "cmd_save",
@@ -90,6 +92,15 @@ def _get_memory_index() -> ModuleType:
         import memory_index as _m  # type: ignore[import-not-found]
     except ImportError:
         from . import memory_index as _m  # type: ignore[import-not-found]
+    return _m
+
+
+def _get_node_identity() -> ModuleType:
+    """Lazy import of node_identity — deferred until first use."""
+    try:
+        import node_identity as _m  # type: ignore[import-not-found]
+    except ImportError:
+        from . import node_identity as _m  # type: ignore[import-not-found]
     return _m
 
 
@@ -585,6 +596,91 @@ def cmd_import(args: argparse.Namespace) -> int:
         f"import done inserted={result.get('inserted', 0)} skipped={result.get('skipped', 0)} db={result.get('db_path', '')}"
     )
     return 0
+
+
+def cmd_node(args: argparse.Namespace) -> int:
+    """Show this node's stable identity and per-origin memory breakdown."""
+    import json  # deferred: only needed for the JSON view
+
+    node = _get_node_identity()
+    info = node.describe_node()
+    try:
+        origins = _get_session_index().origin_breakdown()
+    except Exception as exc:  # pragma: no cover - diagnostics must never fail hard
+        origins = {"node_id": info.get("node_id", ""), "total": 0, "origins": [], "error": str(exc)}
+
+    if getattr(args, "json", False):
+        print(json.dumps({"node": info, "sessions": origins}, ensure_ascii=False, indent=2))
+        return 0
+
+    print("ContextGO node identity / 节点身份")
+    print(f"  node_id   : {info['node_id']}")
+    print(f"  label     : {info['label']}")
+    print(f"  platform  : {info['platform']}")
+    print(f"  home      : {info['home']}")
+    print(f"  node file : {info['node_file']}  (exists={info['node_file_exists']})")
+    print()
+    print(f"Session memories / 会话记忆（共 {origins.get('total', 0)} 条）")
+    if not origins.get("origins"):
+        print("  (empty)")
+    for entry in origins.get("origins", []):
+        marker = "← this node / 本机" if entry.get("is_self") else ""
+        label = entry.get("label") or "?"
+        print(f"  {entry['documents']:>7}  {entry['origin_host']:<20} {label:<20} {marker}")
+    print()
+    print("Imported memories are never pruned locally; see 'contextgo memory-pack'.")
+    return 0
+
+
+def cmd_memory_pack(args: argparse.Namespace) -> int:
+    """Export or import a portable, machine-independent memory pack."""
+    action = getattr(args, "pack_action", "")
+    si = _get_session_index()
+
+    if action == "export":
+        out = Path(args.out).expanduser() if not args.stdout else None
+        payload = si.export_memory_package(
+            limit=args.limit,
+            include_foreign=not args.local_only,
+            source_type=args.source_type,
+        )
+        if out is None:
+            import json  # deferred
+
+            print(json.dumps(payload, ensure_ascii=False))
+            return 0
+        written = si.write_memory_package(out, payload)
+        print(
+            f"memory-pack export: documents={payload['counts']['documents']} "
+            f"node={payload['node']['node_id']} -> {written}"
+        )
+        return 0
+
+    if action == "import":
+        path = Path(args.input).expanduser()
+        try:
+            payload = si.read_memory_package(path)
+            result = si.import_memory_package(payload)
+        except FileNotFoundError as exc:
+            print(f"Error: {exc} / 错误：找不到记忆包文件。", file=sys.stderr)
+            return 2
+        except ValueError as exc:
+            print(
+                f"Error: {exc}. Provide a file produced by 'contextgo memory-pack export'. / "
+                f"错误：{exc}。请提供由 'contextgo memory-pack export' 生成的文件。",
+                file=sys.stderr,
+            )
+            return 2
+        print(
+            f"memory-pack import: inserted={result['inserted']} "
+            f"skipped={result['skipped']} invalid={result['invalid']} total={result['total']}"
+        )
+        if result["inserted"]:
+            print("Imported memories are tagged with their origin node and will not be pruned here.")
+        return 0
+
+    print("Usage: contextgo memory-pack (export|import) ...", file=sys.stderr)
+    return 2
 
 
 def cmd_sync(args: argparse.Namespace) -> int:
@@ -1356,6 +1452,8 @@ COMMANDS: dict[str, object] = {
     "save": cmd_save,
     "export": cmd_export,
     "import": cmd_import,
+    "node": cmd_node,
+    "memory-pack": cmd_memory_pack,
     "sync": cmd_sync,
     "daemon": cmd_daemon,
     "serve": cmd_serve,
@@ -1498,6 +1596,66 @@ def _add_export_import_subcommands(sub: object) -> None:
         action="store_true",
         help="Skip the storage sync step after import (faster, but index may be stale)",
     )
+
+
+def _add_node_memory_pack_subcommands(sub: object) -> None:
+    """Register node identity and cross-machine memory pack commands."""
+    import argparse as _ap  # noqa: PLC0415
+
+    sub.add_parser(  # type: ignore[union-attr]
+        "node",
+        help="Show this node's stable identity and per-origin memory breakdown",
+        description=(
+            "ContextGO identifies a machine by a persistent node id stored in\n"
+            "<storage_root>/node.json, never by a home directory path.\n\n"
+            "Every indexed document records which node produced it.  Rows imported\n"
+            "from another machine are never deleted by this machine's scans, even\n"
+            "though their original paths do not exist here.\n\n"
+            "Examples:\n"
+            "  contextgo node\n"
+            "  contextgo node --json\n\n"
+            "Exit codes: 0 = success."
+        ),
+        formatter_class=_ap.RawDescriptionHelpFormatter,
+    ).add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+
+    pack = sub.add_parser(  # type: ignore[union-attr]
+        "memory-pack",
+        help="Export/import portable cross-machine memory (recommended over copying the DB)",
+        description=(
+            "A memory pack carries identity, content, timestamps and provenance —\n"
+            "never machine-local absolute paths as identity.  Importing merges by\n"
+            "content fingerprint, so it is additive, idempotent and safe to re-run.\n\n"
+            "Prefer this over copying session_index.db or raw/ between machines:\n"
+            "those are local caches, and reconciling their foreign paths is what\n"
+            "used to delete imported memory.\n\n"
+            "Examples:\n"
+            "  contextgo memory-pack export --out ~/memories.memories.json\n"
+            "  contextgo memory-pack export --out /tmp/m.gz --local-only\n"
+            "  contextgo memory-pack import ~/memories.memories.json\n\n"
+            "Exit codes: 0 = success, 2 = invalid input."
+        ),
+        formatter_class=_ap.RawDescriptionHelpFormatter,
+    )
+    pack_sub = pack.add_subparsers(dest="pack_action", required=True)
+
+    pack_export = pack_sub.add_parser("export", help="Write this node's memories to a pack file")
+    pack_export.add_argument("--out", help="Destination file (.gz supported); omit with --stdout")
+    pack_export.add_argument("--stdout", action="store_true", help="Print the pack to stdout")
+    pack_export.add_argument("--limit", type=int, default=200000, help="Maximum documents (default: 200000)")
+    pack_export.add_argument(
+        "--local-only",
+        action="store_true",
+        help="Export only memories that originated on this node (default: include imported ones)",
+    )
+    pack_export.add_argument(
+        "--source-type",
+        default="all",
+        help="Filter by source_type (default: all)",
+    )
+
+    pack_import = pack_sub.add_parser("import", help="Merge a memory pack into this node")
+    pack_import.add_argument("input", help="Path to a pack written by 'contextgo memory-pack export'")
 
 
 def _add_sync_daemon_subcommands(sub: object) -> None:
@@ -1887,6 +2045,7 @@ def build_parser() -> object:
     _add_search_semantic_subcommands(sub)
     _add_save_subcommand(sub)
     _add_export_import_subcommands(sub)
+    _add_node_memory_pack_subcommands(sub)
     _add_sync_daemon_subcommands(sub)
     _add_serve_subcommand(sub)
     _add_maintain_subcommand(sub)

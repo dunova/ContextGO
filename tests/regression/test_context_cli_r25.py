@@ -186,6 +186,9 @@ class TestBuildParser(unittest.TestCase):
             "save",
             "export",
             "import",
+            # Memory-first cross-machine surface (schema v6).
+            "node",
+            "memory-pack",
             "sync",
             "daemon",
             "serve",

@@ -950,7 +950,12 @@ class SourceAdaptersTests(unittest.TestCase):
     # Tests: prune stale behavior for new adapters
     # ------------------------------------------------------------------
 
-    def test_cline_prunes_stale_files_when_not_detected(self) -> None:
+    def test_cline_retains_mirror_when_not_detected(self) -> None:
+        """An undetected tool means 'unknown sources', not 'all mirrors stale'.
+
+        Mirrors are part of the memory corpus and may hold history imported from
+        another machine.  See docs/CROSS_MACHINE_MEMORY.md §2.5.
+        """
         adapter_dir = source_adapters._adapter_root(self.home) / "cline_session"
         adapter_dir.mkdir(parents=True, exist_ok=True)
         stale = adapter_dir / "stale.jsonl"
@@ -958,9 +963,10 @@ class SourceAdaptersTests(unittest.TestCase):
         with mock.patch.object(source_adapters, "_home", return_value=self.home):
             result = source_adapters._sync_cline_sessions(self.home)
         self.assertFalse(result["detected"])
-        self.assertFalse(stale.exists())
+        self.assertEqual(result["removed"], 0)
+        self.assertTrue(stale.exists(), "undetected tool must not wipe the mirror")
 
-    def test_continue_prunes_stale_files_when_not_detected(self) -> None:
+    def test_continue_retains_mirror_when_not_detected(self) -> None:
         adapter_dir = source_adapters._adapter_root(self.home) / "continue_session"
         adapter_dir.mkdir(parents=True, exist_ok=True)
         stale = adapter_dir / "stale.jsonl"
@@ -968,9 +974,10 @@ class SourceAdaptersTests(unittest.TestCase):
         with mock.patch.object(source_adapters, "_home", return_value=self.home):
             result = source_adapters._sync_continue_sessions(self.home)
         self.assertFalse(result["detected"])
-        self.assertFalse(stale.exists())
+        self.assertEqual(result["removed"], 0)
+        self.assertTrue(stale.exists(), "undetected tool must not wipe the mirror")
 
-    def test_cursor_prunes_stale_files_when_not_detected(self) -> None:
+    def test_cursor_retains_mirror_when_not_detected(self) -> None:
         adapter_dir = source_adapters._adapter_root(self.home) / "cursor_session"
         adapter_dir.mkdir(parents=True, exist_ok=True)
         stale = adapter_dir / "stale.jsonl"
@@ -978,7 +985,8 @@ class SourceAdaptersTests(unittest.TestCase):
         with mock.patch.object(source_adapters, "_home", return_value=self.home):
             result = source_adapters._sync_cursor_sessions(self.home)
         self.assertFalse(result["detected"])
-        self.assertFalse(stale.exists())
+        self.assertEqual(result["removed"], 0)
+        self.assertTrue(stale.exists(), "undetected tool must not wipe the mirror")
 
     # ------------------------------------------------------------------
     # Tests: _normalize_text_value edge cases (for completeness)

@@ -26,8 +26,10 @@ _logger = logging.getLogger(__name__)
 
 try:
     from context_config import storage_root
+    from node_identity import node_id as _node_id
 except ImportError:  # pragma: no cover
     from .context_config import storage_root
+    from .node_identity import node_id as _node_id  # type: ignore[import-not-found]
 
 __all__ = [
     "discover_index_sources",
@@ -48,10 +50,45 @@ def _home() -> Path:
     return user_home()
 
 
+def _adapter_namespace_key() -> str:
+    """Return the stable, path-independent namespace for this node's mirrors.
+
+    The pre-v6 scheme was ``sha256(str(home))[:12]``, which meant the same
+    machine reached through a different home directory (``/Users/x`` vs
+    ``/home/x``, a renamed user, a container remap) resolved to a *different*
+    mirror directory.  The runtime then saw an empty mirror, concluded that
+    every indexed document was stale, and pruned the entire session index.
+
+    Keying the namespace by the persistent node identity removes that coupling:
+    the mirror follows the machine, not the path.
+    """
+    return f"node-{_node_id()}"
+
+
+def _adopt_legacy_namespace(legacy: Path, current: Path) -> None:
+    """Rename a pre-v6 home-derived mirror directory to the node-keyed name.
+
+    Without this, upgrading an existing installation would look like a brand
+    new node: the new namespace starts empty, and the first scan would prune
+    every row previously indexed under the legacy namespace.
+    """
+    if current.exists() or not legacy.is_dir():
+        return
+    try:
+        legacy.rename(current)
+    except OSError:
+        # Cross-device or permission problems: copying is not worth the risk of
+        # a partially populated mirror, so leave the legacy directory alone and
+        # let the callers rebuild from live sources.
+        return
+
+
 def _adapter_root(home: Path | None = None) -> Path:
     current_home = home or _home()
-    digest = hashlib.sha256(str(current_home).encode("utf-8")).hexdigest()[:12]
-    root = Path(storage_root()) / "raw" / "adapters" / digest
+    base = Path(storage_root()) / "raw" / "adapters"
+    root = base / _adapter_namespace_key()
+    legacy_digest = hashlib.sha256(str(current_home).encode("utf-8")).hexdigest()[:12]
+    _adopt_legacy_namespace(base / legacy_digest, root)
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     _ensure_adapter_schema(root)
     return root
@@ -113,7 +150,22 @@ def _write_adapter_file(path: Path, texts: list[str], mtime_epoch: int, meta: di
 
 
 def _prune_stale(adapter_dir: Path, keep: set[Path]) -> int:
+    """Delete mirrored session files that are provably superseded.
+
+    An **empty** ``keep`` set means the source tool was *not detected* on this
+    machine — it does not mean every mirror is stale.  Adapter mirrors are part
+    of the memory corpus: they may contain history imported from another
+    machine that this node cannot regenerate.  Deleting them on "tool not
+    installed" silently destroyed cross-machine memories, so an empty keep-set
+    is treated as "unknown, keep everything".
+
+    Real pruning still happens whenever a tool *is* detected: that path
+    re-mirrors the current sources and passes the resulting ``keep`` set, so
+    genuinely removed sessions are still collected.
+    """
     removed = 0
+    if not keep:
+        return removed
     if not adapter_dir.is_dir():
         return removed
     for path in adapter_dir.glob("*.jsonl"):

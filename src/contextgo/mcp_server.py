@@ -19,7 +19,22 @@ _logger = logging.getLogger(__name__)
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "contextgo"
-SERVER_VERSION = "0.14.1"
+
+
+def _server_version() -> str:
+    """Return the installed ContextGO version for the MCP handshake.
+
+    Read at call time rather than frozen into a constant: the previous
+    hardcoded string silently advertised a stale version after every release.
+    """
+    try:
+        from contextgo import __version__  # noqa: PLC0415
+    except ImportError:  # pragma: no cover
+        try:
+            from . import __version__  # type: ignore[import-not-found]  # noqa: PLC0415
+        except ImportError:
+            return "unknown"
+    return str(__version__)
 
 _TOOLS: list[dict[str, Any]] = [
     {
@@ -144,9 +159,18 @@ def _handle_tool_call(name: str, arguments: dict[str, Any]) -> str:
         tags = str(arguments.get("tags", "")).strip()
         if not title or not content:
             return "Error: Both 'title' and 'content' are required."
-        tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
-        context_core.save_memory(title=title, content=content, tags=tag_list)
-        return f"Successfully saved durable memory: '{title}'"
+        tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
+        # Delegate to the CLI's save path so the MCP tool honours exactly the
+        # same storage root, tag normalisation and optional remote mirroring as
+        # `contextgo save`.  This previously called a non-existent
+        # ``context_core.save_memory``, so every save through MCP raised
+        # AttributeError — the one operation an agent most needs to be reliable.
+        try:
+            from contextgo import context_cli  # noqa: PLC0415
+        except ImportError:  # pragma: no cover
+            from . import context_cli  # type: ignore[import-not-found]  # noqa: PLC0415
+
+        return context_cli._save_local_memory(title, content, tag_list)
 
     return f"Unknown tool: '{name}'"
 
@@ -163,7 +187,14 @@ def run_mcp_stdio_server() -> int:
 
     while True:
         try:
-            line = sys.stdin.readline()
+            try:
+                line = sys.stdin.readline()
+            except OSError:
+                # stdin died (broken pipe, closed terminal, revoked pty).
+                # Treat it exactly like EOF: retrying would spin forever,
+                # because the generic handler below would swallow the error and
+                # re-enter readline() on a stream that can never yield again.
+                break
             if not line:
                 break
             raw = line.strip()
@@ -200,7 +231,7 @@ def run_mcp_stdio_server() -> int:
                         },
                         "serverInfo": {
                             "name": SERVER_NAME,
-                            "version": SERVER_VERSION,
+                            "version": _server_version(),
                         },
                     },
                 )

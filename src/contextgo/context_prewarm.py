@@ -23,6 +23,7 @@ import contextlib
 import hashlib
 import json
 import logging
+import os
 import re
 import sys
 import tempfile
@@ -1052,6 +1053,17 @@ def _remove_scf_policy(filepath: Path) -> bool:
         start_idx -= 1
 
     updated = content[:start_idx] + content[end_idx:]
+    # If the policy block was the entire file, removal would leave an empty
+    # artifact behind.  Delete it instead: a blank rules file is worse than no
+    # file, because tools treat its presence as "this project has rules".
+    # (This is how a fully-injected `.cursorrules` used to turn into a 0-line
+    # file that silently overrode nothing.)
+    if not updated.strip():
+        try:
+            real_path.unlink()
+        except OSError:
+            return False
+        return True
     try:
         _atomic_write(filepath, updated)
     except OSError:
@@ -1341,6 +1353,39 @@ def teardown_deepseek() -> bool:
     return ok
 
 
+def _home_sweep_enabled() -> bool:
+    """Whether policy setup/teardown may sweep every project under ``$HOME``.
+
+    Default **off**.  The sweep used to run unconditionally, which meant
+    ``contextgo setup`` (and worse, ``contextgo unsetup``) rewrote rule files in
+    every project the user happens to keep in their home directory — including
+    unrelated repositories and the ContextGO checkout itself.  Opt in with
+    ``CONTEXTGO_SETUP_SCAN_HOME=1`` when you really do want the fan-out.
+    """
+    return os.environ.get("CONTEXTGO_SETUP_SCAN_HOME", "0").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _policy_project_roots(extra_home_check: "Callable[[Path], bool] | None" = None) -> "list[Path]":
+    """Return the project roots whose rule files setup/teardown may touch.
+
+    Always includes the current working directory.  The home-directory sweep is
+    opt-in via :func:`_home_sweep_enabled`.
+    """
+    roots: list[Path] = [Path.cwd()]
+    if not _home_sweep_enabled():
+        return roots
+    try:
+        for entry in Path.home().iterdir():
+            if not entry.is_dir() or entry.name.startswith("."):
+                continue
+            if extra_home_check is not None and not extra_home_check(entry):
+                continue
+            roots.append(entry)
+    except OSError:
+        pass
+    return roots
+
+
 def setup_copilot() -> bool:
     """Inject SCF policy into GitHub Copilot project-level instructions.
 
@@ -1348,13 +1393,7 @@ def setup_copilot() -> bool:
     We inject into the most common project roots the user works with.
     """
     injected = False
-    roots = [Path.cwd(), Path.home() / "ContextGO"]
-    try:
-        for p in Path.home().iterdir():
-            if p.is_dir() and not p.name.startswith(".") and (p / ".github").exists():
-                roots.append(p)
-    except OSError:
-        pass
+    roots = _policy_project_roots(lambda p: (p / ".github").exists())
     for project_root in roots:
         instructions_file = project_root / ".github" / "copilot-instructions.md"
         if project_root.exists():
@@ -1367,13 +1406,7 @@ def setup_copilot() -> bool:
 def teardown_copilot() -> bool:
     """Remove SCF policy from GitHub Copilot project-level instructions."""
     removed = True
-    roots = [Path.cwd(), Path.home() / "ContextGO"]
-    try:
-        for p in Path.home().iterdir():
-            if p.is_dir() and not p.name.startswith("."):
-                roots.append(p)
-    except OSError:
-        pass
+    roots = _policy_project_roots()
     for project_root in roots:
         instructions_file = project_root / ".github" / "copilot-instructions.md"
         if instructions_file.exists() and not _remove_scf_policy(instructions_file):
@@ -1388,18 +1421,9 @@ def setup_cursor() -> bool:
     ContextGO context-first policy block.
     """
     injected = False
-    project_roots = [
-        Path.cwd(),
-        Path.home() / "ContextGO",
-    ]
-    try:
-        for p in Path.home().iterdir():
-            if p.is_dir() and not p.name.startswith("."):
-                cursor_rules = p / ".cursorrules"
-                if cursor_rules.exists() or p.name in ["workspace", "projects", "dev"]:
-                    project_roots.append(p)
-    except OSError:
-        pass
+    project_roots = _policy_project_roots(
+        lambda p: (p / ".cursorrules").exists() or p.name in ["workspace", "projects", "dev"]
+    )
 
     for project_root in project_roots:
         if not project_root.exists():
@@ -1415,16 +1439,7 @@ def setup_cursor() -> bool:
 def teardown_cursor() -> bool:
     """Remove SCF policy from Cursor .cursorrules files."""
     removed = True
-    project_roots = [
-        Path.cwd(),
-        Path.home() / "ContextGO",
-    ]
-    try:
-        for p in Path.home().iterdir():
-            if p.is_dir() and not p.name.startswith("."):
-                project_roots.append(p)
-    except OSError:
-        pass
+    project_roots = _policy_project_roots()
 
     for project_root in project_roots:
         if not project_root.exists():

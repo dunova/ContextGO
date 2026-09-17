@@ -282,7 +282,13 @@ class SourceAdaptersTests(unittest.TestCase):
         self.assertTrue(snapshot["hermes_sessions_root"]["exists"])
         self.assertIn("opencode_session_count", snapshot["adapter_sessions"])
 
-    def test_sync_all_adapters_handles_missing_sources_and_prunes_stale(self) -> None:
+    def test_sync_all_adapters_handles_missing_sources_and_retains_mirrors(self) -> None:
+        """Missing source tools must not wipe existing adapter mirrors.
+
+        Before schema v6 this path deleted every mirrored file whenever a tool
+        was not installed, which silently destroyed memories imported from
+        another machine.  See docs/CROSS_MACHINE_MEMORY.md §2.5.
+        """
         stale_root = source_adapters._adapter_root(self.home) / "opencode_session"
         stale_root.mkdir(parents=True, exist_ok=True)
         stale_file = stale_root / "stale.jsonl"
@@ -294,7 +300,22 @@ class SourceAdaptersTests(unittest.TestCase):
         self.assertFalse(result["opencode_session"]["detected"])
         self.assertFalse(result["kilo_session"]["detected"])
         self.assertFalse(result["openclaw_session"]["detected"])
-        self.assertFalse(stale_file.exists())
+        self.assertTrue(stale_file.exists(), "missing sources must not wipe the mirror")
+
+    def test_sync_all_adapters_still_prunes_when_a_tool_is_detected(self) -> None:
+        """Real pruning must still happen for a detected tool's own mirror."""
+        adapter_dir = source_adapters._adapter_root(self.home) / "opencode_session"
+        adapter_dir.mkdir(parents=True, exist_ok=True)
+        superseded = adapter_dir / "superseded.jsonl"
+        superseded.write_text('{"text":"old"}', encoding="utf-8")
+        kept = adapter_dir / "kept.jsonl"
+        kept.write_text('{"text":"new"}', encoding="utf-8")
+
+        removed = source_adapters._prune_stale(adapter_dir, {kept})
+
+        self.assertEqual(removed, 1)
+        self.assertTrue(kept.exists())
+        self.assertFalse(superseded.exists())
 
     def test_opencode_sync_falls_back_to_message_rows_when_parts_missing(self) -> None:
         db_path = self.home / ".local" / "share" / "opencode" / "opencode.db"

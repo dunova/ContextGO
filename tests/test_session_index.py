@@ -823,10 +823,29 @@ class SessionIndexParserTests(unittest.TestCase):
                 ):
                     stats1 = session_index.sync_session_index(force=True)
                 self.assertEqual(stats1["added"], 1)
-                # Second sync: _iter_sources returns empty so stale entry is removed
+                # Second sync: _iter_sources returns empty.
+                #
+                # Memory-first default (schema v6): a memory whose source file
+                # disappeared is retained, because the content was already
+                # captured at index time and losing it would destroy recall.
+                # Deletion is opt-in via CONTEXTGO_SESSION_PRUNE_ENABLED=1.
                 with mock.patch.object(session_index, "_iter_sources", return_value=[]):
                     stats2 = session_index.sync_session_index(force=True)
-                self.assertEqual(stats2["removed"], 1)
+                self.assertEqual(stats2["removed"], 0)
+                with mock.patch.object(session_index, "_iter_sources", return_value=[]):
+                    conn = sqlite3.connect(db_path)
+                    remaining = conn.execute("SELECT COUNT(*) FROM session_documents").fetchone()[0]
+                    conn.close()
+                self.assertEqual(remaining, 1, "vanished source must not erase the memory by default")
+
+                # Opting in restores the legacy "index mirrors the filesystem"
+                # behaviour and does collect the stale row.
+                with (
+                    mock.patch.object(session_index, "_iter_sources", return_value=[]),
+                    mock.patch.object(session_index, "PRUNE_LOCAL_MISSING", True),
+                ):
+                    stats3 = session_index.sync_session_index(force=True)
+                self.assertEqual(stats3["removed"], 1)
 
     # ------------------------------------------------------------------
     # sync_session_index – update existing entry
@@ -2924,10 +2943,13 @@ class TestSyncRemovalBatchCommit(unittest.TestCase):
                 # First sync: add all files
                 session_index.sync_session_index(force=True)
 
-                # Second sync: remove all (return empty sources, small batch size)
+                # Second sync: remove all (return empty sources, small batch size).
+                # Deletion is opt-in in the memory-first model, so the flag is
+                # enabled here to exercise the batched removal path.
                 with mock.patch.object(session_index, "_BATCH_COMMIT_SIZE", batch_size):
                     with mock.patch.object(session_index, "_iter_sources", return_value=[]):
-                        result = session_index.sync_session_index(force=True)
+                        with mock.patch.object(session_index, "PRUNE_LOCAL_MISSING", True):
+                            result = session_index.sync_session_index(force=True)
 
         self.assertGreaterEqual(result["removed"], batch_size + 1)
 

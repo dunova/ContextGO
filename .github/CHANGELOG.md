@@ -7,6 +7,30 @@ Versions follow [Semantic Versioning](https://semver.org/).
 所有重要变更均记录于此，最新版本在前。
 格式遵循 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)，版本号遵循[语义化版本规范](https://semver.org/)。
 
+## [0.15.0] — 2026-09-17
+
+### Breaking / 破坏性变更（含自动迁移）
+- **Memory-First Identity (schema v6)**: `session_documents` is now keyed by a content-addressed `doc_id` instead of a machine-local absolute `file_path`. Legacy databases are migrated in place on first open, with **zero row loss**; `file_path` is retained as a provenance hint. / 会话索引改为内容寻址身份，旧库首次打开时就地迁移且零丢行。
+
+### Fixed / 修复（跨机器记忆丢失的四个根因）
+- **MCP `contextgo_save` was completely broken**: it called a non-existent `context_core.save_memory`, so every save through the MCP server raised `AttributeError`. It now delegates to the same code path as `contextgo save` (identical storage root, tag normalisation and optional remote mirroring). / MCP 保存工具此前调用不存在的函数，任何 Agent 调用都会崩溃；现复用 CLI 的同一保存实现。
+- **MCP server advertised a stale version**: `SERVER_VERSION` was hardcoded to `0.14.1`, so every handshake after a release reported the wrong version. It is now read from the installed package. / MCP 握手版本号此前写死，发版后会一直报旧版本。
+- **MCP stdio loop could spin forever**: an `OSError` from `readline` (broken pipe, revoked pty) was swallowed by the generic handler and retried unconditionally, burning CPU. It now terminates like EOF. / stdin 异常时不再无限忙循环。
+- **`setup` / `unsetup` no longer rewrite unrelated projects' rule files**: the project-root sweep used to walk every directory under `$HOME` unconditionally, so `contextgo setup` — and worse, `contextgo unsetup` — silently modified `.cursorrules` / `copilot-instructions.md` in unrelated repositories and in the ContextGO checkout itself. The sweep is now opt-in via `CONTEXTGO_SETUP_SCAN_HOME=1`, and defaults to the current working directory only. / setup/unsetup 不再改写家目录下无关项目的规则文件，家目录全扫改为显式开关。
+- **Removing a policy block never leaves an empty file**: when the SCF block was the entire file, `unsetup` left a 0-line artefact behind that tools still treat as "this project has rules". The file is now removed instead. / 策略块是文件全部内容时，移除后删除文件而非留下空壳。
+- **Origin-scoped pruning**: a local scan now deletes only rows this node owns (`origin_host == self`). Memories imported from another machine carry foreign paths that can never exist locally, and were previously deleted on the first scan. / 剪枝按来源作用域，外来记忆不再被误删。
+- **No destructive schema reset**: a `schema_version` mismatch used to execute `DELETE FROM session_documents`, wiping the entire index — including imported memories that cannot be re-derived. It now reconciles in place. / 版本漂移不再清空整库。
+- **Stable node identity**: machines are identified by a persistent `node.json` id, not by `sha256(home)[:12]`. Adapter mirrors are namespaced `raw/adapters/node-<node_id>/` and pre-upgrade directories are adopted automatically. / 机器身份改为持久化节点 ID，镜像目录随机器而非路径。
+- **Mirrors are memory, not cache**: `_prune_stale` no longer deletes every mirrored file when a source tool is not installed — an empty keep-set means "unknown sources", not "all stale". / 未探测到工具时不再清空镜像。
+
+### Added / 新增
+- **`contextgo node`**: show this node's identity plus a per-origin memory breakdown. / 查看节点身份与记忆来源分布。
+- **`contextgo memory-pack export|import`**: portable, machine-independent memory exchange (JSON or `.gz`), merged by content fingerprint. Import is additive and idempotent, preserves the sender's provenance, and never depends on the receiver having the sender's files. / 记忆包跨机器交换，按内容指纹合并，幂等且不依赖对端文件系统。
+- **`CONTEXTGO_SESSION_PRUNE_ENABLED`** (default off): memories whose source file disappeared are retained by default; opt in to restore filesystem-mirroring semantics. / 源文件消失的记忆默认保留，可显式开启旧语义。
+- **`CONTEXTGO_NODE_ID`**: pin a node identity explicitly (useful for tests and deliberate re-onboarding). / 显式指定节点身份。
+- **`docs/CROSS_MACHINE_MEMORY.md`**: design whitepaper covering the failure taxonomy, the memory-first model, and 16 testable invariants. / 跨机器记忆体架构白皮书。
+- **`tests/test_cross_machine_memory.py`**: 35 regression tests pinning the invariants above. / 跨机器记忆回归测试。
+
 ## [0.14.1] — 2026-09-12
 
 ### Features & Runtime / 核心特性与运行时
