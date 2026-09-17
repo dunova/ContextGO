@@ -70,7 +70,7 @@ doc_id = sha256(source_type ‖ session_id ‖ title ‖ content ‖ created_at_
 | 性质 | 含义 |
 |---|---|
 | **可移植** | 同一段会话在两台机器上索引 → 同一个 `doc_id` → 一行，而不是两行互相不可见 |
-| **改名安全** | `/Users/x/...` 与 `/home/x/...` 是同一份记忆，重挂载/改名不产生重复 |
+| **改名安全** | macOS 家目录下的路径与 Linux 家目录下的路径指向同一份记忆，重挂载/改名不产生重复 |
 | **可剪枝** | 删除决策可以限定在"真正拥有该文件的那台机器"上 |
 
 `file_path` 从主键降级为**来源线索**（provenance hint），`file_mtime`/`file_size` 只对本机行有意义。
@@ -126,7 +126,7 @@ contextgo memory-pack import ~/memories.memories.json
     {"doc_id": "...", "source_type": "factory_session", "session_id": "...",
      "title": "...", "content": "...", "created_at": "...", "created_at_epoch": 0,
      "origin_host": "...", "origin_os": "darwin", "origin_label": "mac",
-     "origin_path": "/Users/dunova/..."}
+     "origin_path": "<发送方的原始绝对路径>"}
   ]
 }
 ```

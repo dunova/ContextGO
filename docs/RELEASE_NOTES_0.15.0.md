@@ -13,7 +13,7 @@
 The row identity of a session memory used to be its **machine-local absolute path**:
 
 ```sql
-file_path TEXT PRIMARY KEY     -- identity == /Users/alice/... on THIS machine
+file_path TEXT PRIMARY KEY     -- identity == an absolute path ON THIS machine
 ```
 
 That single choice is why cross-machine sharing failed: the same memory indexed on two machines produced two rows that could not see each other, and any scan on the receiving machine concluded "these paths do not exist here → delete them".
