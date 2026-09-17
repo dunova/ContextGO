@@ -1053,6 +1053,11 @@ def _remove_scf_policy(filepath: Path) -> bool:
         start_idx -= 1
 
     updated = content[:start_idx] + content[end_idx:]
+    # When the block sat at the very top of the file, the injector's separator
+    # newline is still leading the remainder.  Drop it so a file round-trips
+    # byte-for-byte through inject → remove.
+    if start_idx == 0 and updated.startswith("\n"):
+        updated = updated[1:]
     # If the policy block was the entire file, removal would leave an empty
     # artifact behind.  Delete it instead: a blank rules file is worse than no
     # file, because tools treat its presence as "this project has rules".

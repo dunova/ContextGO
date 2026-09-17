@@ -92,6 +92,8 @@ Two further data-safety defects in the SCF policy injector were found and fixed:
 | `setup` / `unsetup` swept **every** project under `$HOME` | Running `unsetup` (or the test suite) rewrote `.cursorrules` in unrelated repositories — this is what emptied the ContextGO checkout's own rule files during this work | Sweep is now opt-in via `CONTEXTGO_SETUP_SCAN_HOME=1`; default is the current directory |
 | Removal left a 0-line file when the policy block was the whole file | A blank rules file silently overrides nothing but looks configured | The file is deleted instead |
 
+The test suite itself was also mutating the checkout it ran in (same root cause, via project-scoped `setup`/`unsetup`); every test now runs in its own temporary working directory.
+
 ---
 
 ## ✅ Verified on real data / 真实数据实测
@@ -115,7 +117,7 @@ The same forced rescan on 0.14.1 would have deleted every imported row.
 - **Automatic**: the v5→v6 migration runs on first command after upgrade. No manual step, no data export required.
 - **Downgrade is not supported**: 0.14.x cannot read a v6 database. Back up `~/.contextgo/index/session_index.db` before downgrading.
 - **Cross-machine workflow**: prefer `contextgo memory-pack` (or the existing encrypted `contextgo sync`) over copying the index database or `raw/` between machines. Those are machine-local caches; reconciling their foreign paths is exactly the operation that used to delete imported memory.
-- **New tests**: `tests/test_cross_machine_memory.py`, `tests/test_coverage_error_paths.py`, `tests/test_mcp_tool_dispatch.py`. Full suite: **1,594 passed, 0 failed**, coverage **86.06%** (the 86% gate was already failing at 84.46% before this release).
+- **New tests**: `tests/test_cross_machine_memory.py`, `tests/test_coverage_error_paths.py`, `tests/test_mcp_tool_dispatch.py`. Full suite: **1,619 passed, 0 failed**, coverage **86.19%** (the 86% gate was already failing at 84.46% before this release).
 
 ---
 

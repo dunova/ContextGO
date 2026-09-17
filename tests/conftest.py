@@ -47,3 +47,18 @@ def _clear_module_caches():
                 vector_index._VECTOR_MATRIX_CACHE.clear()
         except ImportError:
             pass
+
+
+@pytest.fixture(autouse=True)
+def _isolate_working_directory(tmp_path, monkeypatch):
+    """Run every test with ``cwd`` inside its own temporary directory.
+
+    Several ContextGO features are *project-scoped* by design: ``contextgo
+    setup`` / ``unsetup`` inject and remove policy blocks in the current
+    project's rule files.  Without this guard a test that exercises those paths
+    rewrites — or, when the policy block is the whole file, deletes — the rule
+    files of the repository pytest was started in.  Isolating the working
+    directory makes that class of accident impossible.
+    """
+    monkeypatch.chdir(tmp_path)
+    yield

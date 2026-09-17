@@ -7,7 +7,9 @@ only appear on error or refresh paths, which the behavioural tests never reach.
 
 from __future__ import annotations
 
+import contextlib
 import io
+import json
 import os
 import sys
 import tempfile
@@ -249,3 +251,219 @@ class PolicySweepSafetyTests(unittest.TestCase):
 
         self.assertTrue(victim.is_file())
         self.assertEqual(victim.read_text(encoding="utf-8"), before)
+
+
+class PolicyLifecycleTests(unittest.TestCase):
+    """Full inject → teardown lifecycle for the project-scoped policy targets."""
+
+    def setUp(self) -> None:
+        import contextgo.context_prewarm as prewarm
+
+        self.prewarm = prewarm
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.project = Path(self._tmp.name) / "project"
+        self.project.mkdir()
+        self._cwd = Path.cwd()
+        os.chdir(self.project)
+        self.addCleanup(lambda: os.chdir(self._cwd))
+        self._env = mock.patch.dict(os.environ, {"CONTEXTGO_SETUP_SCAN_HOME": ""}, clear=False)
+        self._env.start()
+        self.addCleanup(self._env.stop)
+
+    # ---- Cursor -----------------------------------------------------------
+    def test_cursor_setup_creates_then_teardown_removes(self) -> None:
+        self.assertTrue(self.prewarm.setup_cursor())
+        rules = self.project / ".cursorrules"
+        self.assertTrue(rules.is_file())
+        self.assertIn(self.prewarm._SCF_MARKER_START, rules.read_text(encoding="utf-8"))
+
+        self.assertTrue(self.prewarm.teardown_cursor())
+        self.assertFalse(rules.exists())
+
+    def test_cursor_setup_preserves_existing_rules(self) -> None:
+        rules = self.project / ".cursorrules"
+        rules.write_text("# 我的规则\n\n不要动生产数据。\n", encoding="utf-8")
+        self.prewarm.setup_cursor()
+        text = rules.read_text(encoding="utf-8")
+        self.assertIn("不要动生产数据", text)
+        self.assertIn(self.prewarm._SCF_MARKER_START, text)
+
+        self.prewarm.teardown_cursor()
+        remaining = rules.read_text(encoding="utf-8")
+        self.assertIn("不要动生产数据", remaining)
+        self.assertNotIn(self.prewarm._SCF_MARKER_START, remaining)
+
+    def test_cursor_setup_is_idempotent(self) -> None:
+        self.prewarm.setup_cursor()
+        first = (self.project / ".cursorrules").read_text(encoding="utf-8")
+        self.prewarm.setup_cursor()
+        second = (self.project / ".cursorrules").read_text(encoding="utf-8")
+        self.assertEqual(first, second)
+
+    def test_cursor_teardown_without_rules_file_is_ok(self) -> None:
+        self.assertTrue(self.prewarm.teardown_cursor())
+
+    # ---- Copilot ----------------------------------------------------------
+    def test_copilot_setup_and_teardown(self) -> None:
+        (self.project / ".github").mkdir()
+        self.assertTrue(self.prewarm.setup_copilot())
+        target = self.project / ".github" / "copilot-instructions.md"
+        self.assertTrue(target.is_file())
+        self.assertIn(self.prewarm._SCF_MARKER_START, target.read_text(encoding="utf-8"))
+
+        self.assertTrue(self.prewarm.teardown_copilot())
+        self.assertFalse(target.exists())
+
+    def test_copilot_setup_creates_github_dir(self) -> None:
+        self.prewarm.setup_copilot()
+        self.assertTrue((self.project / ".github" / "copilot-instructions.md").is_file())
+
+    def test_copilot_teardown_without_file_is_ok(self) -> None:
+        self.assertTrue(self.prewarm.teardown_copilot())
+
+    # ---- inject/remove primitives ----------------------------------------
+    def test_inject_then_remove_restores_original_exactly(self) -> None:
+        original = "# 原文件\n\n第二行\n"
+        target = self.project / "notes.md"
+        target.write_text(original, encoding="utf-8")
+
+        self.prewarm._inject_scf_policy(target)
+        self.assertNotEqual(target.read_text(encoding="utf-8"), original)
+
+        self.prewarm._remove_scf_policy(target)
+        self.assertEqual(target.read_text(encoding="utf-8"), original)
+
+    def test_remove_reports_true_when_marker_absent(self) -> None:
+        target = self.project / "plain.md"
+        target.write_text("no policy here\n", encoding="utf-8")
+        self.assertTrue(self.prewarm._remove_scf_policy(target))
+        self.assertTrue(target.is_file())
+
+    def test_remove_missing_file_is_ok(self) -> None:
+        self.assertTrue(self.prewarm._remove_scf_policy(self.project / "absent.md"))
+
+    def test_inject_returns_true_when_already_present(self) -> None:
+        target = self.project / "notes.md"
+        target.write_text("# 内容\n", encoding="utf-8")
+        self.assertTrue(self.prewarm._inject_scf_policy(target))
+        self.assertTrue(self.prewarm._inject_scf_policy(target))
+
+
+class QuickRecallVectorPathTests(unittest.TestCase):
+    """``contextgo q`` must prefer vector search and fall back to FTS5 cleanly."""
+
+    def setUp(self) -> None:
+        import contextgo.context_cli as cli
+
+        self.cli = cli
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self._env = mock.patch.dict(
+            os.environ,
+            {
+                "CONTEXTGO_STORAGE_ROOT": str(Path(self._tmp.name) / "cg"),
+                "CONTEXTGO_NODE_ID": "feedfacefeedface",
+            },
+            clear=False,
+        )
+        self._env.start()
+        self.addCleanup(self._env.stop)
+
+    def _args(self, query="what did we decide", **kw):
+        import argparse
+
+        return argparse.Namespace(query=[query], json=kw.get("json", False), limit=kw.get("limit", 5))
+
+    def _fake_vector_module(self, *, ranked, enriched, available=True):
+        module = mock.MagicMock()
+        module.vector_available.return_value = available
+        module.get_vector_db_path.return_value = Path("/tmp/v.db")
+        module.hybrid_search_session.return_value = ranked
+        module.fetch_enriched_results.return_value = enriched
+        return module
+
+    def test_vector_hits_short_circuit(self) -> None:
+        rows = [{"session_id": "abcdef12", "created_at": "2026-01-01", "source_type": "x", "title": "T"}]
+        module = self._fake_vector_module(ranked=[1], enriched=rows)
+        buffer = io.StringIO()
+        with (
+            mock.patch.object(self.cli, "_import_vector_index", return_value=module),
+            contextlib.redirect_stdout(buffer),
+        ):
+            rc = self.cli.cmd_q(self._args())
+        self.assertEqual(rc, 0)
+        self.assertIn("T", buffer.getvalue())
+
+    def test_vector_hits_with_json_output(self) -> None:
+        rows = [{"session_id": "abcdef12", "title": "T"}]
+        module = self._fake_vector_module(ranked=[1], enriched=rows)
+        buffer = io.StringIO()
+        with (
+            mock.patch.object(self.cli, "_import_vector_index", return_value=module),
+            contextlib.redirect_stdout(buffer),
+        ):
+            rc = self.cli.cmd_q(self._args(json=True))
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(buffer.getvalue())[0]["title"], "T")
+
+    def test_empty_vector_ranking_falls_back_to_fts(self) -> None:
+        module = self._fake_vector_module(ranked=[], enriched=[])
+        si = mock.MagicMock()
+        si.format_search_results.return_value = "fts hit"
+        buffer = io.StringIO()
+        with (
+            mock.patch.object(self.cli, "_import_vector_index", return_value=module),
+            mock.patch.object(self.cli, "_get_session_index", return_value=si),
+            contextlib.redirect_stdout(buffer),
+        ):
+            rc = self.cli.cmd_q(self._args())
+        self.assertEqual(rc, 0)
+        self.assertIn("fts hit", buffer.getvalue())
+
+    def test_vector_exception_falls_back_to_fts(self) -> None:
+        si = mock.MagicMock()
+        si.format_search_results.return_value = "fts hit"
+        buffer = io.StringIO()
+        with (
+            mock.patch.object(self.cli, "_import_vector_index", side_effect=ImportError("no vector")),
+            mock.patch.object(self.cli, "_get_session_index", return_value=si),
+            contextlib.redirect_stdout(buffer),
+        ):
+            rc = self.cli.cmd_q(self._args())
+        self.assertEqual(rc, 0)
+        self.assertIn("fts hit", buffer.getvalue())
+
+    def test_no_matches_returns_one(self) -> None:
+        si = mock.MagicMock()
+        si.format_search_results.return_value = "No matches found for: 'x'"
+        buffer = io.StringIO()
+        with (
+            mock.patch.object(self.cli, "_import_vector_index", side_effect=ImportError("no vector")),
+            mock.patch.object(self.cli, "_get_session_index", return_value=si),
+            contextlib.redirect_stdout(buffer),
+        ):
+            rc = self.cli.cmd_q(self._args())
+        self.assertEqual(rc, 1)
+
+    def test_json_fallback_uses_private_search_rows_when_available(self) -> None:
+        si = mock.MagicMock()
+        si.format_search_results.return_value = "something"
+        si._search_rows.return_value = [{"session_id": "abcdef12"}]
+
+        buffer = io.StringIO()
+        with (
+            mock.patch.object(self.cli, "_import_vector_index", side_effect=ImportError("no vector")),
+            mock.patch.object(self.cli, "_get_session_index", return_value=si),
+            contextlib.redirect_stdout(buffer),
+        ):
+            rc = self.cli.cmd_q(self._args(json=True))
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(buffer.getvalue())[0]["session_id"], "abcdef12")
+
+    def test_empty_query_prints_usage(self) -> None:
+        buffer = io.StringIO()
+        with contextlib.redirect_stderr(buffer):
+            rc = self.cli.cmd_q(self._args(query="   "))
+        self.assertEqual(rc, 2)
+        self.assertIn("Usage", buffer.getvalue())

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
+from contextlib import contextmanager
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -404,23 +406,43 @@ class TestRemoveScfPolicy(unittest.TestCase):
         self.assertTrue(result)
 
 
+@contextmanager
+def _isolated_cwd(target: Path):
+    """Run a block with ``cwd`` moved to *target*, restoring it afterwards.
+
+    setup/teardown operate on the current project, so without this the tests
+    would rewrite the rule files of whatever repository pytest was started in.
+    """
+    previous = Path.cwd()
+    os.chdir(target)
+    try:
+        yield
+    finally:
+        os.chdir(previous)
+
+
 class TestSetupAll(unittest.TestCase):
     """Full setup across all platforms."""
 
     def test_returns_dict(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            with patch.object(Path, "home", return_value=Path(tmp)):
-                (Path(tmp) / ".claude").mkdir()
-                results = pw.setup_all()
+            # cwd must be isolated: setup/teardown act on the current project,
+            # and running these against the repo root would rewrite (or, for a
+            # file that is only the policy block, delete) its own rule files.
+            with _isolated_cwd(Path(tmp)):
+                with patch.object(Path, "home", return_value=Path(tmp)):
+                    (Path(tmp) / ".claude").mkdir()
+                    results = pw.setup_all()
             self.assertIsInstance(results, dict)
             self.assertIn("Claude Code (hook)", results)
 
     def test_all_tools_attempted(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            with patch.object(Path, "home", return_value=Path(tmp)):
-                (Path(tmp) / ".claude").mkdir()
-                (Path(tmp) / ".codex").mkdir()
-                results = pw.setup_all()
+            with _isolated_cwd(Path(tmp)):
+                with patch.object(Path, "home", return_value=Path(tmp)):
+                    (Path(tmp) / ".claude").mkdir()
+                    (Path(tmp) / ".codex").mkdir()
+                    results = pw.setup_all()
             self.assertTrue(results["Claude Code (hook)"])
             self.assertTrue(results["Codex CLI"])
 
@@ -430,18 +452,20 @@ class TestTeardownAll(unittest.TestCase):
 
     def test_setup_then_teardown(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            with patch.object(Path, "home", return_value=Path(tmp)):
-                (Path(tmp) / ".claude").mkdir()
-                (Path(tmp) / ".codex").mkdir()
-                (Path(tmp) / ".codex" / "AGENTS.md").write_text("# Codex\n")
-                pw.setup_all()
-                results = pw.teardown_all()
+            with _isolated_cwd(Path(tmp)):
+                with patch.object(Path, "home", return_value=Path(tmp)):
+                    (Path(tmp) / ".claude").mkdir()
+                    (Path(tmp) / ".codex").mkdir()
+                    (Path(tmp) / ".codex" / "AGENTS.md").write_text("# Codex\n")
+                    pw.setup_all()
+                    results = pw.teardown_all()
             self.assertTrue(all(results.values()))
 
     def test_teardown_returns_dict(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            with patch.object(Path, "home", return_value=Path(tmp)):
-                results = pw.teardown_all()
+            with _isolated_cwd(Path(tmp)):
+                with patch.object(Path, "home", return_value=Path(tmp)):
+                    results = pw.teardown_all()
             self.assertIsInstance(results, dict)
             self.assertIn("Claude Code (hook)", results)
 
@@ -642,36 +666,45 @@ class TestCLIIntegration(unittest.TestCase):
         rc = context_cli.cmd_prewarm(args)
         self.assertEqual(rc, 0)
 
-    @patch("contextgo.context_prewarm.setup_all")
-    def test_cmd_setup_calls_setup_all(self, mock_sa: object) -> None:
+    def test_cmd_setup_calls_setup_all(self) -> None:
         import argparse
+        from unittest import mock as _mock
 
         from contextgo import context_cli
 
+        mock_sa = _mock.MagicMock()
         mock_sa.return_value = {
             "Claude Code (hook)": True,
             "Codex CLI": False,
             "OpenClaw": False,
             "Claude Code (policy)": True,
-        }  # type: ignore[union-attr]
-        args = argparse.Namespace(command="setup")
-        rc = context_cli.cmd_setup(args)
+        }
+        # Patch the module resolver, not a module attribute: context_cli may
+        # resolve context_prewarm through either the flat or the package
+        # import, so patching one of them silently left the real teardown
+        # running — which rewrote the rule files of whatever repository the
+        # suite was started in.
+        with _mock.patch.object(context_cli, "_get_context_prewarm", return_value=mock_sa):
+            args = argparse.Namespace(command="setup")
+            rc = context_cli.cmd_setup(args)
         self.assertEqual(rc, 0)
 
-    @patch("contextgo.context_prewarm.teardown_all")
-    def test_cmd_unsetup_calls_teardown_all(self, mock_ta: object) -> None:
+    def test_cmd_unsetup_calls_teardown_all(self) -> None:
         import argparse
+        from unittest import mock as _mock
 
         from contextgo import context_cli
 
+        mock_ta = _mock.MagicMock()
         mock_ta.return_value = {
             "Claude Code (hook)": True,
             "Codex CLI": True,
             "OpenClaw": True,
             "Claude Code (policy)": True,
-        }  # type: ignore[union-attr]
-        args = argparse.Namespace(command="unsetup")
-        rc = context_cli.cmd_unsetup(args)
+        }
+        with _mock.patch.object(context_cli, "_get_context_prewarm", return_value=mock_ta):
+            args = argparse.Namespace(command="unsetup")
+            rc = context_cli.cmd_unsetup(args)
         self.assertEqual(rc, 0)
 
 
@@ -680,9 +713,10 @@ class TestSetupAllKeys(unittest.TestCase):
 
     def test_returns_all_expected_keys(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            with patch.object(Path, "home", return_value=Path(tmp)):
-                (Path(tmp) / ".claude").mkdir()
-                results = pw.setup_all()
+            with _isolated_cwd(Path(tmp)):
+                with patch.object(Path, "home", return_value=Path(tmp)):
+                    (Path(tmp) / ".claude").mkdir()
+                    results = pw.setup_all()
         expected_keys = {
             "Claude Code (hook)",
             "Claude Code (policy)",
@@ -702,8 +736,9 @@ class TestSetupAllKeys(unittest.TestCase):
 
     def test_teardown_all_returns_all_expected_keys(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            with patch.object(Path, "home", return_value=Path(tmp)):
-                results = pw.teardown_all()
+            with _isolated_cwd(Path(tmp)):
+                with patch.object(Path, "home", return_value=Path(tmp)):
+                    results = pw.teardown_all()
         expected_keys = {
             "Claude Code (hook)",
             "Claude Code (policy)",
