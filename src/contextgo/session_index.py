@@ -57,7 +57,6 @@ from typing import Any
 try:
     from context_config import env_int, storage_root
     from node_identity import describe_node as _describe_node
-    from node_identity import node_id as _node_id
     from node_identity import origin_fields as _origin_fields
     from source_adapters import adapter_dirty_epoch, discover_index_sources, sync_all_adapters
     from sqlite_retry import retry_commit as _rc
@@ -66,7 +65,6 @@ try:
 except ImportError:  # pragma: no cover
     from .context_config import env_int, storage_root
     from .node_identity import describe_node as _describe_node  # type: ignore[import-not-found]
-    from .node_identity import node_id as _node_id  # type: ignore[import-not-found]
     from .node_identity import origin_fields as _origin_fields
     from .source_adapters import (  # type: ignore[import-not-found]
         adapter_dirty_epoch,
@@ -104,9 +102,12 @@ SYNC_MIN_INTERVAL_SEC: int = env_int("CONTEXTGO_SESSION_SYNC_MIN_INTERVAL_SEC", 
 #: mirror) must not silently destroy recall.  Operators who want the old
 #: "index mirrors the filesystem" behaviour can opt in with
 #: ``CONTEXTGO_SESSION_PRUNE_ENABLED=1``.
-PRUNE_LOCAL_MISSING: bool = (
-    os.environ.get("CONTEXTGO_SESSION_PRUNE_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
-)
+PRUNE_LOCAL_MISSING: bool = os.environ.get("CONTEXTGO_SESSION_PRUNE_ENABLED", "0").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 SOURCE_CACHE_TTL_SEC: int = env_int("CONTEXTGO_SOURCE_CACHE_TTL_SEC", default=10, minimum=0)
 EXPERIMENTAL_SEARCH_BACKEND: str = os.environ.get("CONTEXTGO_EXPERIMENTAL_SEARCH_BACKEND", "").strip().lower()
 EXPERIMENTAL_SYNC_BACKEND: str = os.environ.get("CONTEXTGO_EXPERIMENTAL_SYNC_BACKEND", "").strip().lower()
@@ -2480,9 +2481,7 @@ def health_payload() -> dict[str, Any]:
         "latest_epoch": int(latest or 0),
         "node_id": self_origin,
         "local_sessions": int(by_origin.get(self_origin, 0)),
-        "imported_sessions": sum(
-            count for origin, count in by_origin.items() if origin and origin != self_origin
-        ),
+        "imported_sessions": sum(count for origin, count in by_origin.items() if origin and origin != self_origin),
         "sessions_by_origin": by_origin,
         "sync": sync_info,
     }
@@ -2610,10 +2609,7 @@ def import_memory_package(payload: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("invalid memory pack: expected an object")
     if str(payload.get("format", "")) != MEMORY_PACK_FORMAT:
-        raise ValueError(
-            f"invalid memory pack: expected format {MEMORY_PACK_FORMAT!r}, "
-            f"got {payload.get('format')!r}"
-        )
+        raise ValueError(f"invalid memory pack: expected format {MEMORY_PACK_FORMAT!r}, got {payload.get('format')!r}")
     try:
         pack_version = int(payload.get("schema_version", 0))
     except (TypeError, ValueError) as exc:

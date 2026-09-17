@@ -243,9 +243,7 @@ class LegacyMigrationTests(_IsolatedNode):
         distinct = conn.execute("SELECT COUNT(DISTINCT doc_id) FROM session_documents").fetchone()[0]
         total = conn.execute("SELECT COUNT(*) FROM session_documents").fetchone()[0]
         origins = {row[0] for row in conn.execute("SELECT origin_host FROM session_documents")}
-        leftover = conn.execute(
-            "SELECT COUNT(*) FROM sqlite_master WHERE name='session_documents_v5'"
-        ).fetchone()[0]
+        leftover = conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE name='session_documents_v5'").fetchone()[0]
         conn.close()
         self.assertEqual(distinct, total)
         self.assertEqual(origins, {SELF_NODE})
@@ -275,9 +273,7 @@ class LegacyMigrationTests(_IsolatedNode):
         result = session_index.sync_session_index(force=True)
         conn = sqlite3.connect(self.db_path)
         total = conn.execute("SELECT COUNT(*) FROM session_documents").fetchone()[0]
-        version = conn.execute(
-            "SELECT value FROM session_index_meta WHERE key='schema_version'"
-        ).fetchone()[0]
+        version = conn.execute("SELECT value FROM session_index_meta WHERE key='schema_version'").fetchone()[0]
         conn.close()
         self.assertGreaterEqual(total, 1, "schema bump must not delete existing memories")
         self.assertEqual(version, session_index.SESSION_INDEX_SCHEMA_VERSION)

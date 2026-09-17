@@ -28,6 +28,7 @@ import re
 import sys
 import tempfile
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -1370,7 +1371,7 @@ def _home_sweep_enabled() -> bool:
     return os.environ.get("CONTEXTGO_SETUP_SCAN_HOME", "0").strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _policy_project_roots(extra_home_check: "Callable[[Path], bool] | None" = None) -> "list[Path]":
+def _policy_project_roots(extra_home_check: Callable[[Path], bool] | None = None) -> list[Path]:
     """Return the project roots whose rule files setup/teardown may touch.
 
     Always includes the current working directory.  The home-directory sweep is

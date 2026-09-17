@@ -13,7 +13,7 @@ import logging
 import sys
 from typing import Any
 
-from contextgo import context_core, memory_index, session_index
+from contextgo import memory_index, session_index
 
 _logger = logging.getLogger(__name__)
 
@@ -35,6 +35,7 @@ def _server_version() -> str:
         except ImportError:
             return "unknown"
     return str(__version__)
+
 
 _TOOLS: list[dict[str, Any]] = [
     {

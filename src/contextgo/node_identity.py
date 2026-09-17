@@ -30,6 +30,7 @@ because a local file is missing.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import platform
 import socket
@@ -121,10 +122,8 @@ def _backfill_label(path: Path, raw: dict[str, Any], current_label: str) -> None
     updated = dict(raw)
     updated["label"] = current_label
     updated["label_updated_at"] = datetime.now(timezone.utc).isoformat()
-    try:
+    with contextlib.suppress(OSError):
         atomic_write_json(path, updated)
-    except OSError:
-        pass
 
 
 def _load_or_create() -> dict[str, Any]:
@@ -220,10 +219,8 @@ def reset_node_identity() -> dict[str, Any]:
     locally-owned until they are re-indexed.
     """
     path = node_file_path()
-    try:
+    with contextlib.suppress(FileNotFoundError):
         path.unlink()
-    except FileNotFoundError:
-        pass
     _CACHE.pop(str(path), None)
     return describe_node()
 

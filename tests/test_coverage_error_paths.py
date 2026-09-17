@@ -120,9 +120,7 @@ class AdapterNamespaceFailureTests(unittest.TestCase):
     def test_schema_version_match_is_a_noop(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            (root / ".schema_version").write_text(
-                source_adapters.ADAPTER_SCHEMA_VERSION, encoding="utf-8"
-            )
+            (root / ".schema_version").write_text(source_adapters.ADAPTER_SCHEMA_VERSION, encoding="utf-8")
             kept = root / "keep.jsonl"
             kept.write_text("{}", encoding="utf-8")
             source_adapters._ensure_adapter_schema(root)

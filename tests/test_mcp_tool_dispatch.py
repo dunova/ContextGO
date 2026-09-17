@@ -12,9 +12,6 @@ import io
 import json
 import sys
 from pathlib import Path
-from unittest import mock
-
-import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import mcp_server
@@ -105,9 +102,7 @@ class TestToolDispatch:
             return f"Saved locally: {title}"
 
         monkeypatch.setattr(context_cli, "_save_local_memory", fake_save)
-        result = mcp_server._handle_tool_call(
-            "contextgo_save", {"title": "T", "content": "C", "tags": " a , b , "}
-        )
+        result = mcp_server._handle_tool_call("contextgo_save", {"title": "T", "content": "C", "tags": " a , b , "})
         assert captured == {"title": "T", "content": "C", "tags": ["a", "b"]}
         assert result == "Saved locally: T"
 
@@ -131,7 +126,6 @@ class TestToolDispatch:
             "contextgo_save", {"title": "Cross machine memory", "content": "body", "tags": "x"}
         )
         assert result.startswith("Saved locally:")
-        assert "Cross machine memory" not in result or True  # path is returned
 
     def test_server_version_is_not_hardcoded(self):
         version = mcp_server._server_version()
@@ -204,9 +198,7 @@ class TestStdioLoop:
         assert rc == 0
         by_id = {r.get("id"): r for r in responses if r.get("id") is not None}
         # Both malformed inputs answer with a null id, so collect their codes.
-        null_id_codes = sorted(
-            r["error"]["code"] for r in responses if r.get("id") is None and "error" in r
-        )
+        null_id_codes = sorted(r["error"]["code"] for r in responses if r.get("id") is None and "error" in r)
         assert null_id_codes == [-32700, -32600]
         assert by_id[1]["result"]["serverInfo"]["name"] == "contextgo"
         assert by_id[2]["result"] == {}
