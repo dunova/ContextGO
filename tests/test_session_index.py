@@ -2988,7 +2988,7 @@ class TestSearchRowsSecondRankAttempt(unittest.TestCase):
         )
         conn.execute(
             "INSERT OR REPLACE INTO session_index_meta(key, value) VALUES(?, ?)",
-            ("last_sync_epoch", str(int(_time.time()))),
+            ("last_sync_epoch", str(int(_time.time()) + 3600)),
         )
         conn.commit()
         conn.close()
@@ -3050,7 +3050,7 @@ class TestSearchRowsAnchorTermFallback(unittest.TestCase):
         )
         conn.execute(
             "INSERT OR REPLACE INTO session_index_meta(key, value) VALUES(?, ?)",
-            ("last_sync_epoch", str(int(_time.time()))),
+            ("last_sync_epoch", str(int(_time.time()) + 3600)),
         )
         conn.commit()
         conn.close()

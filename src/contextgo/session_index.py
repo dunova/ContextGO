@@ -1086,8 +1086,14 @@ def _parse_source(source_type: str, path: Path, file_stat: os.stat_result | None
 # Source Discovery
 
 
+_SKIP_NEXT_DISCOVER_SYNC: bool = False
+
+
 def _iter_sources() -> list[tuple[str, Path]]:
     """Return cached ``(source_type, path)`` pairs for all discoverable sources."""
+    global _SKIP_NEXT_DISCOVER_SYNC  # noqa: PLW0603
+    skip_sync = _SKIP_NEXT_DISCOVER_SYNC
+    _SKIP_NEXT_DISCOVER_SYNC = False
     now = time.monotonic()
     current_home = str(_home())
     native_backend = EXPERIMENTAL_SYNC_BACKEND
@@ -1117,7 +1123,7 @@ def _iter_sources() -> list[tuple[str, Path]]:
         return list(_SOURCE_CACHE["items"])
 
     home = Path(current_home)
-    discovered = discover_index_sources(home)
+    discovered = discover_index_sources(home, _skip_sync=skip_sync)
 
     _update_source_cache(discovered, now, current_home)
     return discovered
@@ -1411,6 +1417,7 @@ def sync_session_index(force: bool = False) -> dict[str, int]:
 
 def _sync_session_index_locked(force: bool = False) -> dict[str, int]:
     """Internal implementation of sync_session_index; must be called under _SYNC_LOCK."""
+    global _SKIP_NEXT_DISCOVER_SYNC  # noqa: PLW0603
     _t_start = time.monotonic()
     db_path = ensure_session_db()
     added = updated = removed = scanned = 0
@@ -1479,6 +1486,7 @@ def _sync_session_index_locked(force: bool = False) -> dict[str, int]:
         # refresh external adapters so newly installed platforms become searchable
         # without waiting for the next TTL cycle.
         sync_all_adapters(_home())
+        _SKIP_NEXT_DISCOVER_SYNC = True
 
         _t_scan_start = time.monotonic()
         upsert_batch: list[tuple[Any, ...]] = []
@@ -1524,7 +1532,11 @@ def _sync_session_index_locked(force: bool = False) -> dict[str, int]:
                 upsert_batch.clear()
             _retry_commit(conn)
 
-        for source_type, path in _iter_sources():
+        try:
+            source_iter = _iter_sources()
+        finally:
+            _SKIP_NEXT_DISCOVER_SYNC = False
+        for source_type, path in source_iter:
             scanned += 1
             canonical_path = _normalize_file_path(path)
             seen_paths.add(canonical_path)
@@ -1663,6 +1675,7 @@ def _sync_session_index_locked(force: bool = False) -> dict[str, int]:
                 foreign_count,
             )
 
+        now_epoch = max(now_epoch, int(datetime.now(timezone.utc).timestamp()), adapter_dirty_epoch(_home()))
         _meta_set(conn, "last_sync_epoch", str(now_epoch))
 
         # Rebuild the FTS5 index after bulk inserts/updates/deletes so that BM25

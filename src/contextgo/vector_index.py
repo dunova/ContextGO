@@ -107,6 +107,20 @@ _VECTOR_MATRIX_CACHE_LOCK = threading.Lock()
 _UNSAFE_PATH_MARKERS = ("?", "#", "\x00")
 
 
+def _resolve_local_hf_snapshot(model_name: str) -> str:
+    """Return local HuggingFace cache snapshot path if available to avoid HTTP round-trips."""
+    if "/" not in model_name or Path(model_name).exists():
+        return model_name
+    with contextlib.suppress(OSError):
+        hf_home = Path(env_str("HF_HOME", default="").strip() or (Path.home() / ".cache" / "huggingface"))
+        model_dir = hf_home / "hub" / f"models--{model_name.replace('/', '--')}" / "snapshots"
+        if model_dir.is_dir():
+            for snap in sorted(model_dir.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
+                if snap.is_dir() and (snap / "model.safetensors").is_file():
+                    return str(snap)
+    return model_name
+
+
 def _load_model() -> Any:
     """Load and cache the model2vec StaticModel.  Thread-safe."""
     global _MODEL  # noqa: PLW0603
@@ -116,11 +130,13 @@ def _load_model() -> Any:
         if _MODEL is None:
             from model2vec import StaticModel  # type: ignore[import-not-found]  # noqa: PLC0415
 
-            print(
-                f"Loading vector model ({VECTOR_MODEL_NAME})… / 正在加载向量模型…",
-                file=sys.stderr,
-            )
-            _MODEL = StaticModel.from_pretrained(VECTOR_MODEL_NAME)
+            resolved_path = _resolve_local_hf_snapshot(VECTOR_MODEL_NAME)
+            if resolved_path == VECTOR_MODEL_NAME:
+                print(
+                    f"Loading vector model ({VECTOR_MODEL_NAME})… / 正在加载向量模型…",
+                    file=sys.stderr,
+                )
+            _MODEL = StaticModel.from_pretrained(resolved_path)
     return _MODEL
 
 
@@ -378,8 +394,13 @@ def vector_search_session(
     vector_db_path: Path | str,
     *,
     limit: int = 10,
+    candidate_paths: list[str] | None = None,
 ) -> list[dict[str, Any]]:
-    """Pure vector cosine search over session_vectors.
+    """Vector cosine search over session_vectors.
+
+    When *candidate_paths* is provided (Stage 1 coarse recall hits), only
+    those candidate embeddings are fetched and scored for sub-15ms fine ranking.
+    Otherwise all session vectors are scored via vectorized NumPy dot-product.
 
     Returns ``[{"file_path": str, "score": float, "rank": int}, ...]``.
     """
@@ -390,44 +411,49 @@ def vector_search_session(
         return []
 
     query_vec = embed_single(query)
-
-    # Determine candidate pool size with a hard upper bound to prevent OOM.
-    candidate_limit = limit * VECTOR_SEARCH_MULT
+    q_norm = float(np.linalg.norm(query_vec))
+    if q_norm == 0.0:
+        return []
 
     paths: list[str] = []
     matrix: Any = None
 
-    # Check cache validity then load only if stale.
     with _open_vdb(vdb, timeout=30) as conn:
         conn.execute("PRAGMA cache_size=-16000")
         conn.execute("PRAGMA mmap_size=268435456")
-        row_count: int = conn.execute("SELECT COUNT(*) FROM session_vectors").fetchone()[0]
-        max_rowid: int = conn.execute("SELECT MAX(rowid) FROM session_vectors").fetchone()[0] or 0
-        cache_key = (row_count, max_rowid)
-
-        with _VECTOR_MATRIX_CACHE_LOCK:
-            cached_entry = _VECTOR_MATRIX_CACHE.get(vdb)
-        if cached_entry is not None and cached_entry[0] == cache_key:
-            paths, matrix = cached_entry[1], cached_entry[2]
-        else:
+        if candidate_paths:
+            placeholders = ",".join("?" for _ in candidate_paths)
             rows = conn.execute(
-                "SELECT file_path, embedding FROM session_vectors LIMIT ?",
-                (candidate_limit,),
+                f"SELECT file_path, embedding FROM session_vectors WHERE file_path IN ({placeholders})",  # noqa: S608
+                candidate_paths,
             ).fetchall()
             if rows:
                 paths = [r[0] for r in rows]
-                matrix = np.array([_unpack_vector(r[1]) for r in rows], dtype=np.float32)
-                with _VECTOR_MATRIX_CACHE_LOCK:
-                    _VECTOR_MATRIX_CACHE[vdb] = (cache_key, paths, matrix)
+                dim = len(rows[0][1]) // 4
+                matrix = np.frombuffer(b"".join(r[1] for r in rows), dtype=np.float32).reshape(len(rows), dim)
+        else:
+            row_count: int = conn.execute("SELECT COUNT(*) FROM session_vectors").fetchone()[0]
+            max_rowid: int = conn.execute("SELECT MAX(rowid) FROM session_vectors").fetchone()[0] or 0
+            cache_key = (row_count, max_rowid)
+
+            with _VECTOR_MATRIX_CACHE_LOCK:
+                cached_entry = _VECTOR_MATRIX_CACHE.get(vdb)
+            if cached_entry is not None and cached_entry[0] == cache_key:
+                paths, matrix = cached_entry[1], cached_entry[2]
+            else:
+                rows = conn.execute("SELECT file_path, embedding FROM session_vectors").fetchall()
+                if rows:
+                    paths = [r[0] for r in rows]
+                    dim = len(rows[0][1]) // 4
+                    matrix = np.frombuffer(b"".join(r[1] for r in rows), dtype=np.float32).reshape(len(rows), dim)
+                    with _VECTOR_MATRIX_CACHE_LOCK:
+                        _VECTOR_MATRIX_CACHE[vdb] = (cache_key, paths, matrix)
 
     if not paths or matrix is None:
         return []
 
     # Batch cosine similarity
     norms = np.linalg.norm(matrix, axis=1)
-    q_norm = np.linalg.norm(query_vec)
-    if q_norm == 0.0:
-        return []
     scores = (matrix @ query_vec) / (norms * q_norm + 1e-10)
 
     # Rank by score descending
@@ -442,8 +468,65 @@ def vector_search_session(
 
 
 # ---------------------------------------------------------------------------
-# BM25 search
+# BM25 / FTS5 Coarse Search (Stage 1 Coarse Recall)
 # ---------------------------------------------------------------------------
+
+
+def _fts5_coarse_search(
+    conn: sqlite3.Connection,
+    query: str,
+    limit: int,
+) -> list[dict[str, Any]] | None:
+    """Fast Stage 1 coarse search using SQLite's persistent FTS5 index if present."""
+    has_fts = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='session_documents_fts'"
+    ).fetchone()
+    if not has_fts:
+        return None
+
+    import re  # noqa: PLC0415
+
+    tokens = re.findall(r"[A-Za-z0-9_\u4e00-\u9fff]{2,}", query.lower())
+    if not tokens:
+        tokens = [t.strip() for t in query.split() if t.strip()]
+    if not tokens:
+        return []
+
+    expanded: list[str] = []
+    for tok in tokens:
+        if tok not in expanded:
+            expanded.append(tok)
+        if "_" in tok:
+            for part in tok.split("_"):
+                if len(part) >= 2 and part not in expanded:
+                    expanded.append(part)
+        cjk_runs = re.findall(r"[\u4e00-\u9fff]{2,}", tok)
+        for run in cjk_runs:
+            for i in range(len(run) - 1):
+                bg = run[i : i + 2]
+                if bg not in expanded:
+                    expanded.append(bg)
+
+    fts_expr = " OR ".join('"' + t.replace('"', '""') + '"' for t in expanded[:24] if t)
+    if not fts_expr:
+        return []
+
+    try:
+        rows = conn.execute(
+            "SELECT d.file_path, -bm25(session_documents_fts, 3.0, 1.0, 2.0) AS score "
+            "FROM session_documents_fts "
+            "JOIN session_documents d ON d.rowid = session_documents_fts.rowid "
+            "WHERE session_documents_fts MATCH ? "
+            "ORDER BY score DESC LIMIT ?",
+            (fts_expr, max(limit * VECTOR_SEARCH_MULT, 150)),
+        ).fetchall()
+        return [
+            {"file_path": str(r[0]), "score": float(r[1]), "rank": idx + 1}
+            for idx, r in enumerate(rows)
+            if float(r[1]) > 0.0
+        ]
+    except sqlite3.OperationalError:
+        return None
 
 
 def bm25s_search_session(
@@ -454,6 +537,9 @@ def bm25s_search_session(
 ) -> list[dict[str, Any]]:
     """BM25 keyword search over session_documents.
 
+    Uses persistent SQLite FTS5 BM25 index first (~2ms) when available,
+    falling back to in-memory ``bm25s`` when ``session_documents_fts`` is absent.
+
     Returns ``[{"file_path": str, "score": float, "rank": int}, ...]``.
     """
     sdb = str(Path(session_db_path).resolve())
@@ -461,9 +547,11 @@ def bm25s_search_session(
         return []
 
     with _open_vdb(sdb, timeout=30) as conn:
+        fts_hits = _fts5_coarse_search(conn, query, limit=limit)
+        if fts_hits is not None:
+            return fts_hits
+
         rows = conn.execute("SELECT file_path, title, content FROM session_documents").fetchall()
-        # Fetch MAX(rowid) alongside COUNT(*) so that delete-then-insert
-        # sequences (same count, different rows) properly invalidate the cache.
         max_rowid: int = conn.execute("SELECT MAX(rowid) FROM session_documents").fetchone()[0] or 0
 
     if not rows:
@@ -472,8 +560,6 @@ def bm25s_search_session(
     paths = [r[0] for r in rows]
     corpus = [f"{r[1]} {r[2][:VECTOR_TEXT_CAP]}" for r in rows]
     row_count = len(rows)
-    # Cache key combines row count and max rowid to detect both additions and
-    # delete-then-insert cycles that leave the count unchanged.
     cache_key = (row_count, max_rowid)
 
     try:
@@ -507,7 +593,7 @@ def bm25s_search_session(
 
 
 # ---------------------------------------------------------------------------
-# Hybrid RRF merge
+# Hybrid Two-Stage RRF Search (Stage 1 Coarse BM25 + Stage 2 Fine Vector)
 # ---------------------------------------------------------------------------
 
 
@@ -540,12 +626,19 @@ def hybrid_search_session(
     *,
     limit: int = 10,
 ) -> list[dict[str, Any]]:
-    """Combined vector + BM25 search via RRF.
+    """Two-stage coarse-to-fine search: Stage 1 BM25/FTS5 coarse recall -> Stage 2 vector fine reranking -> RRF.
 
     Returns ``[{"file_path": str, "rrf_score": float}, ...]``.
     """
-    vec_results = vector_search_session(query, session_db_path, vector_db_path, limit=limit)
-    bm25_results = bm25s_search_session(query, session_db_path, limit=limit)
+    bm25_results = bm25s_search_session(query, session_db_path, limit=max(limit, 30))
+    coarse_paths = [r["file_path"] for r in bm25_results] if len(bm25_results) >= limit else None
+    vec_results = vector_search_session(
+        query,
+        session_db_path,
+        vector_db_path,
+        limit=limit,
+        candidate_paths=coarse_paths,
+    )
 
     if not vec_results and not bm25_results:
         return []

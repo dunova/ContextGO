@@ -690,6 +690,23 @@ def _session_title_from_jsonl(source_file: Path, default_title: str) -> tuple[st
     return title, directory
 
 
+def _existing_adapter_mtimes(adapter_dir: Path) -> dict[str, tuple[Path, int]]:
+    """Map safe_sid prefix -> (Path, int(st_mtime)) for existing non-empty adapter files."""
+    existing: dict[str, tuple[Path, int]] = {}
+    if not adapter_dir.is_dir():
+        return existing
+    with contextlib.suppress(OSError):
+        with os.scandir(adapter_dir) as it:
+            for entry in it:
+                if entry.name.endswith(".jsonl") and "__" in entry.name:
+                    sid_prefix = entry.name.split("__", 1)[0]
+                    with contextlib.suppress(OSError):
+                        st = entry.stat()
+                        if st.st_size > 0:
+                            existing[sid_prefix] = (Path(entry.path), int(st.st_mtime))
+    return existing
+
+
 def _sync_factory_sessions(home: Path) -> dict[str, object]:
     session_roots = _factory_session_roots(home)
     adapter_dir = _adapter_root(home) / "factory_session"
@@ -697,12 +714,20 @@ def _sync_factory_sessions(home: Path) -> dict[str, object]:
     sessions_written = 0
     changed = False
     detected = False
+    existing_by_sid = _existing_adapter_mtimes(adapter_dir)
 
     for root in session_roots:
         if not root.is_dir():
             continue
         detected = True
         for source_file in sorted(root.glob("*.jsonl")):
+            mtime = max(1, int(_safe_mtime(source_file)))
+            safe_sid = _safe_name(source_file.stem)
+            cached = existing_by_sid.get(safe_sid)
+            if cached is not None and cached[1] == mtime:
+                keep.add(cached[0])
+                sessions_written += 1
+                continue
             title, directory = _session_title_from_jsonl(source_file, source_file.stem)
             texts: list[str] = []
             if title.strip():
@@ -716,8 +741,7 @@ def _sync_factory_sessions(home: Path) -> dict[str, object]:
                         continue
                     with contextlib.suppress(json.JSONDecodeError):
                         texts.extend(_extract_text_fragments(json.loads(raw)))
-            mtime = max(1, int(_safe_mtime(source_file)))
-            out_path = adapter_dir / f"{_safe_name(source_file.stem)}__{_safe_name(title, 'factory')}.jsonl"
+            out_path = adapter_dir / f"{safe_sid}__{_safe_name(title, 'factory')}.jsonl"
             out_changed = _write_adapter_file(
                 out_path,
                 texts,
@@ -756,8 +780,15 @@ def _sync_hermes_sessions(home: Path) -> dict[str, object]:
         removed = _prune_stale(adapter_dir, keep)
         return {"detected": False, "sessions": 0, "removed": removed, "path": None}
 
+    existing_by_sid = _existing_adapter_mtimes(adapter_dir)
     for source_file in sorted(sessions_dir.glob("*.jsonl")):
         sid = source_file.stem
+        mtime = max(1, int(_safe_mtime(source_file)))
+        cached = existing_by_sid.get(_safe_name(sid))
+        if cached is not None and cached[1] == mtime:
+            keep.add(cached[0])
+            sessions_written += 1
+            continue
         title = sid
         platform = ""
         sidecar_candidates = [
@@ -786,7 +817,6 @@ def _sync_hermes_sessions(home: Path) -> dict[str, object]:
                     continue
                 with contextlib.suppress(json.JSONDecodeError):
                     texts.extend(_extract_text_fragments(json.loads(raw)))
-        mtime = max(1, int(_safe_mtime(source_file)))
         out_path = adapter_dir / f"{_safe_name(sid)}__{_safe_name(title, 'hermes')}.jsonl"
         out_changed = _write_adapter_file(
             out_path,
@@ -1448,6 +1478,7 @@ def _sync_reasonix_sessions(home: Path) -> dict[str, object]:
         removed = _prune_stale(adapter_dir, keep)
         return {"detected": False, "sessions": 0, "removed": removed, "path": None}
 
+    existing_by_sid = _existing_adapter_mtimes(adapter_dir)
     for root in roots:
         candidate_items = sorted(root.iterdir()) if root.is_dir() else []
         for item in candidate_items:
@@ -1473,8 +1504,16 @@ def _sync_reasonix_sessions(home: Path) -> dict[str, object]:
                 continue
 
             for f in files_to_read:
-                try:
+                with contextlib.suppress(OSError):
                     mtime = max(mtime, int(f.stat().st_mtime))
+            cached = existing_by_sid.get(_safe_name(sid))
+            if cached is not None and cached[1] == mtime:
+                keep.add(cached[0])
+                sessions_written += 1
+                continue
+
+            for f in files_to_read:
+                try:
                     if f.name.endswith(".jsonl"):
                         for line in f.read_text(encoding="utf-8", errors="ignore").splitlines():
                             raw = line.strip()
@@ -1593,13 +1632,26 @@ def _sync_deepseek_sessions(home: Path) -> dict[str, object]:
         return {"detected": False, "sessions": 0, "removed": removed, "path": None}
 
     seen_sids: set[str] = set()
+    existing_by_sid = _existing_adapter_mtimes(adapter_dir)
 
     for root in roots:
+        # Pre-index session directories once instead of repeated globbing per sid
+        sid_dirs_map: dict[str, list[Path]] = defaultdict(list)
+        sessions_dir = root / "sessions"
+        if sessions_dir.is_dir():
+            for sdir in sessions_dir.iterdir():
+                if not sdir.is_dir() or sdir.name.startswith("."):
+                    continue
+                sub_dirs = [p for p in sdir.iterdir() if p.is_dir()]
+                for leaf in sub_dirs if sub_dirs else [sdir]:
+                    if leaf.is_dir():
+                        sid_dirs_map[leaf.name].append(leaf)
+
         # 1. Inspect session_projcache.json
         projcache = root / "storages" / "session_projcache.json"
         if projcache.is_file():
             try:
-                mtime = max(1, int(projcache.stat().st_mtime))
+                proj_mtime = max(1, int(projcache.stat().st_mtime))
                 data = json.loads(projcache.read_text(encoding="utf-8", errors="ignore"))
                 sessions_table = data.get("tables", {}).get("sessions", {})
                 if isinstance(sessions_table, dict):
@@ -1607,6 +1659,19 @@ def _sync_deepseek_sessions(home: Path) -> dict[str, object]:
                         if not isinstance(sdata, dict) or sid in seen_sids:
                             continue
                         seen_sids.add(sid)
+                        session_dir_matches = sid_dirs_map.get(sid) or list(root.glob(f"sessions/**/{sid}"))
+                        mtime = proj_mtime
+                        for sdir in session_dir_matches:
+                            for f in sdir.iterdir():
+                                if f.name.endswith((".jsonl", ".jsonl.zstd")):
+                                    with contextlib.suppress(OSError):
+                                        mtime = max(mtime, int(f.stat().st_mtime))
+                        cached = existing_by_sid.get(_safe_name(sid))
+                        if cached is not None and cached[1] == mtime:
+                            keep.add(cached[0])
+                            sessions_written += 1
+                            continue
+
                         ident = sdata.get("identity") or {}
                         cwd = ident.get("cwd", "")
                         rows = sdata.get("rows") or {}
@@ -1639,7 +1704,6 @@ def _sync_deepseek_sessions(home: Path) -> dict[str, object]:
                             texts.append(f"[stats] turns={stats_val.get('turns', 0)} steps={stats_val.get('steps', 0)}")
 
                         # Deep check: if there is session.jsonl or session.jsonl.zstd under sessions/
-                        session_dir_matches = list(root.glob(f"sessions/**/{sid}"))
                         for sdir in session_dir_matches:
                             # Try .jsonl
                             for jfile in sdir.glob("*.jsonl"):
@@ -1704,7 +1768,6 @@ def _sync_deepseek_sessions(home: Path) -> dict[str, object]:
                 _logger.warning("_sync_deepseek_sessions projcache error: %s", exc)
 
         # 2. Standalone scan of all session dirs under sessions/
-        sessions_dir = root / "sessions"
         if sessions_dir.is_dir():
             for sdir in sessions_dir.iterdir():
                 if not sdir.is_dir() or sdir.name.startswith("."):
@@ -1717,10 +1780,20 @@ def _sync_deepseek_sessions(home: Path) -> dict[str, object]:
                     if sid in seen_sids:
                         continue
                     seen_sids.add(sid)
+                    mtime = 1
+                    for f in leaf.iterdir():
+                        if f.name.endswith((".jsonl", ".jsonl.zstd")):
+                            with contextlib.suppress(OSError):
+                                mtime = max(mtime, int(f.stat().st_mtime))
+                    cached = existing_by_sid.get(_safe_name(sid))
+                    if cached is not None and cached[1] == mtime:
+                        keep.add(cached[0])
+                        sessions_written += 1
+                        continue
+
                     title = sid
                     cwd = ""
                     texts = []
-                    mtime = 1
 
                     for zfile in leaf.glob("*.jsonl.zstd"):
                         with contextlib.suppress(Exception):
