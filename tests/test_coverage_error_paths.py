@@ -177,7 +177,7 @@ class PolicySweepSafetyTests(unittest.TestCase):
         self.prewarm = prewarm
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
-        self.workdir = Path(self._tmp.name) / "work"
+        self.workdir = (Path(self._tmp.name) / "work").resolve()
         self.workdir.mkdir(parents=True)
         self._cwd = Path.cwd()
         os.chdir(self.workdir)

@@ -129,6 +129,55 @@ contextgo health
 contextgo sources
 ```
 
+### 4. 跨平台与 Linux 部署指南
+
+ContextGO 原生设计支持 **macOS、Linux (Ubuntu, Debian, Fedora, Arch) 以及 WSL2** 瞬间开箱可用。
+
+#### 一键守护进程部署 (systemd --user / launchd)
+
+运行统一化部署脚本，自动同步运行时、创建全局 shim 并拉起自启常驻后台守护服务：
+
+```bash
+# 克隆代码仓库
+git clone https://github.com/dunova/ContextGO.git
+cd ContextGO
+
+# 执行一键部署
+bash scripts/unified_context_deploy.sh
+```
+
+- **Linux 节点**：自动生成并激活 `systemd --user` 用户级服务与定时巡检器：
+  ```bash
+  systemctl --user status contextgo-daemon.service
+  systemctl --user list-timers
+  ```
+- **macOS 节点**：自动安装并加载 LaunchAgents 守护配置（`com.contextgo.daemon.plist`）。
+
+#### 远程 Linux 主机快速部署与记忆同步
+
+通过 `sync_linux_node.sh` 可一键将本机的最新记忆资产或完整环境同步至远程 Linux 云服务器或内网节点：
+
+```bash
+# 1. 导出本机记忆包并无缝导入至远程主机
+bash scripts/sync_linux_node.sh ubuntu@remote-server.internal
+
+# 2. 完整远程部署（同步代码并远程自动配置拉起 systemd 守护服务）
+bash scripts/sync_linux_node.sh ubuntu@remote-server.internal --full-deploy
+```
+
+#### 离线空气隔断记忆包（Memory Pack）热迁移
+
+```bash
+# 导出便携记忆包文件
+contextgo memory-pack export --out ./memories_backup.json
+
+# 在目标机器幂等导入（内容哈希寻址，自动去重）
+contextgo memory-pack import ./memories_backup.json
+
+# 审查本机节点身份与多设备记忆来源拓扑
+contextgo node
+```
+
 ---
 
 ## 原生 MCP 服务器支持

@@ -17,10 +17,14 @@ __author__ = "Dunova"
 __license__ = "AGPL-3.0-only"
 __email__ = "contact@dunova.io"
 
-try:
-    __version__ = version("contextgo")
-except PackageNotFoundError:
-    __version__ = (Path(__file__).resolve().parents[2] / "VERSION").read_text(encoding="utf-8").strip()
+_version_file = Path(__file__).resolve().parents[2] / "VERSION"
+if _version_file.is_file():
+    __version__ = _version_file.read_text(encoding="utf-8").strip()
+else:
+    try:
+        __version__ = version("contextgo")
+    except PackageNotFoundError:
+        __version__ = "0.15.0"
 
 
 def __getattr__(name: str) -> object:

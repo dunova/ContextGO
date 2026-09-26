@@ -195,7 +195,7 @@ ContextGO node identity / 节点身份
   node_id   : f08fe06af2654ce9
   label     : omarchy
   platform  : linux
-  home      : /home/dunova
+  home      : /home/user
 
 Session memories / 会话记忆（共 4562 条）
      4556  f08fe06af2654ce9     omarchy    ← this node / 本机

@@ -873,7 +873,15 @@ class SessionIndexParserTests(unittest.TestCase):
             db_path = root / "session_index.db"
             with (
                 mock.patch.object(session_index, "_home", return_value=root),
-                mock.patch.dict(os.environ, {session_index.SESSION_DB_PATH_ENV: str(db_path)}, clear=False),
+                mock.patch.object(source_adapters, "_home", return_value=root),
+                mock.patch.dict(
+                    os.environ,
+                    {
+                        session_index.SESSION_DB_PATH_ENV: str(db_path),
+                        "CONTEXTGO_STORAGE_ROOT": str(root / ".contextgo"),
+                    },
+                    clear=False,
+                ),
             ):
                 stats1 = session_index.sync_session_index(force=True)
                 self.assertEqual(stats1["added"], 1)

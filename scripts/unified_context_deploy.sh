@@ -12,8 +12,10 @@
 #   CONTEXTGO_INSTALL_ROOT    Installation root  (default: ~/.local/share/contextgo)
 #   CONTEXTGO_STORAGE_ROOT    Storage root       (default: ~/.contextgo)
 #   CONTEXTGO_BIN_DIR         CLI shim dir       (default: ~/.local/bin)
-#   PATCH_LAUNCHD             Patch plists       (default: 1)
-#   RELOAD_LAUNCHD            Reload agents      (default: 1)
+#   PATCH_LAUNCHD             Patch plists (mac) (default: 1)
+#   RELOAD_LAUNCHD            Reload agents(mac) (default: 1)
+#   PATCH_SYSTEMD             Patch units (linux)(default: 1)
+#   RELOAD_SYSTEMD            Reload units(linux)(default: 1)
 #   APPLY_CONTEXT_POLICY      Apply CF policy    (default: 1)
 #   CREATE_CONTEXTGO_SHIM     auto|force|0       (default: auto)
 set -euo pipefail
@@ -24,16 +26,18 @@ usage() {
 Usage: $(basename "$0") [--help]
 
 Deploy ContextGO scripts and templates to the install root, patch macOS
-launchd plists, and optionally reload LaunchAgents.
+launchd plists or Linux systemd user units, and optionally reload daemons.
 
 Environment variables:
   CONTEXTGO_INSTALL_ROOT  Installation root (default: ~/.local/share/contextgo)
   CONTEXTGO_STORAGE_ROOT  Storage root      (default: ~/.contextgo)
   CONTEXTGO_BIN_DIR       CLI shim dir      (default: ~/.local/bin)
   PATCH_LAUNCHD           Patch plists: 1=yes, 0=no  (default: 1)
-  RELOAD_LAUNCHD          Reload agents: 1=yes, 0=no  (default: 1)
-  APPLY_CONTEXT_POLICY    Apply context-first policy  (default: 1)
-  CREATE_CONTEXTGO_SHIM   auto|force|0  (default: auto)
+  RELOAD_LAUNCHD          Reload agents: 1=yes, 0=no (default: 1)
+  PATCH_SYSTEMD           Patch systemd: 1=yes, 0=no (default: 1)
+  RELOAD_SYSTEMD          Reload systemd: 1=yes, 0=no(default: 1)
+  APPLY_CONTEXT_POLICY    Apply context-first policy (default: 1)
+  CREATE_CONTEXTGO_SHIM   auto|force|0               (default: auto)
 EOF
     exit 0
 }
@@ -58,10 +62,16 @@ PATCH_LAUNCHD="${PATCH_LAUNCHD:-1}"
 readonly PATCH_LAUNCHD
 RELOAD_LAUNCHD="${RELOAD_LAUNCHD:-1}"
 readonly RELOAD_LAUNCHD
+PATCH_SYSTEMD="${PATCH_SYSTEMD:-1}"
+readonly PATCH_SYSTEMD
+RELOAD_SYSTEMD="${RELOAD_SYSTEMD:-1}"
+readonly RELOAD_SYSTEMD
 APPLY_CONTEXT_POLICY="${APPLY_CONTEXT_POLICY:-1}"
 readonly APPLY_CONTEXT_POLICY
 CREATE_CONTEXTGO_SHIM="${CREATE_CONTEXTGO_SHIM:-auto}"
 readonly CREATE_CONTEXTGO_SHIM
+OS_TYPE="$(uname -s)"
+readonly OS_TYPE
 
 log() { printf '[deploy] %s\n' "$*"; }
 
@@ -90,13 +100,22 @@ sync_dir() {
 log "unified context deploy start"
 require_dir "$REPO_ROOT"
 require_dir "$REPO_ROOT/scripts"
-require_dir "$REPO_ROOT/templates"
+
+TEMPLATE_DIR=""
+if [ -d "$REPO_ROOT/docs/templates" ]; then
+    TEMPLATE_DIR="$REPO_ROOT/docs/templates"
+elif [ -d "$REPO_ROOT/templates" ]; then
+    TEMPLATE_DIR="$REPO_ROOT/templates"
+else
+    log "ERROR: templates directory missing under $REPO_ROOT (checked docs/templates and templates)" >&2
+    exit 1
+fi
 
 mkdir -p "$CONTEXTGO_STORAGE_ROOT/logs"
 chmod 700 "$CONTEXTGO_STORAGE_ROOT" "$CONTEXTGO_STORAGE_ROOT/logs" 2>/dev/null || true
 
-sync_dir "$REPO_ROOT/scripts"   "$INSTALL_ROOT/scripts"
-sync_dir "$REPO_ROOT/templates" "$INSTALL_ROOT/templates"
+sync_dir "$REPO_ROOT/scripts" "$INSTALL_ROOT/scripts"
+sync_dir "$TEMPLATE_DIR"      "$INSTALL_ROOT/templates"
 if [ -d "$REPO_ROOT/src" ]; then
     sync_dir "$REPO_ROOT/src" "$INSTALL_ROOT/src"
 fi
@@ -104,12 +123,24 @@ log "installed canonical runtime at: $INSTALL_ROOT"
 
 resolve_python3() {
     local candidate
+    if [ "$OS_TYPE" = "Darwin" ]; then
+        for candidate in \
+            /opt/homebrew/opt/python@3.13/libexec/bin/python3 \
+            /opt/homebrew/opt/python@3.12/libexec/bin/python3 \
+            /opt/homebrew/opt/python@3.11/libexec/bin/python3
+        do
+            if [ -x "$candidate" ]; then
+                printf '%s\n' "$candidate"
+                return 0
+            fi
+        done
+    fi
     for candidate in \
-        /opt/homebrew/opt/python@3.13/libexec/bin/python3 \
-        /opt/homebrew/opt/python@3.12/libexec/bin/python3 \
-        /opt/homebrew/opt/python@3.11/libexec/bin/python3
+        "$(command -v python3 2>/dev/null || true)" \
+        /usr/bin/python3 \
+        /usr/local/bin/python3
     do
-        if [ -x "$candidate" ]; then
+        if [ -n "$candidate" ] && [ -x "$candidate" ]; then
             printf '%s\n' "$candidate"
             return 0
         fi
@@ -325,6 +356,42 @@ for label in labels:
         print("[deploy] ERROR: context daemon not detected after reload")
         raise SystemExit(1)
 PY
+fi
+
+if [ "$OS_TYPE" = "Linux" ]; then
+    if [ "$PATCH_SYSTEMD" = "1" ]; then
+        SYSTEMD_USER_DIR="$HOME_DIR/.config/systemd/user"
+        mkdir -p "$SYSTEMD_USER_DIR"
+        SYSTEMD_SRC="$INSTALL_ROOT/templates/systemd-user"
+        if [ -d "$SYSTEMD_SRC" ]; then
+            python_bin="$(resolve_python3)"
+            for unit_file in contextgo-daemon.service context-healthcheck.service context-healthcheck.timer; do
+                if [ -f "$SYSTEMD_SRC/$unit_file" ]; then
+                    sed -e "s|/usr/bin/env python3|$python_bin|g" \
+                        -e "s|%h/.local/share/contextgo|$INSTALL_ROOT|g" \
+                        -e "s|%h/.contextgo|$CONTEXTGO_STORAGE_ROOT|g" \
+                        "$SYSTEMD_SRC/$unit_file" > "$SYSTEMD_USER_DIR/$unit_file"
+                    log "patched systemd unit: $unit_file -> $SYSTEMD_USER_DIR/$unit_file"
+                fi
+            done
+        else
+            log "WARNING: systemd templates not found in $SYSTEMD_SRC"
+        fi
+    fi
+
+    if [ "$RELOAD_SYSTEMD" = "1" ]; then
+        if command -v systemctl >/dev/null 2>&1; then
+            if systemctl --user daemon-reload >/dev/null 2>&1; then
+                systemctl --user enable contextgo-daemon.service context-healthcheck.timer >/dev/null 2>&1 || true
+                systemctl --user restart contextgo-daemon.service context-healthcheck.timer >/dev/null 2>&1 || true
+                log "systemd user services reloaded and enabled (contextgo-daemon, context-healthcheck.timer)"
+            else
+                log "NOTE: 'systemctl --user' is not available in current session (e.g. non-systemd container or WSL without systemd enabled). Start daemon manually with: nohup $INSTALL_ROOT/scripts/context_daemon.py >/dev/null 2>&1 &"
+            fi
+        else
+            log "NOTE: systemctl not installed; start daemon manually with: nohup $INSTALL_ROOT/scripts/context_daemon.py >/dev/null 2>&1 &"
+        fi
+    fi
 fi
 
 bash "$INSTALL_ROOT/scripts/context_healthcheck.sh" --quiet || true

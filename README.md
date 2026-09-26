@@ -130,6 +130,55 @@ contextgo health
 contextgo sources
 ```
 
+### 4. Cross-Platform & Linux Deployment
+
+ContextGO is engineered for instant operation across **macOS, Linux (Ubuntu, Debian, Fedora, Arch), and WSL2**.
+
+#### One-Click Daemon Deployment (systemd --user / launchd)
+
+Run the unified deploy script to sync code, create shims, and configure auto-starting background daemons:
+
+```bash
+# Clone the repository
+git clone https://github.com/dunova/ContextGO.git
+cd ContextGO
+
+# One-click deployment
+bash scripts/unified_context_deploy.sh
+```
+
+- **On Linux**: Automatically generates and activates `systemd --user` service and timer units:
+  ```bash
+  systemctl --user status contextgo-daemon.service
+  systemctl --user list-timers
+  ```
+- **On macOS**: Automatically installs and kickstarts LaunchAgents (`com.contextgo.daemon.plist`).
+
+#### Remote Linux Node Synchronization & Migration
+
+Easily deploy runtime or replicate memory packs to remote Linux development servers via `sync_linux_node.sh`:
+
+```bash
+# 1. Export and import memory package to a remote server
+bash scripts/sync_linux_node.sh ubuntu@remote-server.internal
+
+# 2. Full remote deployment (syncs runtime + configures systemd service remotely)
+bash scripts/sync_linux_node.sh ubuntu@remote-server.internal --full-deploy
+```
+
+#### Air-Gapped / Offline Memory Pack Migration
+
+```bash
+# Export memory package to a portable JSON file
+contextgo memory-pack export --out ./memories_backup.json
+
+# Import into another machine (idempotent, deduplicated by content hash)
+contextgo memory-pack import ./memories_backup.json
+
+# Inspect node identity and multi-device memory distribution
+contextgo node
+```
+
 ---
 
 ## Native MCP Server Support

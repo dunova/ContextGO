@@ -85,7 +85,12 @@ def _adopt_legacy_namespace(legacy: Path, current: Path) -> None:
 
 def _adapter_root(home: Path | None = None) -> Path:
     current_home = home or _home()
-    base = Path(storage_root()) / "raw" / "adapters"
+    if os.environ.get("CONTEXTGO_STORAGE_ROOT"):
+        base = Path(storage_root()) / "raw" / "adapters"
+    elif home is not None:
+        base = current_home / ".contextgo" / "raw" / "adapters"
+    else:
+        base = Path(storage_root()) / "raw" / "adapters"
     root = base / _adapter_namespace_key()
     legacy_digest = hashlib.sha256(str(current_home).encode("utf-8")).hexdigest()[:12]
     _adopt_legacy_namespace(base / legacy_digest, root)

@@ -210,7 +210,7 @@ class LegacyMigrationTests(_IsolatedNode):
                 " created_at, created_at_epoch, file_mtime, file_size, updated_at_epoch)"
                 " VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (
-                    f"/Users/dunova/.contextgo/raw/adapters/226c42ad0dce/deepseek_session/s{i}.jsonl",
+                    f"/home/user/.contextgo/raw/adapters/226c42ad0dce/deepseek_session/s{i}.jsonl",
                     "deepseek_session",
                     f"s{i}",
                     f"title {i}",
@@ -290,7 +290,7 @@ class ForeignMemorySafetyTests(_IsolatedNode):
             _insert_document(
                 conn,
                 doc_id=f"foreign-{i}",
-                file_path=f"/Users/dunova/projects/session{i}.jsonl",
+                file_path=f"/home/user/projects/session{i}.jsonl",
                 session_id=f"peer-{i}",
                 title=f"peer title {i}",
                 content=f"peer body {i}",
@@ -456,7 +456,7 @@ class MemoryPackTests(_IsolatedNode):
             _insert_document(
                 conn,
                 doc_id=session_index.compute_doc_id("claude_session", f"s{i}", f"t{i}", f"body {i}", 1000 + i),
-                file_path=f"/Users/dunova/session{i}.jsonl",
+                file_path=f"/home/user/session{i}.jsonl",
                 session_id=f"s{i}",
                 title=f"t{i}",
                 content=f"body {i}",
@@ -528,7 +528,7 @@ class MemoryPackTests(_IsolatedNode):
                 "origin_host": PEER_NODE,
                 "origin_os": "darwin",
                 "origin_label": "mac",
-                "origin_path": "/Users/dunova/x.jsonl",
+                "origin_path": "/home/user/x.jsonl",
             }
         ]
         result = session_index.import_memory_package(pack)
@@ -601,7 +601,7 @@ class HealthReportingTests(_IsolatedNode):
         _insert_document(
             conn,
             doc_id="theirs",
-            file_path="/Users/dunova/theirs.jsonl",
+            file_path="/home/user/theirs.jsonl",
             origin_host=PEER_NODE,
             origin_label="mac",
         )
@@ -798,7 +798,7 @@ class MemoryPackFilterTests(_IsolatedNode):
         _insert_document(
             conn,
             doc_id="peer-b",
-            file_path="/Users/dunova/b.jsonl",
+            file_path="/home/user/b.jsonl",
             source_type="claude_session",
             origin_host=PEER_NODE,
             origin_label="mac",

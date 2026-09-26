@@ -4,7 +4,7 @@ set -euo pipefail
 log() { printf '[upgrade] %s\n' "$*"; }
 
 if ! command -v pipx >/dev/null 2>&1; then
-  log "pipx is required. Install it first: brew install pipx"
+  log "pipx is required. Install it first: brew install pipx (macOS) or sudo apt install pipx / python3 -m pip install --user pipx (Linux)"
   exit 1
 fi
 
