@@ -132,18 +132,19 @@ def _get_context_runtime() -> ModuleType:
 
 
 def _read_version() -> str:
-    """Read and return the version string from the VERSION file next to pyproject.toml.
+    """Read and return the version string."""
+    try:
+        from contextgo import __version__  # noqa: PLC0415
 
-    Falls back to "unknown" if the file cannot be located or read.
-    """
-    # When running from source: VERSION lives at the repo root (two levels above
-    # src/contextgo/context_cli.py).  When installed as a package, importlib
-    # metadata is the authoritative source.
+        if __version__ and __version__ != "unknown":
+            return __version__
+    except Exception:
+        pass
     try:
         import importlib.metadata as _meta  # noqa: PLC0415
 
         return _meta.version("contextgo")
-    except ImportError:
+    except Exception:
         pass
     # Fallback: walk up from this file to find VERSION
     _candidate = Path(__file__).resolve()
@@ -152,7 +153,7 @@ def _read_version() -> str:
         _version_file = _candidate / "VERSION"
         if _version_file.is_file():
             return _version_file.read_text(encoding="utf-8").strip()
-    return "unknown"
+    return "0.15.0"
 
 
 def _import_vector_index() -> ModuleType:

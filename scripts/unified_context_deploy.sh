@@ -119,6 +119,9 @@ sync_dir "$TEMPLATE_DIR"      "$INSTALL_ROOT/templates"
 if [ -d "$REPO_ROOT/src" ]; then
     sync_dir "$REPO_ROOT/src" "$INSTALL_ROOT/src"
 fi
+if [ -f "$REPO_ROOT/VERSION" ]; then
+    cp -f "$REPO_ROOT/VERSION" "$INSTALL_ROOT/VERSION"
+fi
 log "installed canonical runtime at: $INSTALL_ROOT"
 
 resolve_python3() {
